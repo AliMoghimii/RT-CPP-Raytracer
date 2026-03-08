@@ -114,7 +114,7 @@
     <PostBuildEvent>
       <Command>if exist "$(ProjectDir)assets" xcopy /y /d /s /i "$(ProjectDir)assets" "$(OutDir)assets"
 if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)"
-</Command>
+call "$(ProjectDir)compile_shaders.bat"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -142,6 +142,17 @@ if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)"
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="ModelLoader.cpp" />
+    <ClCompile Include="VulkanCore.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="GPUData.hpp" />
+    <ClInclude Include="ModelLoader.hpp" />
+    <ClInclude Include="VulkanCore.hpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="compile_shaders.bat" />
+    <None Include="raytracer.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

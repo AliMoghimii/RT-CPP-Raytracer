@@ -1,35 +1,27 @@
-#define GLFW_INCLUDE_VULKAN
-#include <GLFW/glfw3.h>
-
-#define GLM_FORCE_RADIANS
-#define GLM_FORCE_DEPTH_ZERO_TO_ONE
-#include <glm/vec4.hpp>
-#include <glm/mat4x4.hpp>
-
+#include "VulkanCore.hpp"
 #include <iostream>
- 
+#include <stdexcept>
+
 int main() {
-    glfwInit();
+    std::vector<GPUMaterial> materials;
+    std::vector<GPUSphere> spheres;
+    std::vector<GPUTriangle> triangles;
 
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan window", nullptr, nullptr);
+    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, {0,0} });
+    materials.push_back({ glm::vec3(0.8f, 0.8f, 0.8f), 0.2f, 1.0f, 1.0f, 0.4f, 0.0f, 1.0f, 0, {0,0} });
+    spheres.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.5f, 0, {0,0,0} });
+    spheres.push_back({ glm::vec3(0.0f, -100.5f, 0.0f), 100.0f, 1, {0,0,0} });
 
-    uint32_t extensionCount = 0;
-    vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+    VulkanCore engine;
+    engine.loadScene(materials, spheres, triangles);
 
-    std::cout << extensionCount << " extensions supported\n";
-
-    glm::mat4 matrix;
-    glm::vec4 vec;
-    auto test = matrix * vec;
-
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
+    try {
+        engine.run();
     }
-
-    glfwDestroyWindow(window);
-
-    glfwTerminate();
+    catch (const std::exception& e) {
+        std::cerr << "CRITICAL GPU ERROR: " << e.what() << std::endl;
+        return 1;
+    }
 
     return 0;
 }

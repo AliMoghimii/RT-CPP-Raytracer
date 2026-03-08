@@ -9,12 +9,20 @@
 #include "GPUData.hpp"
 #include "ModelLoader.hpp"
 
+struct CameraPushConstants {
+    glm::vec4 camPos;
+    glm::vec4 camForward;
+    glm::vec4 camRight;
+    glm::vec4 camUp;
+};
+
 class VulkanCore {
 public:
     void run();
     void loadScene(const std::vector<GPUMaterial>& mats,
         const std::vector<GPUSphere>& sphs,
-        const std::vector<GPUTriangle>& tris);
+        const std::vector<GPUTriangle>& tris,
+        const std::vector<GPULight>& lghts);
 
 private:
     GLFWwindow* window;
@@ -40,16 +48,15 @@ private:
     VkDeviceMemory computeImageMemory;
     VkImageView computeImageView;
 
-    VkBuffer materialBuffer;
-    VkDeviceMemory materialMemory;
-    VkBuffer sphereBuffer;
-    VkDeviceMemory sphereMemory;
-    VkBuffer triangleBuffer;
-    VkDeviceMemory triangleMemory;
+    VkBuffer materialBuffer; VkDeviceMemory materialMemory;
+    VkBuffer sphereBuffer;   VkDeviceMemory sphereMemory;
+    VkBuffer triangleBuffer; VkDeviceMemory triangleMemory;
+    VkBuffer lightBuffer;    VkDeviceMemory lightMemory;
 
     std::vector<GPUMaterial> sceneMaterials;
     std::vector<GPUSphere> sceneSpheres;
     std::vector<GPUTriangle> sceneTriangles;
+    std::vector<GPULight> sceneLights;
 
     VkCommandPool commandPool;
     VkCommandBuffer commandBuffer;
@@ -57,9 +64,16 @@ private:
     VkSemaphore renderFinishedSemaphore;
     VkFence inFlightFence;
 
+    glm::vec3 cameraPos = glm::vec3(0.0f, 0.5f, -2.0f);
+    glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, 1.0f);
+    glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+    float yaw = 90.0f;
+    float pitch = 0.0f;
+    float deltaTime = 0.0f;
+    float lastFrame = 0.0f;
+
     void initWindow();
     void initVulkan();
-
     void createInstance();
     void createSurface();
     void pickPhysicalDevice();
@@ -78,6 +92,7 @@ private:
     void createSyncObjects();
 
     void mainLoop();
+    void processInput();
     void drawFrame();
     void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
     void cleanup();

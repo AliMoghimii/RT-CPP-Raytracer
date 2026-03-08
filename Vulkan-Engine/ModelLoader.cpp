@@ -30,7 +30,7 @@ void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangl
         loadOBJ(filename, sceneTriangles, materialIndex, position, rotation, scale);
     }
     else {
-        cout << "Error: Unsupported file format '." << extension << "'" << endl;
+        cout << "Error: Unsupported file format '." << extension << "'\n";
     }
 }
 
@@ -39,7 +39,7 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
     ifstream file(filename);
     if (!file.is_open())
     {
-        cout << "Error: Could not open " << filename << endl;
+        cout << "Error: Could not open " << filename << "\n";
         return;
     }
 
@@ -110,8 +110,14 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
                 {
                     GPUTriangle tri;
 
-                    tri.padding1 = 0.0f; tri.padding2 = 0.0f; tri.padding3 = 0.0f;
-                    tri.padding4 = 0.0f; tri.padding5 = 0.0f; tri.padding6[0] = 0.0f; tri.padding6[1] = 0.0f; tri.padding6[2] = 0.0f;
+                    tri.p1 = 0.0f;
+                    tri.p2 = 0.0f;
+                    tri.p3 = 0.0f;
+                    tri.p4 = 0.0f;
+                    tri.p5 = 0.0f;
+                    tri.p6 = 0.0f;
+                    tri.p7 = 0.0f;
+                    tri.p8 = 0.0f;
 
                     tri.v0 = vertices[vIndices[0]];
                     tri.v1 = vertices[vIndices[i]];
@@ -141,5 +147,5 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
             }
         }
     }
-    cout << "Successfully loaded " << filename << " (" << vertices.size() << " vertices, " << facesCount << " faces packed for GPU)" << endl;
+    cout << "Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n";
 }

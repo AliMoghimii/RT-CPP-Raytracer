@@ -4,40 +4,47 @@
 struct GPUMaterial {
     glm::vec3 color;
     float ambient;
-
     float diffuse;
     float specular;
     float reflection;
     float transparency;
-
     float ior;
     int type;
-    float padding[2];
+    float p1;
+    float p2;
 };
 
 struct GPUSphere {
     glm::vec3 center;
     float radius;
-
     int materialIndex;
-    float padding[3];
+    float p1;
+    float p2;
+    float p3;
 };
 
 struct GPUTriangle {
     glm::vec3 v0;
-    float padding1;
+    float p1;
     glm::vec3 v1;
-    float padding2;
+    float p2;
     glm::vec3 v2;
-    float padding3;
-
+    float p3;
     glm::vec3 n0;
-    float padding4;
+    float p4;
     glm::vec3 n1;
-    float padding5;
+    float p5;
     glm::vec3 n2;
     int isSmooth;
-
     int materialIndex;
-    float padding6[3];
+    float p6;
+    float p7;
+    float p8;
+};
+
+struct GPULight {
+    glm::vec3 position;
+    float p1;
+    glm::vec3 color;
+    float p2;
 };

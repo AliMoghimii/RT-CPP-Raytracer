@@ -55,15 +55,11 @@ void VulkanCore::createInstance() {
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
 
-    if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create Vulkan instance.");
-    }
+    if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan instance.");
 }
 
 void VulkanCore::createSurface() {
-    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create window surface.");
-    }
+    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface.");
 }
 
 void VulkanCore::pickPhysicalDevice() {
@@ -73,9 +69,7 @@ void VulkanCore::pickPhysicalDevice() {
 
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
-
     physicalDevice = devices[0];
-    if (physicalDevice == VK_NULL_HANDLE) throw std::runtime_error("Failed to find a suitable GPU.");
 }
 
 void VulkanCore::createLogicalDevice() {
@@ -88,10 +82,8 @@ void VulkanCore::createLogicalDevice() {
     for (int i = 0; i < queueFamilies.size(); i++) {
         VkBool32 presentSupport = false;
         vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
-
         if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && presentSupport) {
-            computeFamily = i;
-            break;
+            computeFamily = i; break;
         }
     }
 
@@ -105,7 +97,6 @@ void VulkanCore::createLogicalDevice() {
     queueCreateInfo.pQueuePriorities = &queuePriority;
 
     const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
@@ -113,9 +104,7 @@ void VulkanCore::createLogicalDevice() {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create logical device.");
-    }
+    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) throw std::runtime_error("Failed to create logical device.");
     vkGetDeviceQueue(device, computeFamily, 0, &computeQueue);
 }
 
@@ -124,10 +113,7 @@ void VulkanCore::createCommandPool() {
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = 0;
-
-    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create command pool.");
-    }
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) throw std::runtime_error("Failed to create command pool.");
 }
 
 void VulkanCore::createSwapchain() {
@@ -146,9 +132,7 @@ void VulkanCore::createSwapchain() {
     createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     createInfo.clipped = VK_TRUE;
 
-    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create swap chain.");
-    }
+    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) throw std::runtime_error("Failed to create swap chain.");
 
     uint32_t imageCount;
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
@@ -171,10 +155,7 @@ void VulkanCore::createSwapchainImageViews() {
         createInfo.subresourceRange.levelCount = 1;
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
-
-        if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-            throw std::runtime_error("Failed to create image views.");
-        }
+        if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) throw std::runtime_error("Failed to create image views.");
     }
 }
 
@@ -232,9 +213,7 @@ void VulkanCore::createComputeImage() {
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     vkBeginCommandBuffer(cmd, &beginInfo);
-
     transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
-
     vkEndCommandBuffer(cmd);
 
     VkSubmitInfo submitInfo{};
@@ -246,20 +225,23 @@ void VulkanCore::createComputeImage() {
     vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 }
 
-void VulkanCore::loadScene(const std::vector<GPUMaterial>& mats, const std::vector<GPUSphere>& sphs, const std::vector<GPUTriangle>& tris) {
+void VulkanCore::loadScene(const std::vector<GPUMaterial>& mats, const std::vector<GPUSphere>& sphs, const std::vector<GPUTriangle>& tris, const std::vector<GPULight>& lghts) {
     sceneMaterials = mats;
     sceneSpheres = sphs;
     sceneTriangles = tris;
+    sceneLights = lghts;
 }
 
 void VulkanCore::createSceneBuffers() {
     VkDeviceSize matBufferSize = sizeof(GPUMaterial) * std::max((size_t)1, sceneMaterials.size());
     VkDeviceSize sphBufferSize = sizeof(GPUSphere) * std::max((size_t)1, sceneSpheres.size());
     VkDeviceSize triBufferSize = sizeof(GPUTriangle) * std::max((size_t)1, sceneTriangles.size());
+    VkDeviceSize lgtBufferSize = sizeof(GPULight) * std::max((size_t)1, sceneLights.size());
 
     createBuffer(matBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, materialBuffer, materialMemory);
     createBuffer(sphBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sphereBuffer, sphereMemory);
     createBuffer(triBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, triangleBuffer, triangleMemory);
+    createBuffer(lgtBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightBuffer, lightMemory);
 
     void* data;
     if (!sceneMaterials.empty()) {
@@ -277,7 +259,11 @@ void VulkanCore::createSceneBuffers() {
         memcpy(data, sceneTriangles.data(), (size_t)triBufferSize);
         vkUnmapMemory(device, triangleMemory);
     }
-    std::cout << "Scene successfully uploaded to GPU VRAM.\n";
+    if (!sceneLights.empty()) {
+        vkMapMemory(device, lightMemory, 0, lgtBufferSize, 0, &data);
+        memcpy(data, sceneLights.data(), (size_t)lgtBufferSize);
+        vkUnmapMemory(device, lightMemory);
+    }
 }
 
 void VulkanCore::createDescriptorSetLayout() {
@@ -305,16 +291,20 @@ void VulkanCore::createDescriptorSetLayout() {
     triLayoutBinding.descriptorCount = 1;
     triLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
-    std::vector<VkDescriptorSetLayoutBinding> bindings = { imageLayoutBinding, matLayoutBinding, sphLayoutBinding, triLayoutBinding };
+    VkDescriptorSetLayoutBinding lgtLayoutBinding{};
+    lgtLayoutBinding.binding = 4;
+    lgtLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    lgtLayoutBinding.descriptorCount = 1;
+    lgtLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings = { imageLayoutBinding, matLayoutBinding, sphLayoutBinding, triLayoutBinding, lgtLayoutBinding };
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create descriptor set layout.");
-    }
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create descriptor set layout.");
 }
 
 void VulkanCore::createComputePipeline() {
@@ -327,10 +317,17 @@ void VulkanCore::createComputePipeline() {
     shaderStageInfo.module = compShaderModule;
     shaderStageInfo.pName = "main";
 
+    VkPushConstantRange pushConstantRange{};
+    pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushConstantRange.offset = 0;
+    pushConstantRange.size = sizeof(CameraPushConstants);
+
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+    pipelineLayoutInfo.pushConstantRangeCount = 1;
+    pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create layout.");
 
@@ -341,7 +338,6 @@ void VulkanCore::createComputePipeline() {
 
     if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) throw std::runtime_error("Failed to create pipeline.");
     vkDestroyShaderModule(device, compShaderModule, nullptr);
-    std::cout << "Compute Pipeline Created (Compiled Shader Loaded).\n";
 }
 
 void VulkanCore::createDescriptorPool() {
@@ -349,7 +345,7 @@ void VulkanCore::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = 3;
+    poolSizes[1].descriptorCount = 4;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -388,7 +384,12 @@ void VulkanCore::createDescriptorSets() {
     triBufferInfo.offset = 0;
     triBufferInfo.range = VK_WHOLE_SIZE;
 
-    std::vector<VkWriteDescriptorSet> descriptorWrites(4);
+    VkDescriptorBufferInfo lgtBufferInfo{};
+    lgtBufferInfo.buffer = lightBuffer;
+    lgtBufferInfo.offset = 0;
+    lgtBufferInfo.range = VK_WHOLE_SIZE;
+
+    std::vector<VkWriteDescriptorSet> descriptorWrites(5);
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSet;
     descriptorWrites[0].dstBinding = 0;
@@ -421,6 +422,14 @@ void VulkanCore::createDescriptorSets() {
     descriptorWrites[3].descriptorCount = 1;
     descriptorWrites[3].pBufferInfo = &triBufferInfo;
 
+    descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[4].dstSet = descriptorSet;
+    descriptorWrites[4].dstBinding = 4;
+    descriptorWrites[4].dstArrayElement = 0;
+    descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[4].descriptorCount = 1;
+    descriptorWrites[4].pBufferInfo = &lgtBufferInfo;
+
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 }
 
@@ -444,15 +453,40 @@ void VulkanCore::createSyncObjects() {
 
     if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
         vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
-        throw std::runtime_error("Failed to create synchronization objects.");
-    }
+        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) throw std::runtime_error("Failed to create synchronization objects.");
+}
+
+void VulkanCore::processInput() {
+    float cameraSpeed = 3.5f * deltaTime;
+    float rotSpeed = 90.0f * deltaTime;
+
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) cameraPos += cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraUp;
+
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) yaw -= rotSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) yaw += rotSpeed;
+
+    glm::vec3 right = glm::normalize(glm::cross(cameraUp, cameraFront));
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cameraPos += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cameraPos -= right * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cameraPos += right * cameraSpeed;
+
+    glm::vec3 front;
+    front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    front.y = sin(glm::radians(pitch));
+    front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(front);
 }
 
 void VulkanCore::mainLoop() {
-    std::cout << "Engine is now Rendering\n";
     while (!glfwWindowShouldClose(window)) {
+        float currentFrame = glfwGetTime();
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
         glfwPollEvents();
+        processInput();
         drawFrame();
     }
     vkDeviceWaitIdle(device);
@@ -502,6 +536,15 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+
+    CameraPushConstants pc{};
+    pc.camPos = glm::vec4(cameraPos, 0.0f);
+    pc.camForward = glm::vec4(cameraFront, 0.0f);
+    pc.camRight = glm::vec4(glm::normalize(glm::cross(cameraUp, cameraFront)), 0.0f);
+    pc.camUp = glm::vec4(glm::normalize(glm::cross(cameraFront, glm::vec3(pc.camRight))), 0.0f);
+
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+
     vkCmdDispatch(cmd, 1280 / 16, 720 / 16, 1);
 
     transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -631,29 +674,22 @@ void VulkanCore::cleanup() {
     vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
     vkDestroyFence(device, inFlightFence, nullptr);
-
     vkDestroyCommandPool(device, commandPool, nullptr);
-
     vkDestroyImageView(device, computeImageView, nullptr);
     vkDestroyImage(device, computeImage, nullptr);
     vkFreeMemory(device, computeImageMemory, nullptr);
-
     for (auto imageView : swapChainImageViews) vkDestroyImageView(device, imageView, nullptr);
     vkDestroySwapchainKHR(device, swapChain, nullptr);
-
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
-    vkDestroyBuffer(device, materialBuffer, nullptr);
-    vkFreeMemory(device, materialMemory, nullptr);
-    vkDestroyBuffer(device, sphereBuffer, nullptr);
-    vkFreeMemory(device, sphereMemory, nullptr);
-    vkDestroyBuffer(device, triangleBuffer, nullptr);
-    vkFreeMemory(device, triangleMemory, nullptr);
+    vkDestroyBuffer(device, materialBuffer, nullptr); vkFreeMemory(device, materialMemory, nullptr);
+    vkDestroyBuffer(device, sphereBuffer, nullptr);   vkFreeMemory(device, sphereMemory, nullptr);
+    vkDestroyBuffer(device, triangleBuffer, nullptr); vkFreeMemory(device, triangleMemory, nullptr);
+    vkDestroyBuffer(device, lightBuffer, nullptr);    vkFreeMemory(device, lightMemory, nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);

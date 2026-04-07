@@ -16,12 +16,12 @@ public:
         float scale
     );
 
-private:
     static glm::vec3 rotateVec(
         glm::vec3 v,
         glm::vec3 rot
     );
 
+private:
     static void loadOBJ(
         const std::string& filename,
         std::vector<GPUTriangle>& sceneTriangles,

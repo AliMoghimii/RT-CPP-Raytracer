@@ -55,26 +55,35 @@ void VulkanCore::createInstance() {
     createInfo.enabledExtensionCount = glfwExtensionCount;
     createInfo.ppEnabledExtensionNames = glfwExtensions;
 
-    if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) throw std::runtime_error("Failed to create Vulkan instance.");
+    if (vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create Vulkan instance.");
+    }
 }
 
 void VulkanCore::createSurface() {
-    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) throw std::runtime_error("Failed to create window surface.");
+    if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create window surface.");
+    }
 }
 
 void VulkanCore::pickPhysicalDevice() {
     uint32_t deviceCount = 0;
     vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
-    if (deviceCount == 0) throw std::runtime_error("Failed to find GPUs with Vulkan support.");
+
+    if (deviceCount == 0) {
+        throw std::runtime_error("Failed to find GPUs with Vulkan support.");
+    }
 
     std::vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
+
     physicalDevice = devices[0];
 }
 
 void VulkanCore::createLogicalDevice() {
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+
     std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
 
@@ -82,12 +91,16 @@ void VulkanCore::createLogicalDevice() {
     for (int i = 0; i < queueFamilies.size(); i++) {
         VkBool32 presentSupport = false;
         vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+
         if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && presentSupport) {
-            computeFamily = i; break;
+            computeFamily = i;
+            break;
         }
     }
 
-    if (computeFamily == -1) throw std::runtime_error("Failed to find a compute queue family.");
+    if (computeFamily == -1) {
+        throw std::runtime_error("Failed to find a compute queue family.");
+    }
 
     VkDeviceQueueCreateInfo queueCreateInfo{};
     queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -97,6 +110,7 @@ void VulkanCore::createLogicalDevice() {
     queueCreateInfo.pQueuePriorities = &queuePriority;
 
     const std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
     VkDeviceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     createInfo.pQueueCreateInfos = &queueCreateInfo;
@@ -104,7 +118,10 @@ void VulkanCore::createLogicalDevice() {
     createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
     createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
-    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) throw std::runtime_error("Failed to create logical device.");
+    if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create logical device.");
+    }
+
     vkGetDeviceQueue(device, computeFamily, 0, &computeQueue);
 }
 
@@ -113,7 +130,10 @@ void VulkanCore::createCommandPool() {
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
     poolInfo.queueFamilyIndex = 0;
-    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) throw std::runtime_error("Failed to create command pool.");
+
+    if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create command pool.");
+    }
 }
 
 void VulkanCore::createSwapchain() {
@@ -132,18 +152,22 @@ void VulkanCore::createSwapchain() {
     createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     createInfo.clipped = VK_TRUE;
 
-    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) throw std::runtime_error("Failed to create swap chain.");
+    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create swap chain.");
+    }
 
     uint32_t imageCount;
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
     swapChainImages.resize(imageCount);
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+
     swapChainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
     swapChainExtent = { 1280, 720 };
 }
 
 void VulkanCore::createSwapchainImageViews() {
     swapChainImageViews.resize(swapChainImages.size());
+
     for (size_t i = 0; i < swapChainImages.size(); i++) {
         VkImageViewCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -155,7 +179,10 @@ void VulkanCore::createSwapchainImageViews() {
         createInfo.subresourceRange.levelCount = 1;
         createInfo.subresourceRange.baseArrayLayer = 0;
         createInfo.subresourceRange.layerCount = 1;
-        if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) throw std::runtime_error("Failed to create image views.");
+
+        if (vkCreateImageView(device, &createInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create image views.");
+        }
     }
 }
 
@@ -174,7 +201,9 @@ void VulkanCore::createComputeImage() {
     imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 
-    if (vkCreateImage(device, &imageInfo, nullptr, &computeImage) != VK_SUCCESS) throw std::runtime_error("failed to create compute image.");
+    if (vkCreateImage(device, &imageInfo, nullptr, &computeImage) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create compute image.");
+    }
 
     VkMemoryRequirements memRequirements;
     vkGetImageMemoryRequirements(device, computeImage, &memRequirements);
@@ -184,7 +213,10 @@ void VulkanCore::createComputeImage() {
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &computeImageMemory) != VK_SUCCESS) throw std::runtime_error("failed to allocate compute image memory.");
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &computeImageMemory) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to allocate compute image memory.");
+    }
+
     vkBindImageMemory(device, computeImage, computeImageMemory, 0);
 
     VkImageViewCreateInfo viewInfo{};
@@ -198,7 +230,9 @@ void VulkanCore::createComputeImage() {
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
-    if (vkCreateImageView(device, &viewInfo, nullptr, &computeImageView) != VK_SUCCESS) throw std::runtime_error("failed to create compute image view.");
+    if (vkCreateImageView(device, &viewInfo, nullptr, &computeImageView) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create compute image view.");
+    }
 
     VkCommandBufferAllocateInfo allocInfoCmd{};
     allocInfoCmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -212,6 +246,7 @@ void VulkanCore::createComputeImage() {
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
     vkBeginCommandBuffer(cmd, &beginInfo);
     transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     vkEndCommandBuffer(cmd);
@@ -220,16 +255,28 @@ void VulkanCore::createComputeImage() {
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &cmd;
+
     vkQueueSubmit(computeQueue, 1, &submitInfo, VK_NULL_HANDLE);
     vkQueueWaitIdle(computeQueue);
     vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 }
 
-void VulkanCore::loadScene(const std::vector<GPUMaterial>& mats, const std::vector<GPUSphere>& sphs, const std::vector<GPUTriangle>& tris, const std::vector<GPULight>& lghts) {
+void VulkanCore::loadScene(
+    const std::vector<GPUMaterial>& mats,
+    const std::vector<GPUSphere>& sphs,
+    const std::vector<GPUTriangle>& tris,
+    const std::vector<GPULight>& lghts,
+    const std::vector<GPUPlane>& plns,
+    const std::vector<GPUQuad>& quds,
+    const std::vector<GPUCube>& cbs
+) {
     sceneMaterials = mats;
     sceneSpheres = sphs;
     sceneTriangles = tris;
     sceneLights = lghts;
+    scenePlanes = plns;
+    sceneQuads = quds;
+    sceneCubes = cbs;
 }
 
 void VulkanCore::createSceneBuffers() {
@@ -237,13 +284,20 @@ void VulkanCore::createSceneBuffers() {
     VkDeviceSize sphBufferSize = sizeof(GPUSphere) * std::max((size_t)1, sceneSpheres.size());
     VkDeviceSize triBufferSize = sizeof(GPUTriangle) * std::max((size_t)1, sceneTriangles.size());
     VkDeviceSize lgtBufferSize = sizeof(GPULight) * std::max((size_t)1, sceneLights.size());
+    VkDeviceSize plnBufferSize = sizeof(GPUPlane) * std::max((size_t)1, scenePlanes.size());
+    VkDeviceSize qudBufferSize = sizeof(GPUQuad) * std::max((size_t)1, sceneQuads.size());
+    VkDeviceSize cubBufferSize = sizeof(GPUCube) * std::max((size_t)1, sceneCubes.size());
 
     createBuffer(matBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, materialBuffer, materialMemory);
     createBuffer(sphBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sphereBuffer, sphereMemory);
     createBuffer(triBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, triangleBuffer, triangleMemory);
     createBuffer(lgtBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, lightBuffer, lightMemory);
+    createBuffer(plnBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, planeBuffer, planeMemory);
+    createBuffer(qudBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, quadBuffer, quadMemory);
+    createBuffer(cubBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, cubeBuffer, cubeMemory);
 
     void* data;
+
     if (!sceneMaterials.empty()) {
         vkMapMemory(device, materialMemory, 0, matBufferSize, 0, &data);
         memcpy(data, sceneMaterials.data(), (size_t)matBufferSize);
@@ -264,47 +318,46 @@ void VulkanCore::createSceneBuffers() {
         memcpy(data, sceneLights.data(), (size_t)lgtBufferSize);
         vkUnmapMemory(device, lightMemory);
     }
+    if (!scenePlanes.empty()) {
+        vkMapMemory(device, planeMemory, 0, plnBufferSize, 0, &data);
+        memcpy(data, scenePlanes.data(), (size_t)plnBufferSize);
+        vkUnmapMemory(device, planeMemory);
+    }
+    if (!sceneQuads.empty()) {
+        vkMapMemory(device, quadMemory, 0, qudBufferSize, 0, &data);
+        memcpy(data, sceneQuads.data(), (size_t)qudBufferSize);
+        vkUnmapMemory(device, quadMemory);
+    }
+    if (!sceneCubes.empty()) {
+        vkMapMemory(device, cubeMemory, 0, cubBufferSize, 0, &data);
+        memcpy(data, sceneCubes.data(), (size_t)cubBufferSize);
+        vkUnmapMemory(device, cubeMemory);
+    }
 }
 
 void VulkanCore::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding imageLayoutBinding{};
-    imageLayoutBinding.binding = 0;
-    imageLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    imageLayoutBinding.descriptorCount = 1;
-    imageLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    std::vector<VkDescriptorSetLayoutBinding> bindings(8);
 
-    VkDescriptorSetLayoutBinding matLayoutBinding{};
-    matLayoutBinding.binding = 1;
-    matLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    matLayoutBinding.descriptorCount = 1;
-    matLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutBinding sphLayoutBinding{};
-    sphLayoutBinding.binding = 2;
-    sphLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    sphLayoutBinding.descriptorCount = 1;
-    sphLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutBinding triLayoutBinding{};
-    triLayoutBinding.binding = 3;
-    triLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    triLayoutBinding.descriptorCount = 1;
-    triLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    VkDescriptorSetLayoutBinding lgtLayoutBinding{};
-    lgtLayoutBinding.binding = 4;
-    lgtLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    lgtLayoutBinding.descriptorCount = 1;
-    lgtLayoutBinding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-
-    std::vector<VkDescriptorSetLayoutBinding> bindings = { imageLayoutBinding, matLayoutBinding, sphLayoutBinding, triLayoutBinding, lgtLayoutBinding };
+    for (int i = 0; i < 8; i++) {
+        bindings[i].binding = i;
+        if (i == 0) {
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        }
+        else {
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        }
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
 
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
-    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create descriptor set layout.");
+    if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create descriptor set layout.");
+    }
 }
 
 void VulkanCore::createComputePipeline() {
@@ -329,14 +382,19 @@ void VulkanCore::createComputePipeline() {
     pipelineLayoutInfo.pushConstantRangeCount = 1;
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
-    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) throw std::runtime_error("Failed to create layout.");
+    if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create layout.");
+    }
 
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.layout = pipelineLayout;
     pipelineInfo.stage = shaderStageInfo;
 
-    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) throw std::runtime_error("Failed to create pipeline.");
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create pipeline.");
+    }
+
     vkDestroyShaderModule(device, compShaderModule, nullptr);
 }
 
@@ -345,7 +403,7 @@ void VulkanCore::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = 4;
+    poolSizes[1].descriptorCount = 7;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -353,7 +411,9 @@ void VulkanCore::createDescriptorPool() {
     poolInfo.pPoolSizes = poolSizes.data();
     poolInfo.maxSets = 1;
 
-    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) throw std::runtime_error("Failed to create pool.");
+    if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create pool.");
+    }
 }
 
 void VulkanCore::createDescriptorSets() {
@@ -363,7 +423,9 @@ void VulkanCore::createDescriptorSets() {
     allocInfo.descriptorSetCount = 1;
     allocInfo.pSetLayouts = &descriptorSetLayout;
 
-    if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS) throw std::runtime_error("Failed to allocate descriptor sets.");
+    if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to allocate descriptor sets.");
+    }
 
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
@@ -389,7 +451,23 @@ void VulkanCore::createDescriptorSets() {
     lgtBufferInfo.offset = 0;
     lgtBufferInfo.range = VK_WHOLE_SIZE;
 
-    std::vector<VkWriteDescriptorSet> descriptorWrites(5);
+    VkDescriptorBufferInfo plnBufferInfo{};
+    plnBufferInfo.buffer = planeBuffer;
+    plnBufferInfo.offset = 0;
+    plnBufferInfo.range = VK_WHOLE_SIZE;
+
+    VkDescriptorBufferInfo qudBufferInfo{};
+    qudBufferInfo.buffer = quadBuffer;
+    qudBufferInfo.offset = 0;
+    qudBufferInfo.range = VK_WHOLE_SIZE;
+
+    VkDescriptorBufferInfo cubBufferInfo{};
+    cubBufferInfo.buffer = cubeBuffer;
+    cubBufferInfo.offset = 0;
+    cubBufferInfo.range = VK_WHOLE_SIZE;
+
+    std::vector<VkWriteDescriptorSet> descriptorWrites(8);
+
     descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptorWrites[0].dstSet = descriptorSet;
     descriptorWrites[0].dstBinding = 0;
@@ -430,6 +508,30 @@ void VulkanCore::createDescriptorSets() {
     descriptorWrites[4].descriptorCount = 1;
     descriptorWrites[4].pBufferInfo = &lgtBufferInfo;
 
+    descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[5].dstSet = descriptorSet;
+    descriptorWrites[5].dstBinding = 5;
+    descriptorWrites[5].dstArrayElement = 0;
+    descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[5].descriptorCount = 1;
+    descriptorWrites[5].pBufferInfo = &plnBufferInfo;
+
+    descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[6].dstSet = descriptorSet;
+    descriptorWrites[6].dstBinding = 6;
+    descriptorWrites[6].dstArrayElement = 0;
+    descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[6].descriptorCount = 1;
+    descriptorWrites[6].pBufferInfo = &qudBufferInfo;
+
+    descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    descriptorWrites[7].dstSet = descriptorSet;
+    descriptorWrites[7].dstBinding = 7;
+    descriptorWrites[7].dstArrayElement = 0;
+    descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[7].descriptorCount = 1;
+    descriptorWrites[7].pBufferInfo = &cubBufferInfo;
+
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 }
 
@@ -440,7 +542,9 @@ void VulkanCore::createCommandBuffers() {
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     allocInfo.commandBufferCount = 1;
 
-    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) throw std::runtime_error("Failed to allocate command buffers.");
+    if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to allocate command buffers.");
+    }
 }
 
 void VulkanCore::createSyncObjects() {
@@ -453,24 +557,43 @@ void VulkanCore::createSyncObjects() {
 
     if (vkCreateSemaphore(device, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
         vkCreateSemaphore(device, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) throw std::runtime_error("Failed to create synchronization objects.");
+        vkCreateFence(device, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create synchronization objects.");
+    }
 }
 
 void VulkanCore::processInput() {
     float cameraSpeed = 3.5f * deltaTime;
     float rotSpeed = 90.0f * deltaTime;
 
-    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) cameraPos += cameraSpeed * cameraUp;
-    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_Z) == GLFW_PRESS) {
+        cameraPos += cameraSpeed * cameraUp;
+    }
+    if (glfwGetKey(window, GLFW_KEY_X) == GLFW_PRESS) {
+        cameraPos -= cameraSpeed * cameraUp;
+    }
 
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) yaw -= rotSpeed;
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) yaw += rotSpeed;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+        yaw -= rotSpeed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+        yaw += rotSpeed;
+    }
 
     glm::vec3 right = glm::normalize(glm::cross(cameraUp, cameraFront));
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cameraPos += cameraSpeed * cameraFront;
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraFront;
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cameraPos -= right * cameraSpeed;
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cameraPos += right * cameraSpeed;
+
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+        cameraPos += cameraSpeed * cameraFront;
+    }
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+        cameraPos -= cameraSpeed * cameraFront;
+    }
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+        cameraPos -= right * cameraSpeed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+        cameraPos += right * cameraSpeed;
+    }
 
     glm::vec3 front;
     front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
@@ -480,6 +603,7 @@ void VulkanCore::processInput() {
 }
 
 void VulkanCore::mainLoop() {
+    std::cout << "Rendering Started.\n";
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -487,6 +611,7 @@ void VulkanCore::mainLoop() {
 
         glfwPollEvents();
         processInput();
+
         drawFrame();
     }
     vkDeviceWaitIdle(device);
@@ -504,14 +629,18 @@ void VulkanCore::drawFrame() {
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
     VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT };
+
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
+
     VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
 
@@ -521,7 +650,9 @@ void VulkanCore::drawFrame() {
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = signalSemaphores;
+
     VkSwapchainKHR swapChains[] = { swapChain };
+
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
@@ -542,6 +673,12 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.camForward = glm::vec4(cameraFront, 0.0f);
     pc.camRight = glm::vec4(glm::normalize(glm::cross(cameraUp, cameraFront)), 0.0f);
     pc.camUp = glm::vec4(glm::normalize(glm::cross(cameraFront, glm::vec3(pc.camRight))), 0.0f);
+    pc.sphereCount = static_cast<int>(sceneSpheres.size());
+    pc.triangleCount = static_cast<int>(sceneTriangles.size());
+    pc.planeCount = static_cast<int>(scenePlanes.size());
+    pc.quadCount = static_cast<int>(sceneQuads.size());
+    pc.cubeCount = static_cast<int>(sceneCubes.size());
+    pc.lightCount = static_cast<int>(sceneLights.size());
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 
@@ -558,6 +695,7 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     copyRegion.extent.width = 1280;
     copyRegion.extent.height = 720;
     copyRegion.extent.depth = 1;
+
     vkCmdCopyImage(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
     transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
@@ -622,12 +760,17 @@ void VulkanCore::transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkIma
 
 std::vector<char> VulkanCore::readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
-    if (!file.is_open()) throw std::runtime_error("Failed to open file: " + filename);
+    if (!file.is_open()) {
+        throw std::runtime_error("Failed to open file.");
+    }
+
     size_t fileSize = (size_t)file.tellg();
     std::vector<char> buffer(fileSize);
+
     file.seekg(0);
     file.read(buffer.data(), fileSize);
     file.close();
+
     return buffer;
 }
 
@@ -636,8 +779,12 @@ VkShaderModule VulkanCore::createShaderModule(const std::vector<char>& code) {
     createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     createInfo.codeSize = code.size();
     createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
     VkShaderModule shaderModule;
-    if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) throw std::runtime_error("Failed to create shader module.");
+    if (vkCreateShaderModule(device, &createInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create shader module.");
+    }
+
     return shaderModule;
 }
 
@@ -647,7 +794,10 @@ void VulkanCore::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
     bufferInfo.size = size;
     bufferInfo.usage = usage;
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) throw std::runtime_error("Failed to create GPU buffer.");
+
+    if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to create GPU buffer.");
+    }
 
     VkMemoryRequirements memRequirements;
     vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
@@ -657,16 +807,23 @@ void VulkanCore::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMem
     allocInfo.allocationSize = memRequirements.size;
     allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) throw std::runtime_error("Failed to allocate GPU memory.");
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+        throw std::runtime_error("Failed to allocate GPU memory.");
+    }
+
     vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
 uint32_t VulkanCore::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     VkPhysicalDeviceMemoryProperties memProperties;
     vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) return i;
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
     }
+
     throw std::runtime_error("Failed to find suitable GPU memory type.");
 }
 
@@ -674,25 +831,49 @@ void VulkanCore::cleanup() {
     vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
     vkDestroyFence(device, inFlightFence, nullptr);
+
     vkDestroyCommandPool(device, commandPool, nullptr);
+
     vkDestroyImageView(device, computeImageView, nullptr);
     vkDestroyImage(device, computeImage, nullptr);
     vkFreeMemory(device, computeImageMemory, nullptr);
-    for (auto imageView : swapChainImageViews) vkDestroyImageView(device, imageView, nullptr);
+
+    for (auto imageView : swapChainImageViews) {
+        vkDestroyImageView(device, imageView, nullptr);
+    }
     vkDestroySwapchainKHR(device, swapChain, nullptr);
+
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
-    vkDestroyBuffer(device, materialBuffer, nullptr); vkFreeMemory(device, materialMemory, nullptr);
-    vkDestroyBuffer(device, sphereBuffer, nullptr);   vkFreeMemory(device, sphereMemory, nullptr);
-    vkDestroyBuffer(device, triangleBuffer, nullptr); vkFreeMemory(device, triangleMemory, nullptr);
-    vkDestroyBuffer(device, lightBuffer, nullptr);    vkFreeMemory(device, lightMemory, nullptr);
+    vkDestroyBuffer(device, materialBuffer, nullptr);
+    vkFreeMemory(device, materialMemory, nullptr);
+
+    vkDestroyBuffer(device, sphereBuffer, nullptr);
+    vkFreeMemory(device, sphereMemory, nullptr);
+
+    vkDestroyBuffer(device, triangleBuffer, nullptr);
+    vkFreeMemory(device, triangleMemory, nullptr);
+
+    vkDestroyBuffer(device, lightBuffer, nullptr);
+    vkFreeMemory(device, lightMemory, nullptr);
+
+    vkDestroyBuffer(device, planeBuffer, nullptr);
+    vkFreeMemory(device, planeMemory, nullptr);
+
+    vkDestroyBuffer(device, quadBuffer, nullptr);
+    vkFreeMemory(device, quadMemory, nullptr);
+
+    vkDestroyBuffer(device, cubeBuffer, nullptr);
+    vkFreeMemory(device, cubeMemory, nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
+
     glfwDestroyWindow(window);
     glfwTerminate();
 }

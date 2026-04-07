@@ -18,10 +18,10 @@ glm::vec3 ModelLoader::rotateVec(glm::vec3 v, glm::vec3 rot) {
     return rz;
 }
 
-void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale)
-{
+void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
     string extension = "";
     size_t dotPos = filename.find_last_of('.');
+
     if (dotPos != string::npos) {
         extension = filename.substr(dotPos + 1);
     }
@@ -34,12 +34,11 @@ void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangl
     }
 }
 
-void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale)
-{
+void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
     ifstream file(filename);
-    if (!file.is_open())
-    {
-        cout << "Error: Could not open " << filename << "\n";
+
+    if (!file.is_open()) {
+        cout << "Error: Could not open file.\n";
         return;
     }
 
@@ -48,66 +47,73 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
     string line;
     int facesCount = 0;
 
-    while (getline(file, line))
-    {
+    while (getline(file, line)) {
         stringstream ss(line);
         string prefix;
         ss >> prefix;
 
-        if (prefix == "v")
-        {
-            float x, y, z;
+        if (prefix == "v") {
+            float x;
+            float y;
+            float z;
             ss >> x >> y >> z;
-            glm::vec3 v(x, y, z);
 
+            glm::vec3 v(x, y, z);
             v = v * scale;
             v = rotateVec(v, rotation);
             v = v + position;
 
             vertices.push_back(v);
         }
-        else if (prefix == "vn")
-        {
-            float nx, ny, nz;
+        else if (prefix == "vn") {
+            float nx;
+            float ny;
+            float nz;
             ss >> nx >> ny >> nz;
-            glm::vec3 n(nx, ny, nz);
 
+            glm::vec3 n(nx, ny, nz);
             n = rotateVec(n, rotation);
             n = glm::normalize(n);
+
             normals.push_back(n);
         }
-        else if (prefix == "f")
-        {
+        else if (prefix == "f") {
             string token;
             vector<int> vIndices;
             vector<int> vnIndices;
 
-            while (ss >> token)
-            {
-                int v_idx = -1, vt_idx = -1, vn_idx = -1;
+            while (ss >> token) {
+                int v_idx = -1;
+                int vt_idx = -1;
+                int vn_idx = -1;
+
                 stringstream token_ss(token);
                 string item;
                 int index = 0;
 
-                while (getline(token_ss, item, '/'))
-                {
-                    if (!item.empty())
-                    {
-                        if (index == 0) v_idx = stoi(item) - 1;
-                        else if (index == 1) vt_idx = stoi(item) - 1;
-                        else if (index == 2) vn_idx = stoi(item) - 1;
+                while (getline(token_ss, item, '/')) {
+                    if (!item.empty()) {
+                        if (index == 0) {
+                            v_idx = stoi(item) - 1;
+                        }
+                        else if (index == 1) {
+                            vt_idx = stoi(item) - 1;
+                        }
+                        else if (index == 2) {
+                            vn_idx = stoi(item) - 1;
+                        }
                     }
                     index++;
                 }
 
                 vIndices.push_back(v_idx);
-                if (vn_idx != -1) vnIndices.push_back(vn_idx);
+                if (vn_idx != -1) {
+                    vnIndices.push_back(vn_idx);
+                }
             }
 
-            if (vIndices.size() >= 3)
-            {
-                for (size_t i = 1; i < vIndices.size() - 1; ++i)
-                {
+            if (vIndices.size() >= 3) {
+                for (size_t i = 1; i < vIndices.size() - 1; ++i) {
                     GPUTriangle tri;
 
                     tri.p1 = 0.0f;
@@ -124,20 +130,20 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
                     tri.v2 = vertices[vIndices[i + 1]];
                     tri.materialIndex = materialIndex;
 
-                    if (vnIndices.size() == vIndices.size())
-                    {
+                    if (vnIndices.size() == vIndices.size()) {
                         tri.n0 = normals[vnIndices[0]];
                         tri.n1 = normals[vnIndices[i]];
                         tri.n2 = normals[vnIndices[i + 1]];
                         tri.isSmooth = 1;
                     }
-                    else
-                    {
+                    else {
                         glm::vec3 edge1 = tri.v1 - tri.v0;
                         glm::vec3 edge2 = tri.v2 - tri.v0;
                         glm::vec3 flatNormal = glm::normalize(glm::cross(edge1, edge2));
 
-                        tri.n0 = flatNormal; tri.n1 = flatNormal; tri.n2 = flatNormal;
+                        tri.n0 = flatNormal;
+                        tri.n1 = flatNormal;
+                        tri.n2 = flatNormal;
                         tri.isSmooth = 0;
                     }
 
@@ -147,5 +153,5 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
             }
         }
     }
-    cout << "Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n";
+    cout << "Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n"; 
 }

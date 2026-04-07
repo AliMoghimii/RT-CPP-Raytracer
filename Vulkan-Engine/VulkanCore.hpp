@@ -14,15 +14,28 @@ struct CameraPushConstants {
     glm::vec4 camForward;
     glm::vec4 camRight;
     glm::vec4 camUp;
+    int sphereCount;
+    int triangleCount;
+    int planeCount;
+    int quadCount;
+    int cubeCount;
+    int lightCount;
+    float pad1;
+    float pad2;
 };
 
 class VulkanCore {
 public:
     void run();
-    void loadScene(const std::vector<GPUMaterial>& mats,
+    void loadScene(
+        const std::vector<GPUMaterial>& mats,
         const std::vector<GPUSphere>& sphs,
         const std::vector<GPUTriangle>& tris,
-        const std::vector<GPULight>& lghts);
+        const std::vector<GPULight>& lghts,
+        const std::vector<GPUPlane>& plns,
+        const std::vector<GPUQuad>& quds,
+        const std::vector<GPUCube>& cbs
+    );
 
 private:
     GLFWwindow* window;
@@ -48,15 +61,34 @@ private:
     VkDeviceMemory computeImageMemory;
     VkImageView computeImageView;
 
-    VkBuffer materialBuffer; VkDeviceMemory materialMemory;
-    VkBuffer sphereBuffer;   VkDeviceMemory sphereMemory;
-    VkBuffer triangleBuffer; VkDeviceMemory triangleMemory;
-    VkBuffer lightBuffer;    VkDeviceMemory lightMemory;
+    VkBuffer materialBuffer;
+    VkDeviceMemory materialMemory;
+
+    VkBuffer sphereBuffer;
+    VkDeviceMemory sphereMemory;
+
+    VkBuffer triangleBuffer;
+    VkDeviceMemory triangleMemory;
+
+    VkBuffer lightBuffer;
+    VkDeviceMemory lightMemory;
+
+    VkBuffer planeBuffer;
+    VkDeviceMemory planeMemory;
+
+    VkBuffer quadBuffer;
+    VkDeviceMemory quadMemory;
+
+    VkBuffer cubeBuffer;
+    VkDeviceMemory cubeMemory;
 
     std::vector<GPUMaterial> sceneMaterials;
     std::vector<GPUSphere> sceneSpheres;
     std::vector<GPUTriangle> sceneTriangles;
     std::vector<GPULight> sceneLights;
+    std::vector<GPUPlane> scenePlanes;
+    std::vector<GPUQuad> sceneQuads;
+    std::vector<GPUCube> sceneCubes;
 
     VkCommandPool commandPool;
     VkCommandBuffer commandBuffer;
@@ -83,16 +115,15 @@ private:
     void createSwapchainImageViews();
     void createComputeImage();
     void createSceneBuffers();
-
     void createDescriptorSetLayout();
     void createComputePipeline();
     void createDescriptorPool();
     void createDescriptorSets();
     void createCommandBuffers();
     void createSyncObjects();
-
     void mainLoop();
     void processInput();
+    void updateDynamicData();
     void drawFrame();
     void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
     void cleanup();

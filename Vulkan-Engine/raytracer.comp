@@ -8,79 +8,359 @@ layout(push_constant) uniform CameraData {
     vec4 camForward;
     vec4 camRight;
     vec4 camUp;
+    int sphereCount;
+    int triangleCount;
+    int planeCount;
+    int quadCount;
+    int cubeCount;
+    int lightCount;
+    float pad1;
+    float pad2;
 } cam;
 
 struct GPUMaterial {
-    vec3 color; float ambient;
-    float diffuse; float specular; float reflection; float transparency;
-    float ior; int type; float p1; float p2; 
+    vec3 color;
+    float ambient;
+    float diffuse;
+    float specular;
+    float reflection;
+    float transparency;
+    float ior;
+    int type;
+    float p1;
+    float p2;
 };
 
 struct GPUSphere {
-    vec3 center; float radius;
-    int materialIndex; float p1, p2, p3; 
+    vec3 center;
+    float radius;
+    int materialIndex;
+    float p1;
+    float p2;
+    float p3;
 };
 
 struct GPUTriangle {
-    vec3 v0; float p1; vec3 v1; float p2; vec3 v2; float p3;
-    vec3 n0; float p4; vec3 n1; float p5; vec3 n2; int isSmooth;
-    int materialIndex; float p6, p7, p8;
+    vec3 v0;
+    float p1;
+    vec3 v1;
+    float p2;
+    vec3 v2;
+    float p3;
+    vec3 n0;
+    float p4;
+    vec3 n1;
+    float p5;
+    vec3 n2;
+    int isSmooth;
+    int materialIndex;
+    float p6;
+    float p7;
+    float p8;
 };
 
 struct GPULight {
-    vec3 position; float p1;
-    vec3 color; float p2;
+    vec3 position;
+    float p1;
+    vec3 color;
+    float p2;
+};
+
+struct GPUPlane {
+    vec3 center;
+    float p1;
+    vec3 normalVector;
+    int materialIndex;
+    float p2;
+    float p3;
+    float p4;
+    float p5;
+};
+
+struct GPUQuad {
+    vec3 corner;
+    float p1;
+    vec3 edge1;
+    float p2;
+    vec3 edge2;
+    float p3;
+    vec3 normalVector;
+    int materialIndex;
+    float p4;
+    float p5;
+    float p6;
+    float p7;
+};
+
+struct GPUCube {
+    vec3 boundsMin;
+    float p1;
+    vec3 boundsMax;
+    float p2;
+    vec3 center;
+    float p3;
+    vec3 rotation;
+    int materialIndex;
+    float p4;
+    float p5;
+    float p6;
+    float p7;
 };
 
 layout(std430, binding = 1) readonly buffer MaterialBuffer { GPUMaterial materials[]; };
 layout(std430, binding = 2) readonly buffer SphereBuffer { GPUSphere spheres[]; };
 layout(std430, binding = 3) readonly buffer TriangleBuffer { GPUTriangle triangles[]; };
 layout(std430, binding = 4) readonly buffer LightBuffer { GPULight lights[]; };
+layout(std430, binding = 5) readonly buffer PlaneBuffer { GPUPlane planes[]; };
+layout(std430, binding = 6) readonly buffer QuadBuffer { GPUQuad quads[]; };
+layout(std430, binding = 7) readonly buffer CubeBuffer { GPUCube cubes[]; };
 
-struct Ray { vec3 origin; vec3 direction; };
+struct Ray {
+    vec3 origin;
+    vec3 direction;
+};
+
+mat3 rotationMatrixXYZ(vec3 rot) {
+    vec3 rad = radians(rot);
+    vec3 c = cos(rad);
+    vec3 s = sin(rad);
+
+    mat3 rx = mat3(
+        1.0, 0.0, 0.0,
+        0.0, c.x, s.x,
+        0.0, -s.x, c.x
+    );
+
+    mat3 ry = mat3(
+        c.y, 0.0, -s.y,
+        0.0, 1.0, 0.0,
+        s.y, 0.0, c.y
+    );
+
+    mat3 rz = mat3(
+        c.z, s.z, 0.0,
+        -s.z, c.z, 0.0,
+        0.0, 0.0, 1.0
+    );
+
+    return rz * ry * rx;
+}
 
 float sphereIntersect(Ray ray, GPUSphere sphere) {
     vec3 oc = ray.origin - sphere.center;
-    float a = 1.0; 
+    float a = 1.0;
     float b = 2.0 * dot(ray.direction, oc);
     float c = dot(oc, oc) - (sphere.radius * sphere.radius);
     
     float discriminant = b * b - 4.0 * a * c;
+    
     if (discriminant >= 0.0) {
         float dist = (-b - sqrt(discriminant)) / (2.0 * a);
-        if (dist > 0.0001) return dist;
+        if (dist > 0.0001) {
+            return dist;
+        }
+        
         dist = (-b + sqrt(discriminant)) / (2.0 * a);
-        if (dist > 0.0001) return dist;
+        if (dist > 0.0001) {
+            return dist;
+        }
     }
     return -1.0;
 }
 
-float triangleIntersect(Ray ray, GPUTriangle tri) {
-    const float EPSILON = 0.0000001;
+float triangleIntersect(Ray ray, GPUTriangle tri, out float outU, out float outV) {
     vec3 edge1 = tri.v1 - tri.v0;
     vec3 edge2 = tri.v2 - tri.v0;
     vec3 h = cross(ray.direction, edge2);
     float a = dot(edge1, h);
-    if (a > -EPSILON && a < EPSILON) return -1.0; 
+    
+    if (a > -0.0000001 && a < 0.0000001) {
+        return -1.0;
+    }
+    
     float f = 1.0 / a;
     vec3 s = ray.origin - tri.v0;
     float u = f * dot(s, h);
-    if (u < 0.0 || u > 1.0) return -1.0;
+    
+    if (u < 0.0 || u > 1.0) {
+        return -1.0;
+    }
+    
     vec3 q = cross(s, edge1);
     float v = f * dot(ray.direction, q);
-    if (v < 0.0 || u + v > 1.0) return -1.0;
+    
+    if (v < 0.0 || u + v > 1.0) {
+        return -1.0;
+    }
+    
     float t = f * dot(edge2, q);
-    if (t > EPSILON) return t;
+    if (t > 0.0000001) {
+        outU = u;
+        outV = v;
+        return t;
+    }
+    
     return -1.0;
+}
+
+float planeIntersect(Ray ray, GPUPlane plane) {
+    float denom = dot(ray.direction, plane.normalVector);
+    
+    if (abs(denom) > 1e-6) {
+        float t = dot(plane.center - ray.origin, plane.normalVector) / denom;
+        if (t >= 0.0001) {
+            return t;
+        }
+    }
+    return -1.0;
+}
+
+float quadIntersect(Ray ray, GPUQuad quad) {
+    float denom = dot(ray.direction, quad.normalVector);
+    
+    if (abs(denom) > 1e-6) {
+        float t = dot(quad.corner - ray.origin, quad.normalVector) / denom;
+        if (t >= 0.0001) {
+            vec3 hitPoint = ray.origin + ray.direction * t;
+            vec3 p = hitPoint - quad.corner;
+            float u = dot(p, quad.edge1) / dot(quad.edge1, quad.edge1);
+            float v = dot(p, quad.edge2) / dot(quad.edge2, quad.edge2);
+            if (u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0) {
+                return t;
+            }
+        }
+    }
+    return -1.0;
+}
+
+float cubeIntersect(Ray ray, GPUCube cube) {
+    vec3 boxCenter = (cube.boundsMin + cube.boundsMax) * 0.5;
+    vec3 worldCenter = cube.center + boxCenter;
+    vec3 halfExtents = (cube.boundsMax - cube.boundsMin) * 0.5;
+    
+    vec3 localMin = -halfExtents;
+    vec3 localMax = halfExtents;
+
+    vec3 localOrigin = ray.origin - worldCenter;
+    vec3 localDir = ray.direction;
+    
+    mat3 invRot = transpose(rotationMatrixXYZ(cube.rotation));
+    localOrigin = invRot * localOrigin;
+    localDir = invRot * localDir;
+
+    float invDx = 1.0 / (localDir.x != 0.0 ? localDir.x : 1e-8);
+    float tmin = (localMin.x - localOrigin.x) * invDx;
+    float tmax = (localMax.x - localOrigin.x) * invDx;
+    
+    if (tmin > tmax) {
+        float tmp = tmin;
+        tmin = tmax;
+        tmax = tmp;
+    }
+
+    float invDy = 1.0 / (localDir.y != 0.0 ? localDir.y : 1e-8);
+    float tymin = (localMin.y - localOrigin.y) * invDy;
+    float tymax = (localMax.y - localOrigin.y) * invDy;
+    
+    if (tymin > tymax) {
+        float tmp = tymin;
+        tymin = tymax;
+        tymax = tmp;
+    }
+
+    if ((tmin > tymax) || (tymin > tmax)) {
+        return -1.0;
+    }
+    
+    if (tymin > tmin) {
+        tmin = tymin;
+    }
+    
+    if (tymax < tmax) {
+        tmax = tymax;
+    }
+
+    float invDz = 1.0 / (localDir.z != 0.0 ? localDir.z : 1e-8);
+    float tzmin = (localMin.z - localOrigin.z) * invDz;
+    float tzmax = (localMax.z - localOrigin.z) * invDz;
+    
+    if (tzmin > tzmax) {
+        float tmp = tzmin;
+        tzmin = tzmax;
+        tzmax = tmp;
+    }
+
+    if ((tmin > tzmax) || (tzmin > tmax)) {
+        return -1.0;
+    }
+    
+    if (tzmin > tmin) {
+        tmin = tzmin;
+    }
+    
+    if (tzmax < tmax) {
+        tmax = tzmax;
+    }
+
+    if (tmin >= 0.0001) {
+        return tmin;
+    }
+    
+    if (tmax >= 0.0001) {
+        return tmax;
+    }
+    
+    return -1.0;
+}
+
+vec3 cubeNormal(vec3 surfacePoint, GPUCube cube) {
+    vec3 boxCenter = (cube.boundsMin + cube.boundsMax) * 0.5;
+    vec3 worldCenter = cube.center + boxCenter;
+    vec3 halfExtents = (cube.boundsMax - cube.boundsMin) * 0.5;
+    
+    vec3 localMin = -halfExtents;
+    vec3 localMax = halfExtents;
+
+    vec3 localPoint = surfacePoint - worldCenter;
+    mat3 invRot = transpose(rotationMatrixXYZ(cube.rotation));
+    localPoint = invRot * localPoint;
+
+    vec3 localNormal;
+    float eps = 0.0001;
+    
+    if (abs(localPoint.x - localMin.x) < eps) {
+        localNormal = vec3(-1, 0, 0);
+    }
+    else if (abs(localPoint.x - localMax.x) < eps) {
+        localNormal = vec3(1, 0, 0);
+    }
+    else if (abs(localPoint.y - localMin.y) < eps) {
+        localNormal = vec3(0, -1, 0);
+    }
+    else if (abs(localPoint.y - localMax.y) < eps) {
+        localNormal = vec3(0, 1, 0);
+    }
+    else if (abs(localPoint.z - localMin.z) < eps) {
+        localNormal = vec3(0, 0, -1);
+    }
+    else if (abs(localPoint.z - localMax.z) < eps) {
+        localNormal = vec3(0, 0, 1);
+    }
+    else {
+        localNormal = vec3(0, 1, 0);
+    }
+
+    mat3 rot = rotationMatrixXYZ(cube.rotation);
+    return normalize(rot * localNormal);
 }
 
 vec3 lambertianShading(GPUMaterial mat, vec3 baseColor, vec3 hitNormal, vec3 lightDir, vec3 lightColor) {
     return baseColor * mat.diffuse * max(dot(hitNormal, lightDir), 0.0) * lightColor;
 }
 
-vec3 blingPhongShading(GPUMaterial mat, vec3 lightColor, vec3 hitNormal, vec3 lightDir, vec3 viewDir, float specularExponent) {
+vec3 blingPhongShading(GPUMaterial mat, vec3 lightColor, vec3 hitNormal, vec3 lightDir, vec3 viewDir, float specExp) {
     vec3 halfVector = normalize(lightDir + viewDir);
-    return lightColor * mat.specular * pow(max(dot(hitNormal, halfVector), 0.0), specularExponent);
+    return lightColor * mat.specular * pow(max(dot(hitNormal, halfVector), 0.0), specExp);
 }
 
 const float MIN_DISPLACEMENT = 0.0001;
@@ -89,10 +369,13 @@ const int MAX_DEPTH = 5;
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
     ivec2 imageSize = imageSize(resultImage);
-    if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
+    
+    if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) {
+        return;
+    }
 
     vec2 uv = vec2(pixelCoords) / vec2(imageSize) * 2.0 - 1.0;
-    uv.y = -uv.y; 
+    uv.y = -uv.y;
     uv.x *= float(imageSize.x) / float(imageSize.y); 
 
     Ray ray;
@@ -104,24 +387,63 @@ void main() {
 
     for (int depth = 0; depth < MAX_DEPTH; depth++) {
         float minHitDistance = 999999.0;
-        int hitObjType = -1; 
+        int hitObjType = -1;
         int hitObjIndex = -1;
+        
+        float hitU = 0.0;
+        float hitV = 0.0;
 
-        for (int i = 0; i < spheres.length(); i++) {
+        for (int i = 0; i < cam.sphereCount; i++) {
             float dist = sphereIntersect(ray, spheres[i]);
             if (dist > 0.0 && dist < minHitDistance) {
-                minHitDistance = dist; hitObjType = 0; hitObjIndex = i;
+                minHitDistance = dist;
+                hitObjType = 0;
+                hitObjIndex = i;
             }
         }
-        for (int i = 0; i < triangles.length(); i++) {
-            float dist = triangleIntersect(ray, triangles[i]);
+        
+        for (int i = 0; i < cam.triangleCount; i++) {
+            float tempU;
+            float tempV;
+            float dist = triangleIntersect(ray, triangles[i], tempU, tempV);
             if (dist > 0.0 && dist < minHitDistance) {
-                minHitDistance = dist; hitObjType = 1; hitObjIndex = i;
+                minHitDistance = dist;
+                hitObjType = 1;
+                hitObjIndex = i;
+                hitU = tempU;
+                hitV = tempV;
+            }
+        }
+        
+        for (int i = 0; i < cam.planeCount; i++) {
+            float dist = planeIntersect(ray, planes[i]);
+            if (dist > 0.0 && dist < minHitDistance) {
+                minHitDistance = dist;
+                hitObjType = 2;
+                hitObjIndex = i;
+            }
+        }
+        
+        for (int i = 0; i < cam.quadCount; i++) {
+            float dist = quadIntersect(ray, quads[i]);
+            if (dist > 0.0 && dist < minHitDistance) {
+                minHitDistance = dist;
+                hitObjType = 3;
+                hitObjIndex = i;
+            }
+        }
+        
+        for (int i = 0; i < cam.cubeCount; i++) {
+            float dist = cubeIntersect(ray, cubes[i]);
+            if (dist > 0.0 && dist < minHitDistance) {
+                minHitDistance = dist;
+                hitObjType = 4;
+                hitObjIndex = i;
             }
         }
 
         if (hitObjType == -1) {
-            finalColor += attenuation * vec3(0.05, 0.05, 0.05); 
+            finalColor += attenuation * vec3(0.05, 0.05, 0.05);
             break;
         }
 
@@ -132,22 +454,46 @@ void main() {
         if (hitObjType == 0) {
             hitNormal = normalize(hitPos - spheres[hitObjIndex].center);
             mat = materials[spheres[hitObjIndex].materialIndex];
-        } else {
-            hitNormal = triangles[hitObjIndex].n0;
-            mat = materials[triangles[hitObjIndex].materialIndex];
+        }
+        else if (hitObjType == 1) {
+            GPUTriangle tri = triangles[hitObjIndex];
+            
+            if (tri.isSmooth == 1) {
+                float hitW = 1.0 - hitU - hitV;
+                hitNormal = normalize(tri.n0 * hitW + tri.n1 * hitU + tri.n2 * hitV);
+            } else {
+                hitNormal = tri.n0;
+            }
+            mat = materials[tri.materialIndex];
+        }
+        else if (hitObjType == 2) {
+            hitNormal = planes[hitObjIndex].normalVector;
+            mat = materials[planes[hitObjIndex].materialIndex];
+        }
+        else if (hitObjType == 3) {
+            hitNormal = quads[hitObjIndex].normalVector;
+            mat = materials[quads[hitObjIndex].materialIndex];
+        }
+        else if (hitObjType == 4) {
+            hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]);
+            mat = materials[cubes[hitObjIndex].materialIndex];
         }
 
         vec3 baseColor = mat.color;
+        
         if (mat.type == 1) { 
             float pattern = mod(floor((hitPos.x + 5.0) * 3.0) + floor(hitPos.z * 3.0), 2.0);
-            if (pattern > 0.5) baseColor = vec3(0.8); 
-            else baseColor = vec3(0.1);               
+            if (pattern > 0.5) {
+                baseColor = vec3(0.8);
+            } else {
+                baseColor = vec3(0.1);
+            }
         }
 
         vec3 rayToCameraDir = normalize(cam.camPos.xyz - hitPos);
         vec3 localColor = baseColor * mat.ambient;
 
-        for (int l = 0; l < lights.length(); l++) {
+        for (int l = 0; l < cam.lightCount; l++) {
             vec3 lightDir = normalize(lights[l].position - hitPos);
             float lightDistance = length(lights[l].position - hitPos);
             
@@ -156,14 +502,50 @@ void main() {
             shadowRay.direction = lightDir;
             
             bool inShadow = false;
-            for (int i = 0; i < spheres.length(); i++) {
+            
+            for (int i = 0; i < cam.sphereCount; i++) {
                 float dist = sphereIntersect(shadowRay, spheres[i]);
-                if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
+                if (dist > 0.0 && dist < lightDistance) {
+                    inShadow = true;
+                    break;
+                }
             }
             if (!inShadow) {
-                for (int i = 0; i < triangles.length(); i++) {
-                    float dist = triangleIntersect(shadowRay, triangles[i]);
-                    if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
+                for (int i = 0; i < cam.triangleCount; i++) {
+                    float dummyU;
+                    float dummyV;
+                    float dist = triangleIntersect(shadowRay, triangles[i], dummyU, dummyV);
+                    if (dist > 0.0 && dist < lightDistance) {
+                        inShadow = true;
+                        break;
+                    }
+                }
+            }
+            if (!inShadow) {
+                for (int i = 0; i < cam.planeCount; i++) {
+                    float dist = planeIntersect(shadowRay, planes[i]);
+                    if (dist > 0.0 && dist < lightDistance) {
+                        inShadow = true;
+                        break;
+                    }
+                }
+            }
+            if (!inShadow) {
+                for (int i = 0; i < cam.quadCount; i++) {
+                    float dist = quadIntersect(shadowRay, quads[i]);
+                    if (dist > 0.0 && dist < lightDistance) {
+                        inShadow = true;
+                        break;
+                    }
+                }
+            }
+            if (!inShadow) {
+                for (int i = 0; i < cam.cubeCount; i++) {
+                    float dist = cubeIntersect(shadowRay, cubes[i]);
+                    if (dist > 0.0 && dist < lightDistance) {
+                        inShadow = true;
+                        break;
+                    }
                 }
             }
 
@@ -173,12 +555,49 @@ void main() {
             }
         }
 
-        if (mat.reflection > 0.0) {
+        if (mat.transparency > 0.0) {
+            float cosI = dot(ray.direction, hitNormal);
+            float eta;
+            vec3 n = hitNormal;
+            
+            if (cosI < 0.0) {
+                eta = 1.0 / mat.ior;
+                cosI = -cosI;
+            } else {
+                eta = mat.ior;
+                n = -hitNormal;
+            }
+            
+            float r0 = (1.0 - eta) / (1.0 + eta);
+            r0 = r0 * r0;
+            float fresnel = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
+            
+            vec3 refractDir = refract(ray.direction, n, eta);
+            
+            if (length(refractDir) < 0.001) {
+                fresnel = 1.0; 
+            }
+            
+            if (fresnel < 1.0 && length(refractDir) > 0.001) {
+                finalColor += attenuation * localColor * (1.0 - mat.transparency);
+                attenuation *= mat.transparency * (1.0 - fresnel);
+                
+                ray.origin = hitPos - n * MIN_DISPLACEMENT; 
+                ray.direction = normalize(refractDir);
+            } else {
+                finalColor += attenuation * localColor * (1.0 - mat.reflection);
+                attenuation *= mat.reflection;
+                ray.origin = hitPos + n * MIN_DISPLACEMENT;
+                ray.direction = reflect(ray.direction, n);
+            }
+        } 
+        else if (mat.reflection > 0.0) {
             finalColor += attenuation * localColor * (1.0 - mat.reflection);
-            attenuation *= mat.reflection; 
+            attenuation *= mat.reflection;
             ray.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
             ray.direction = reflect(ray.direction, hitNormal);
-        } else {
+        } 
+        else {
             finalColor += attenuation * localColor;
             break; 
         }

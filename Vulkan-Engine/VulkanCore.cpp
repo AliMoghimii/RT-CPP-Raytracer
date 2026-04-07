@@ -372,7 +372,7 @@ void VulkanCore::createDescriptorSetLayout() {
 }
 
 void VulkanCore::createComputePipeline() {
-    auto compShaderCode = readFile("raytracer.comp.spv");
+    auto compShaderCode = readFile("shaders/raytracer.comp.spv");
     VkShaderModule compShaderModule = createShaderModule(compShaderCode);
 
     VkPipelineShaderStageCreateInfo shaderStageInfo{};

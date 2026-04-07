@@ -33,10 +33,10 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="raytracer.comp">
+    <None Include="compile_shaders.bat">
       <Filter>Source Files</Filter>
     </None>
-    <None Include="compile_shaders.bat">
+    <None Include="shaders\raytracer.comp">
       <Filter>Source Files</Filter>
     </None>
   </ItemGroup>

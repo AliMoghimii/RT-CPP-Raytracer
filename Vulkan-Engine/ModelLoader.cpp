@@ -1,4 +1,5 @@
 #include "ModelLoader.hpp"
+#include "MathUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -6,18 +7,6 @@
 #include <algorithm>
 
 using namespace std;
-
-glm::vec3 ModelLoader::rotateVec(glm::vec3 v, glm::vec3 rot) {
-    float radX = rot.x * 3.14159265359f / 180.0f;
-    float radY = rot.y * 3.14159265359f / 180.0f;
-    float radZ = rot.z * 3.14159265359f / 180.0f;
-
-    glm::vec3 rx(v.x, v.y * cos(radX) - v.z * sin(radX), v.y * sin(radX) + v.z * cos(radX));
-    glm::vec3 ry(rx.x * cos(radY) + rx.z * sin(radY), rx.y, -rx.x * sin(radY) + rx.z * cos(radY));
-    glm::vec3 rz(ry.x * cos(radZ) - ry.y * sin(radZ), ry.x * sin(radZ) + ry.y * cos(radZ), ry.z);
-
-    return rz;
-}
 
 void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, vector<GPUBVHNode>& bvhNodes, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
     string extension = "";
@@ -65,7 +54,7 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
 
             glm::vec3 v(x, y, z);
             v = v * scale;
-            v = rotateVec(v, rotation);
+            v = MathUtils::rotateVec(v, rotation);
             v = v + position;
 
             vertices.push_back(v);
@@ -77,7 +66,7 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
             ss >> nx >> ny >> nz;
 
             glm::vec3 n(nx, ny, nz);
-            n = rotateVec(n, rotation);
+            n = MathUtils::rotateVec(n, rotation);
             n = glm::normalize(n);
 
             normals.push_back(n);

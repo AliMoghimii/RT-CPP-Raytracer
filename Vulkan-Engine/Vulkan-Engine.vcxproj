@@ -147,6 +147,7 @@ if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)"
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="GPUData.hpp" />
+    <ClInclude Include="MathUtils.hpp" />
     <ClInclude Include="ModelLoader.hpp" />
     <ClInclude Include="VulkanCore.hpp" />
   </ItemGroup>

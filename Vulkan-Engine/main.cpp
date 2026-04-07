@@ -1,5 +1,6 @@
 #include "VulkanCore.hpp"
 #include "ModelLoader.hpp"
+#include "MathUtils.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
@@ -58,7 +59,7 @@ int main() {
 
     for (int i = 0; i < 4; i++) {
         pts[i] = pts[i] * 0.1f;
-        pts[i] = ModelLoader::rotateVec(pts[i], glm::vec3(0.0f, 125.0f, 0.0f));
+        pts[i] = MathUtils::rotateVec(pts[i], glm::vec3(0.0f, 125.0f, 0.0f));
         pts[i] = pts[i] + glm::vec3(0.35f, 0.0f, 0.35f);
     }
 

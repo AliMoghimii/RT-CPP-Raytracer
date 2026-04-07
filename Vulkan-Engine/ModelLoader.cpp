@@ -3,6 +3,7 @@
 #include <sstream>
 #include <iostream>
 #include <cmath>
+#include <algorithm>
 
 using namespace std;
 
@@ -18,7 +19,7 @@ glm::vec3 ModelLoader::rotateVec(glm::vec3 v, glm::vec3 rot) {
     return rz;
 }
 
-void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
+void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, vector<GPUBVHNode>& bvhNodes, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
     string extension = "";
     size_t dotPos = filename.find_last_of('.');
 
@@ -28,6 +29,10 @@ void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangl
 
     if (extension == "obj" || extension == "OBJ") {
         loadOBJ(filename, sceneTriangles, materialIndex, position, rotation, scale);
+
+        cout << "Building BVH...\n";
+        buildBVH(sceneTriangles, bvhNodes);
+        cout << "BVH Built successfully.\n";
     }
     else {
         cout << "Error: Unsupported file format '." << extension << "'\n";
@@ -154,4 +159,99 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
         }
     }
     cout << "Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n"; 
+}
+
+void ModelLoader::updateNodeBounds(int nodeIdx, vector<GPUBVHNode>& bvhNodes, const vector<GPUTriangle>& triangles) {
+    GPUBVHNode& node = bvhNodes[nodeIdx];
+    node.aabbMin = glm::vec3(1e30f);
+    node.aabbMax = glm::vec3(-1e30f);
+
+    for (int i = 0; i < node.triCount; i++) {
+        const GPUTriangle& tri = triangles[node.leftFirst + i];
+
+        glm::vec3 minV = glm::min(glm::min(tri.v0, tri.v1), tri.v2);
+        glm::vec3 maxV = glm::max(glm::max(tri.v0, tri.v1), tri.v2);
+
+        node.aabbMin = glm::min(node.aabbMin, minV);
+        node.aabbMax = glm::max(node.aabbMax, maxV);
+    }
+}
+
+void ModelLoader::subdivide(int nodeIdx, vector<GPUBVHNode>& bvhNodes, vector<GPUTriangle>& triangles, int& nodesUsed) {
+    GPUBVHNode& node = bvhNodes[nodeIdx];
+
+    if (node.triCount <= 2) {
+        return;
+    }
+
+    glm::vec3 extent = node.aabbMax - node.aabbMin;
+    int axis = 0;
+
+    if (extent.y > extent.x) {
+        axis = 1;
+    }
+    if (extent.z > extent[axis]) {
+        axis = 2;
+    }
+
+    float splitPos = node.aabbMin[axis] + extent[axis] * 0.5f;
+
+    int i = node.leftFirst;
+    int j = i + node.triCount - 1;
+
+    while (i <= j) {
+        glm::vec3 centroid = (triangles[i].v0 + triangles[i].v1 + triangles[i].v2) / 3.0f;
+        if (centroid[axis] < splitPos) {
+            i++;
+        }
+        else {
+            swap(triangles[i], triangles[j]);
+            j--;
+        }
+    }
+
+    int leftCount = i - node.leftFirst;
+
+    if (leftCount == 0 || leftCount == node.triCount) {
+        return;
+    }
+
+    int leftChildIdx = nodesUsed;
+    nodesUsed++;
+
+    int rightChildIdx = nodesUsed;
+    nodesUsed++;
+
+    bvhNodes[leftChildIdx].leftFirst = node.leftFirst;
+    bvhNodes[leftChildIdx].triCount = leftCount;
+    updateNodeBounds(leftChildIdx, bvhNodes, triangles);
+
+    bvhNodes[rightChildIdx].leftFirst = i;
+    bvhNodes[rightChildIdx].triCount = node.triCount - leftCount;
+    updateNodeBounds(rightChildIdx, bvhNodes, triangles);
+
+    node.leftFirst = leftChildIdx;
+    node.triCount = 0;
+
+    subdivide(leftChildIdx, bvhNodes, triangles, nodesUsed);
+    subdivide(rightChildIdx, bvhNodes, triangles, nodesUsed);
+}
+
+void ModelLoader::buildBVH(vector<GPUTriangle>& triangles, vector<GPUBVHNode>& bvhNodes) {
+    if (triangles.empty()) {
+        return;
+    }
+
+    bvhNodes.resize(triangles.size() * 2);
+
+    GPUBVHNode& root = bvhNodes[0];
+    root.leftFirst = 0;
+    root.triCount = static_cast<int>(triangles.size());
+
+    updateNodeBounds(0, bvhNodes, triangles);
+
+    int nodesUsed = 1;
+    subdivide(0, bvhNodes, triangles, nodesUsed);
+
+    bvhNodes.resize(nodesUsed);
 }

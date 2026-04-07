@@ -14,8 +14,8 @@ layout(push_constant) uniform CameraData {
     int quadCount;
     int cubeCount;
     int lightCount;
+    int bvhCount;
     float pad1;
-    float pad2;
 } cam;
 
 struct GPUMaterial {
@@ -107,6 +107,13 @@ struct GPUCube {
     float p7;
 };
 
+struct GPUBVHNode {
+    vec3 aabbMin;
+    int leftFirst;
+    vec3 aabbMax;
+    int triCount;
+};
+
 layout(std430, binding = 1) readonly buffer MaterialBuffer { GPUMaterial materials[]; };
 layout(std430, binding = 2) readonly buffer SphereBuffer { GPUSphere spheres[]; };
 layout(std430, binding = 3) readonly buffer TriangleBuffer { GPUTriangle triangles[]; };
@@ -114,6 +121,7 @@ layout(std430, binding = 4) readonly buffer LightBuffer { GPULight lights[]; };
 layout(std430, binding = 5) readonly buffer PlaneBuffer { GPUPlane planes[]; };
 layout(std430, binding = 6) readonly buffer QuadBuffer { GPUQuad quads[]; };
 layout(std430, binding = 7) readonly buffer CubeBuffer { GPUCube cubes[]; };
+layout(std430, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhNodes[]; };
 
 struct Ray {
     vec3 origin;
@@ -144,6 +152,22 @@ mat3 rotationMatrixXYZ(vec3 rot) {
     );
 
     return rz * ry * rx;
+}
+
+float intersectAABB(Ray ray, vec3 invDir, vec3 bMin, vec3 bMax) {
+    vec3 t0 = (bMin - ray.origin) * invDir;
+    vec3 t1 = (bMax - ray.origin) * invDir;
+    vec3 tmin = min(t0, t1);
+    vec3 tmax = max(t0, t1);
+    
+    float maxTmin = max(max(tmin.x, tmin.y), tmin.z);
+    float minTmax = min(min(tmax.x, tmax.y), tmax.z);
+    
+    if (maxTmin <= minTmax && minTmax > 0.0) {
+        return maxTmin < 0.0 ? 0.0 : maxTmin;
+    }
+    
+    return 999999.0;
 }
 
 float sphereIntersect(Ray ray, GPUSphere sphere) {
@@ -378,6 +402,10 @@ void main() {
     uv.y = -uv.y;
     uv.x *= float(imageSize.x) / float(imageSize.y); 
 
+    float fov = 60.0;
+    float halfFovTan = tan(radians(fov * 0.5));
+    uv *= halfFovTan;
+
     Ray ray;
     ray.origin = cam.camPos.xyz;
     ray.direction = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
@@ -399,19 +427,6 @@ void main() {
                 minHitDistance = dist;
                 hitObjType = 0;
                 hitObjIndex = i;
-            }
-        }
-        
-        for (int i = 0; i < cam.triangleCount; i++) {
-            float tempU;
-            float tempV;
-            float dist = triangleIntersect(ray, triangles[i], tempU, tempV);
-            if (dist > 0.0 && dist < minHitDistance) {
-                minHitDistance = dist;
-                hitObjType = 1;
-                hitObjIndex = i;
-                hitU = tempU;
-                hitV = tempV;
             }
         }
         
@@ -442,6 +457,47 @@ void main() {
             }
         }
 
+        if (cam.bvhCount > 0) {
+            vec3 invDir = 1.0 / ray.direction;
+            int stack[64];
+            int stackPtr = 0;
+            
+            stack[stackPtr] = 0;
+            stackPtr++;
+            
+            while(stackPtr > 0) {
+                stackPtr--;
+                int nodeIdx = stack[stackPtr];
+                GPUBVHNode node = bvhNodes[nodeIdx];
+                
+                float distAABB = intersectAABB(ray, invDir, node.aabbMin, node.aabbMax);
+                
+                if (distAABB < minHitDistance) {
+                    if (node.triCount > 0) {
+                        for (int i = 0; i < node.triCount; i++) {
+                            int triIdx = node.leftFirst + i;
+                            float tempU;
+                            float tempV;
+                            float dist = triangleIntersect(ray, triangles[triIdx], tempU, tempV);
+                            
+                            if (dist > 0.0 && dist < minHitDistance) {
+                                minHitDistance = dist;
+                                hitObjType = 1;
+                                hitObjIndex = triIdx;
+                                hitU = tempU;
+                                hitV = tempV;
+                            }
+                        }
+                    } else {
+                        stack[stackPtr] = node.leftFirst;
+                        stackPtr++;
+                        stack[stackPtr] = node.leftFirst + 1;
+                        stackPtr++;
+                    }
+                }
+            }
+        }
+
         if (hitObjType == -1) {
             finalColor += attenuation * vec3(0.05, 0.05, 0.05);
             break;
@@ -464,6 +520,11 @@ void main() {
             } else {
                 hitNormal = tri.n0;
             }
+            
+            if (dot(ray.direction, hitNormal) > 0.0) {
+                hitNormal = -hitNormal;
+            }
+            
             mat = materials[tri.materialIndex];
         }
         else if (hitObjType == 2) {
@@ -484,9 +545,9 @@ void main() {
         if (mat.type == 1) { 
             float pattern = mod(floor((hitPos.x + 5.0) * 3.0) + floor(hitPos.z * 3.0), 2.0);
             if (pattern > 0.5) {
-                baseColor = vec3(0.8);
+                baseColor = vec3(1.0);
             } else {
-                baseColor = vec3(0.1);
+                baseColor = mat.color;
             }
         }
 
@@ -508,17 +569,6 @@ void main() {
                 if (dist > 0.0 && dist < lightDistance) {
                     inShadow = true;
                     break;
-                }
-            }
-            if (!inShadow) {
-                for (int i = 0; i < cam.triangleCount; i++) {
-                    float dummyU;
-                    float dummyV;
-                    float dist = triangleIntersect(shadowRay, triangles[i], dummyU, dummyV);
-                    if (dist > 0.0 && dist < lightDistance) {
-                        inShadow = true;
-                        break;
-                    }
                 }
             }
             if (!inShadow) {
@@ -545,6 +595,47 @@ void main() {
                     if (dist > 0.0 && dist < lightDistance) {
                         inShadow = true;
                         break;
+                    }
+                }
+            }
+            
+            if (!inShadow && cam.bvhCount > 0) {
+                vec3 shadowInvDir = 1.0 / shadowRay.direction;
+                int stackS[64];
+                int stackPtrS = 0;
+                
+                stackS[stackPtrS] = 0;
+                stackPtrS++;
+                
+                while(stackPtrS > 0) {
+                    stackPtrS--;
+                    int nodeIdx = stackS[stackPtrS];
+                    GPUBVHNode node = bvhNodes[nodeIdx];
+                    
+                    float distAABB = intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax);
+                    
+                    if (distAABB < lightDistance) {
+                        if (node.triCount > 0) {
+                            for (int i = 0; i < node.triCount; i++) {
+                                int triIdx = node.leftFirst + i;
+                                float dummyU;
+                                float dummyV;
+                                float dist = triangleIntersect(shadowRay, triangles[triIdx], dummyU, dummyV);
+                                
+                                if (dist > 0.0 && dist < lightDistance) {
+                                    inShadow = true;
+                                    break;
+                                }
+                            }
+                            if (inShadow) {
+                                break;
+                            }
+                        } else {
+                            stackS[stackPtrS] = node.leftFirst;
+                            stackPtrS++;
+                            stackS[stackPtrS] = node.leftFirst + 1;
+                            stackPtrS++;
+                        }
                     }
                 }
             }

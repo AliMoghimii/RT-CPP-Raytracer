@@ -2,39 +2,96 @@
 #include "ModelLoader.hpp"
 #include <iostream>
 #include <stdexcept>
+#include <cmath>
+
+using namespace std;
+
+glm::vec3 rotateVec(glm::vec3 v, glm::vec3 rot) {
+    float radX = rot.x * 3.14159265359f / 180.0f;
+    float radY = rot.y * 3.14159265359f / 180.0f;
+    float radZ = rot.z * 3.14159265359f / 180.0f;
+
+    glm::vec3 rx(v.x, v.y * cos(radX) - v.z * sin(radX), v.y * sin(radX) + v.z * cos(radX));
+    glm::vec3 ry(rx.x * cos(radY) + rx.z * sin(radY), rx.y, -rx.x * sin(radY) + rx.z * cos(radY));
+    glm::vec3 rz(ry.x * cos(radZ) - ry.y * sin(radZ), ry.x * sin(radZ) + ry.y * cos(radZ), ry.z);
+
+    return rz;
+}
 
 int main() {
-    std::vector<GPUMaterial> materials;
-    std::vector<GPUSphere> spheres;
-    std::vector<GPUTriangle> triangles;
-    std::vector<GPULight> lights;
-    std::vector<GPUPlane> planes;
-    std::vector<GPUQuad> quads;
-    std::vector<GPUCube> cubes;
+    vector<GPUMaterial> materials;
+    vector<GPUSphere> spheres;
+    vector<GPUTriangle> triangles;
+    vector<GPULight> lights;
+    vector<GPUPlane> planes;
+    vector<GPUQuad> quads;
+    vector<GPUCube> cubes;
+    vector<GPUBVHNode> bvhNodes;
 
-    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Red sphere mat
-    materials.push_back({ glm::vec3(0.8f, 0.8f, 0.8f), 0.2f, 1.0f, 1.0f, 0.4f, 0.0f, 1.0f, 1, 0.0f, 0.0f }); // Floor checkerboard mat
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Cyan cube mat
-    materials.push_back({ glm::vec3(0.9f, 0.9f, 0.9f), 0.1f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Purple shuttle mat
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, 1.0f, 0.1f, 0.9f, 1.5f, 0, 0.0f, 0.0f }); // Glass sphere mat
+    materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Floor Plane (#111111)
+    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Red Sphere (#FF0000) 
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat White Eyes (#FFFFFF)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Black Pupils (#000000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.5f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Yellow Mirror Sphere (#FFFF00)
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Green Sphere / Triangle Bottom (#00FF00)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 1, 0.0f, 0.0f }); // Mat Checkered Sphere
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Cyan Cube / Triangle Left (#00FFFF)
+    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Orange Triangle Front (#FFA500)
+    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Dark Purple Triangle Right (#800080)
+    materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, 0, 0.0f, 0.0f }); // Mat Model Shuttle Purple (#8A2BE2)
+    
+    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0, 0.0f, 0.0f, 0.0f, 0.0f });
 
-    spheres.push_back({ glm::vec3(-0.5f, 0.0f, 0.0f), 0.5f, 0, 0.0f, 0.0f, 0.0f });
-    spheres.push_back({ glm::vec3(1.8f, 0.0f, 0.0f), 0.5f, 4, 0.0f, 0.0f, 0.0f });
-    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 1, 0.0f, 0.0f, 0.0f, 0.0f });
-    cubes.push_back({ glm::vec3(-0.25f, -0.25f, -0.25f), 0.0f, glm::vec3(0.25f, 0.25f, 0.25f), 0.0f, glm::vec3(0.5f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 2, 0.0f, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-0.25f, 0.0f, 0.6f), 0.5f, 1, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-0.15f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-0.4f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f });
 
-    ModelLoader::load("model_shuttle.obj", triangles, 3, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f);
+    spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.0f), 0.75f, 4, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f });
+    spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f });
+
+    cubes.push_back({ glm::vec3(-0.125f, -0.125f, -0.125f), 0.0f, glm::vec3(0.125f, 0.125f, 0.125f), 0.0f, glm::vec3(0.375f, -0.375f, 0.375f), 0.0f, glm::vec3(0.0f, 35.0f, 0.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f });
+
+    glm::vec3 pts[4] = {
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(-1.0f, -1.0f, 1.0f),
+        glm::vec3(1.0f, -1.0f, 1.0f),
+        glm::vec3(0.0f, -1.0f, -1.0f)
+    };
+
+    for (int i = 0; i < 4; i++) {
+        pts[i] = pts[i] * 0.1f;
+        pts[i] = rotateVec(pts[i], glm::vec3(0.0f, 125.0f, 0.0f));
+        pts[i] = pts[i] + glm::vec3(0.35f, 0.0f, 0.35f);
+    }
+
+    auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
+        glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+        triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
+        };
+
+    pushTri(pts[0], pts[1], pts[2], 8);
+    pushTri(pts[0], pts[2], pts[3], 9);
+    pushTri(pts[0], pts[3], pts[1], 7);
+    pushTri(pts[1], pts[3], pts[2], 5);
+
+
+    //ModelLoader::load("model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f);
+    ModelLoader::load("model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 5.0f);
 
     lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), 0.0f, glm::vec3(1.0f, 1.0f, 1.0f), 0.0f });
+    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), 0.0f, glm::vec3(1.0f, 0.674f, 0.957f), 0.0f });
 
     VulkanCore engine;
-    engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes);
+    engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
 
     try {
         engine.run();
     }
-    catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << "\n";
+    catch (const exception& e) {
+        cerr << "Error: " << e.what() << "\n";
         return 1;
     }
 

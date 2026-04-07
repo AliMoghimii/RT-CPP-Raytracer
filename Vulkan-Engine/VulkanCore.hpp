@@ -20,8 +20,8 @@ struct CameraPushConstants {
     int quadCount;
     int cubeCount;
     int lightCount;
+    int bvhCount;
     float pad1;
-    float pad2;
 };
 
 class VulkanCore {
@@ -34,7 +34,8 @@ public:
         const std::vector<GPULight>& lghts,
         const std::vector<GPUPlane>& plns,
         const std::vector<GPUQuad>& quds,
-        const std::vector<GPUCube>& cbs
+        const std::vector<GPUCube>& cbs,
+        const std::vector<GPUBVHNode>& bvh
     );
 
 private:
@@ -82,6 +83,9 @@ private:
     VkBuffer cubeBuffer;
     VkDeviceMemory cubeMemory;
 
+    VkBuffer bvhBuffer;
+    VkDeviceMemory bvhMemory;
+
     std::vector<GPUMaterial> sceneMaterials;
     std::vector<GPUSphere> sceneSpheres;
     std::vector<GPUTriangle> sceneTriangles;
@@ -89,6 +93,7 @@ private:
     std::vector<GPUPlane> scenePlanes;
     std::vector<GPUQuad> sceneQuads;
     std::vector<GPUCube> sceneCubes;
+    std::vector<GPUBVHNode> sceneBVH;
 
     VkCommandPool commandPool;
     VkCommandBuffer commandBuffer;
@@ -96,7 +101,7 @@ private:
     VkSemaphore renderFinishedSemaphore;
     VkFence inFlightFence;
 
-    glm::vec3 cameraPos = glm::vec3(0.0f, 0.5f, -2.0f);
+    glm::vec3 cameraPos = glm::vec3(0.0f, 0.3f, -1.0f);
     glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, 1.0f);
     glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
     float yaw = 90.0f;

@@ -89,3 +89,10 @@ struct GPUCube {
     float p6;
     float p7;
 };
+
+struct GPUBVHNode {
+    glm::vec3 aabbMin;
+    int leftFirst;
+    glm::vec3 aabbMax;
+    int triCount;
+};

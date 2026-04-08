@@ -34,10 +34,21 @@ int main() {
     materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Mat Purple Mirror (#800080)
     materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 0.0f, 0.0f, 0.0f }); // Material 10: Mat Purple Mirror (#8A2BE2)
     materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Mat Solid Glass (IOR 1.5)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Mat Matte White
+    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Mat Matte Red
+    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Mat Matte Green
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
-    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Floor Plane
+    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Floor (Dark Mirror)
+
+    // --- QUADS ---
+    // Format: { corner(x,y,z), p1, edge1(x,y,z), p2, edge2(x,y,z), p3, normalVector(x,y,z), materialIndex, p4, p5, p6, p7 }
+    quads.push_back({ glm::vec3(-15.0f, 25.0f, -15.0f), 0.0f, glm::vec3(30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 45.0f), 0.0f, glm::vec3(0.0f, -1.0f, 0.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Ceiling (Matte White)
+    quads.push_back({ glm::vec3(-15.0f, -0.5f, -15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 45.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(1.0f, 0.0f, 0.0f), 13, 0.0f, 0.0f, 0.0f, 0.0f }); // Left Wall (Matte Red)
+    quads.push_back({ glm::vec3(15.0f, -0.5f, 30.0f), 0.0f, glm::vec3(0.0f, 0.0f, -45.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(-1.0f, 0.0f, 0.0f), 14, 0.0f, 0.0f, 0.0f, 0.0f }); // Right Wall (Matte Green)
+    quads.push_back({ glm::vec3(15.0f, -0.5f, 30.0f), 0.0f, glm::vec3(-30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, -1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Back Wall (Matte White)
+    quads.push_back({ glm::vec3(-15.0f, -0.5f, -15.0f), 0.0f, glm::vec3(30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Front Wall (Matte White)
 
     // --- SPHERES ---
     // Format: { center(x,y,z), radius, materialIndex, padding1, padding2, padding3 }
@@ -46,9 +57,9 @@ int main() {
     spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
     spheres.push_back({ glm::vec3(-0.4f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
     spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
-
     spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.0f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror Sphere
     spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
+    spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere
     spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.5f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
 
@@ -57,8 +68,7 @@ int main() {
     cubes.push_back({ glm::vec3(-0.125f, -0.125f, -0.125f), 0.0f, glm::vec3(0.125f, 0.125f, 0.125f), 0.0f, glm::vec3(0.375f, -0.375f, 0.375f), 0.0f, glm::vec3(0.0f, 35.0f, 0.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Cyan Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.0f, -0.2f), 0.0f, glm::vec3(0.0f, 20.0f, 0.0f), 11, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Glass Cube
 
-    // --- PYRAMID (TRIANGLES) ---
-    // Format for GPUTriangle inside pushTri: { vertex0(vec3), pad, vertex1(vec3), pad, vertex2(vec3), pad, normal0(vec3), pad, normal1(vec3), pad, normal2(vec3), isSmooth, materialIndex, pad, pad, pad }
+    // --- PYRAMID ---
     glm::vec3 pts[4] = {
         glm::vec3(0.0f, 1.0f, 0.0f),
         glm::vec3(-1.0f, -1.0f, 1.0f),
@@ -72,6 +82,7 @@ int main() {
         pts[i] = pts[i] + glm::vec3(0.35f, 0.0f, 0.35f);
     }
 
+    // Format: { vertex0(vec3), pad, vertex1(vec3), pad, vertex2(vec3), pad, normal0(vec3), pad, normal1(vec3), pad, normal2(vec3), isSmooth, materialIndex, pad, pad, pad }
     auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
         glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
         triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
@@ -84,16 +95,20 @@ int main() {
 
     // --- MODELS ---
     // Format: ModelLoader::load("filepath", trianglesVector, bvhNodesVector, materialIndex, position(x,y,z), rotation(pitch,yaw,roll), scale)
-    //ModelLoader::load("assets/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Shuttle Purple
-    //ModelLoader::load("assets/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Shuttle Purple
-    ModelLoader::load("assets/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 5.0f); // Material 10: Model Shuttle Purple
+    //ModelLoader::load("assets/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
+    //ModelLoader::load("assets/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
+    ModelLoader::load("assets/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
 
     // --- LIGHTS ---
+    glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
+    glm::vec3 backLightColor = glm::vec3(1.0f, 0.674f, 0.957f);
+
+    float lightIntensity = (GLOBAL_SHADING_MODEL == 1) ? 100.0f : 100.0f;
+
     // Format: { position(x,y,z), radius, color(r,g,b), padding }  // radius 0.0 = Point Light, > 0.0 = Area Light
-    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), 0.0f, glm::vec3(1.0f, 1.0f, 1.0f), 0.0f }); // Light 0: POINT LIGHT (For hardshadows)
-    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), 0.0f, glm::vec3(1.0f, 0.674f, 0.957f), 0.0f }); // Light 1: POINT LIGHT (For hardshadows)
-    //lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), 5.0f, glm::vec3(1.0f, 1.0f, 1.0f), 0.0f }); // Light 0: AREA LIGHT (For softshadows)
-    //lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), 6.0f, glm::vec3(1.0f, 0.674f, 0.957f), 0.0f }); // Light 1: AREA LIGHT (For softshadows)
+    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), 0.0f, topLightColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), 0.0f, backLightColor * lightIntensity, 0.0f });
+
 
     VulkanCore engine;
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);

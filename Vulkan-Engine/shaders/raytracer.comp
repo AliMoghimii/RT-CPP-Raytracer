@@ -639,13 +639,15 @@ void main() {
             }
 
             float visibility = 1.0 - (shadowHits / float(SHADOW_RAYS));
-
             if (visibility > 0.0) {
+                float attenuationFactor = 1.0 / max(lightDistance * lightDistance, 0.01);
+                vec3 attenuatedLightColor = lights[l].color * attenuationFactor;
+
                 if (mat.shadingModel == 1) {
-                    localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, lights[l].color) * visibility;
+                    localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, attenuatedLightColor) * visibility;
                 } else {
-                    localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, lights[l].color) * visibility;
-                    localColor += blingPhongShading(mat, lights[l].color, hitNormal, baseLightDir, rayToCameraDir, 50.0) * visibility;
+                    localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, attenuatedLightColor) * visibility;
+                    localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0) * visibility;
                 }
             }
         }

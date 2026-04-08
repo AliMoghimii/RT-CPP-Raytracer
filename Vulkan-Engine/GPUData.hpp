@@ -44,7 +44,7 @@ struct GPUTriangle {
 
 struct GPULight {
     glm::vec3 position;
-    float p1;
+    float radius;
     glm::vec3 color;
     float p2;
 };

@@ -9,9 +9,14 @@ struct GPUMaterial {
     float reflection;
     float transparency;
     float ior;
-    int type;
+
+    int shadingModel;
+    int patternType;
+    float roughness;
+    float metallic;
     float p1;
     float p2;
+    float p3;
 };
 
 struct GPUSphere {

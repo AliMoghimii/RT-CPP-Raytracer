@@ -30,6 +30,14 @@ struct CameraPushConstants {
     float fogR;
     float fogG;
     float fogB;
+    int enableSkybox;
+    float skyBottomR;
+    float skyBottomG;
+    float skyBottomB;
+    float skyTopR;
+    float skyTopG;
+    float skyTopB;
+    float pad4;
 };
 
 class VulkanCore {
@@ -43,6 +51,13 @@ public:
     float fogR = 0.05f;
     float fogG = 0.05f;
     float fogB = 0.05f;
+    int enableSkybox = 0;
+    float skyBottomR = 1.0f;
+    float skyBottomG = 1.0f;
+    float skyBottomB = 1.0f;
+    float skyTopR = 0.1f;
+    float skyTopG = 0.3f;
+    float skyTopB = 0.7f;
 
     void run();
     void loadScene(

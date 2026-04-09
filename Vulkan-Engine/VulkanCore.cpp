@@ -736,6 +736,14 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.fogR = fogR;
     pc.fogG = fogG;
     pc.fogB = fogB;
+    pc.enableSkybox = enableSkybox;
+    pc.skyBottomR = skyBottomR;
+    pc.skyBottomG = skyBottomG;
+    pc.skyBottomB = skyBottomB;
+    pc.skyTopR = skyTopR;
+    pc.skyTopG = skyTopG;
+    pc.skyTopB = skyTopB;
+    pc.pad4 = 0.0f;
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 

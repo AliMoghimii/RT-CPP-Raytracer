@@ -17,6 +17,10 @@ struct GPUMaterial {
     float emissionR;
     float emissionG;
     float emissionB;
+    int castShadows;
+    float p4;
+    float p5;
+    float p6;
 };
 
 struct GPUSphere {

@@ -31,23 +31,23 @@ int main() {
     int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
 
     // --- MATERIALS ---
-    // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, EMISSION(R,G,B) }
-    materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Mat Dark Mirror (#111111)
-    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 0.0f, 0.0f, 0.0f }); // Material 1: Mat Red Mirror (#FF0000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: Mat White Shiny (#FFFFFF)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 3: Mat Black Shiny (#000000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.5f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 4: Mat Yellow Mirror (#FFFF00)
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 5: Mat Green Mirror (#00FF00)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 6: Mat Checkered Blue and White
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Mat Cyan Mirror (#00FFFF)
-    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 8: Mat Orange Mirror (#FFA500)
-    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Mat Purple Mirror (#800080)
-    materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 0.0f, 0.0f, 0.0f }); // Material 10: Mat Purple Mirror (#8A2BE2)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Mat Solid Glass (IOR 1.5)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Mat Matte White
-    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Mat Matte Red
-    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Mat Matte Green
-    materials.push_back({ glm::vec3(0.0f), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 15.0f, 15.0f }); // Material 15: Emissive Cyan
+    // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, EMISSION(R,G,B), CAST_SHADOWS, PADDING, PADDING, PADDING }
+    materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 0: Mat Dark Mirror (#111111)
+    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 1: Mat Red Mirror (#FF0000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 2: Mat White Shiny (#FFFFFF)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 3: Mat Black Shiny (#000000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.5f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 4: Mat Yellow Mirror (#FFFF00)
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 5: Mat Green Mirror (#00FF00)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 6: Mat Checkered Blue and White
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 7: Mat Cyan Mirror (#00FFFF)
+    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 8: Mat Orange Mirror (#FFA500)
+    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, 1.0f, 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 9: Mat Purple Mirror (#800080)
+    materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 10: Mat Purple Mirror (#8A2BE2)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, 0.0f, 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 11: Mat Solid Glass (IOR 1.5)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 12: Mat Matte White
+    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 13: Mat Matte Red
+    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f, 1, 0.0f, 0.0f, 0.0f }); // Material 14: Mat Matte Green
+    materials.push_back({ glm::vec3(0.0f), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 15.0f, 15.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 15: Emissive Cyan (Cast Shadows = 0)
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
@@ -65,9 +65,9 @@ int main() {
     // Format: { center(x,y,z), radius, materialIndex, padding1, padding2, padding3 }
     spheres.push_back({ glm::vec3(-0.25f, 0.0f, 0.6f), 0.5f, 1, 0.0f, 0.0f, 0.0f }); // Material 1: Red Sphere
     spheres.push_back({ glm::vec3(-0.15f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
-    spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
+    spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 0, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
     spheres.push_back({ glm::vec3(-0.4f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
-    spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
+    spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 0, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
     spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.5f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror Sphere
     spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
     spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere

@@ -112,9 +112,10 @@
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if exist "$(ProjectDir)assets" xcopy /y /d /s /i "$(ProjectDir)assets" "$(OutDir)assets"
-if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)"
-call "$(ProjectDir)compile_shaders.bat"</Command>
+      <Command>call "$(ProjectDir)compile_shaders.bat"
+if exist "$(ProjectDir)assets" xcopy /y /d /s /i "$(ProjectDir)assets" "$(OutDir)assets"
+if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)lib"
+if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "$(OutDir)shaders"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -135,9 +136,10 @@ call "$(ProjectDir)compile_shaders.bat"</Command>
       <AdditionalDependencies>glfw3.lib;vulkan-1.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
-      <Command>if exist "$(ProjectDir)assets" xcopy /y /d /s /i "$(ProjectDir)assets" "$(OutDir)assets"
-if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)"
-</Command>
+      <Command>call "$(ProjectDir)compile_shaders.bat"
+if exist "$(ProjectDir)assets" xcopy /y /d /s /i "$(ProjectDir)assets" "$(OutDir)assets"
+if exist "$(ProjectDir)lib" xcopy /y /d /s /i "$(ProjectDir)lib" "$(OutDir)lib"
+if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "$(OutDir)shaders"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

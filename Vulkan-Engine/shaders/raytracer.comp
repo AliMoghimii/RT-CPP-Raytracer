@@ -37,6 +37,10 @@ struct GPUMaterial {
     float emissionR;
     float emissionG;
     float emissionB;
+    int castShadows;
+    float p4;
+    float p5;
+    float p6;
 };
 
 struct GPUSphere {
@@ -143,11 +147,6 @@ float rand() {
     randState = randState * 747796405u + 2891336453u;
     uint word = ((randState >> ((randState >> 28u) + 4u)) ^ randState) * 277803737u;
     return float((word >> 22u) ^ word) / 4294967295.0;
-}
-
-bool isEmissive(int matIndex) {
-    GPUMaterial m = materials[matIndex];
-    return (m.emissionR > 0.0 || m.emissionG > 0.0 || m.emissionB > 0.0);
 }
 
 vec2 randomPointOnDisk() {
@@ -551,7 +550,7 @@ void main() {
                     for (int i = 0; i < cam.sphereCount; i++) {
                         float dist = sphereIntersect(shadowRay, spheres[i]);
                         if (dist > 0.0 && dist < lightDistance) { 
-                            if (!isEmissive(spheres[i].materialIndex)) {
+                            if (materials[spheres[i].materialIndex].castShadows == 1) {
                                 inShadow = true; break;
                             }
                         }
@@ -561,7 +560,7 @@ void main() {
                          
                            float dist = planeIntersect(shadowRay, planes[i]);
                             if (dist > 0.0 && dist < lightDistance) { 
-                                if (!isEmissive(planes[i].materialIndex)) {
+                                if (materials[planes[i].materialIndex].castShadows == 1) {
                                     inShadow = true; break;
                                 }
                             }
@@ -573,7 +572,7 @@ void main() {
                      
                            float dist = quadIntersect(shadowRay, quads[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
-                               if (!isEmissive(quads[i].materialIndex)) {
+                               if (materials[quads[i].materialIndex].castShadows == 1) {
                                    inShadow = true; break;
                                }
                            }
@@ -585,7 +584,7 @@ void main() {
                                               
                            float dist = cubeIntersect(shadowRay, cubes[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
-                               if (!isEmissive(cubes[i].materialIndex)) {
+                               if (materials[cubes[i].materialIndex].castShadows == 1) {
                                    inShadow = true; break;
                                }
                            }
@@ -610,7 +609,7 @@ void main() {
                                         float dU, dV;
                                         float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                         if (dist > 0.0 && dist < lightDistance) { 
-                                            if (!isEmissive(triangles[node.leftFirst + i].materialIndex)) {
+                                            if (materials[triangles[node.leftFirst + i].materialIndex].castShadows == 1) {
                                                 inShadow = true; break; 
                                             }
                                         }
@@ -647,7 +646,7 @@ void main() {
                         for (int i = 0; i < cam.sphereCount; i++) {
                             float dist = sphereIntersect(shadowRay, spheres[i]);
                             if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                if (!isEmissive(spheres[i].materialIndex)) {
+                                if (materials[spheres[i].materialIndex].castShadows == 1) {
                                     inShadow = true; break;
                                 }
                             }
@@ -658,7 +657,7 @@ void main() {
                                               
                                float dist = planeIntersect(shadowRay, planes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (!isEmissive(planes[i].materialIndex)) {
+                                    if (materials[planes[i].materialIndex].castShadows == 1) {
                                         inShadow = true; break;
                                     }
                                 }
@@ -670,7 +669,7 @@ void main() {
                             {
                                 float dist = quadIntersect(shadowRay, quads[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (!isEmissive(quads[i].materialIndex)) {
+                                    if (materials[quads[i].materialIndex].castShadows == 1) {
                                         inShadow = true; break;
                                     }
                                 }
@@ -682,7 +681,7 @@ void main() {
      
                                 float dist = cubeIntersect(shadowRay, cubes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (!isEmissive(cubes[i].materialIndex)) {
+                                    if (materials[cubes[i].materialIndex].castShadows == 1) {
                                         inShadow = true; break;
                                     }
                                 }
@@ -708,7 +707,7 @@ void main() {
                                             float dU, dV;
                                             float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                             if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                                if (!isEmissive(triangles[node.leftFirst + i].materialIndex)) {
+                                                if (materials[triangles[node.leftFirst + i].materialIndex].castShadows == 1) {
                                                     inShadow = true; break; 
                                                 }
                                             }

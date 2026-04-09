@@ -17,8 +17,8 @@ layout(push_constant) uniform CameraData {
     int maxDepth;
     int shadowRays;
     int samplesPerPixel;
-    int pad1;
-    int pad2;
+    float focalDistance;
+    float lensRadius;
 } cam;
 
 struct GPUMaterial {
@@ -34,9 +34,9 @@ struct GPUMaterial {
     int patternType;
     float roughness;
     float metallic;
-    float p1;
-    float p2;
-    float p3;
+    float emissionR;
+    float emissionG;
+    float emissionB;
 };
 
 struct GPUSphere {
@@ -136,11 +136,19 @@ struct Ray {
     vec3 direction;
 };
 
+const float PI = 3.14159265359;
+
 uint randState;
 float rand() {
     randState = randState * 747796405u + 2891336453u;
     uint word = ((randState >> ((randState >> 28u) + 4u)) ^ randState) * 277803737u;
     return float((word >> 22u) ^ word) / 4294967295.0;
+}
+
+vec2 randomPointOnDisk() {
+    float angle = rand() * 2.0 * PI;
+    float r = sqrt(rand());
+    return vec2(r * cos(angle), r * sin(angle));
 }
 
 mat3 rotationMatrixXYZ(vec3 rot) {
@@ -321,8 +329,6 @@ vec3 blingPhongShading(GPUMaterial mat, vec3 lightColor, vec3 hitNormal, vec3 li
     return lightColor * mat.specular * pow(max(dot(hitNormal, halfVector), 0.0), specExp);
 }
 
-const float PI = 3.14159265359;
-
 float DistributionGGX(vec3 N, vec3 H, float roughness) {
     float a = roughness*roughness;
     float a2 = a*a;
@@ -390,7 +396,7 @@ void main() {
     if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
 
     randState = pixelCoords.y * imageSize.x + pixelCoords.x + 1;
-    
+
     float fov = 60.0;
     float halfFovTan = tan(radians(fov * 0.5));
     
@@ -407,9 +413,14 @@ void main() {
         uv.x *= float(imageSize.x) / float(imageSize.y);
         uv *= halfFovTan;
 
+        vec3 rawDir = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
+        vec3 focalPoint = cam.camPos.xyz + rawDir * cam.focalDistance;
+        
+        vec2 disk = randomPointOnDisk() * cam.lensRadius;
+
         Ray ray;
-        ray.origin = cam.camPos.xyz;
-        ray.direction = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
+        ray.origin = cam.camPos.xyz + cam.camRight.xyz * disk.x + cam.camUp.xyz * disk.y;
+        ray.direction = normalize(focalPoint - ray.origin);
 
         vec3 sampleColor = vec3(0.0);
         vec3 attenuation = vec3(1.0);
@@ -459,6 +470,7 @@ void main() {
                     if (distAABB < minHitDistance) {
                         if (node.triCount > 0) {
                             for (int i = 0; i < node.triCount; i++) {
+                               
                                 int triIdx = node.leftFirst + i;
                                 float tempU, tempV;
                                 float dist = triangleIntersect(ray, triangles[triIdx], tempU, tempV);
@@ -519,7 +531,8 @@ void main() {
             }
 
             vec3 rayToCameraDir = normalize(cam.camPos.xyz - hitPos);
-            vec3 localColor = baseColor * mat.ambient;
+            vec3 glow = vec3(mat.emissionR, mat.emissionG, mat.emissionB);
+            vec3 localColor = (baseColor * mat.ambient) + glow;
 
             for (int l = 0; l < cam.lightCount; l++) {
                 vec3 baseLightDir = normalize(lights[l].position - hitPos);
@@ -537,13 +550,16 @@ void main() {
                     }
                     if (!inShadow) {
                         for (int i = 0; i < cam.planeCount; i++) {
-                            float dist = planeIntersect(shadowRay, planes[i]);
-                            if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
+                         
+                           float dist = planeIntersect(shadowRay, planes[i]);
+                            if (dist > 0.0 && dist < lightDistance) { inShadow = true;
+                                break;
                             }
                         }
                     }
                     if (!inShadow) {
-                        for (int i = 0; i < cam.quadCount; i++) {
+                        for (int i = 0; i < cam.quadCount; i++) 
+                        {
                      
                            float dist = quadIntersect(shadowRay, quads[i]);
                            if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
@@ -552,7 +568,8 @@ void main() {
                     }
                     if (!inShadow) {
                         for (int i = 0; i < cam.cubeCount; i++) {
-                     
+ 
+                                              
                            float dist = cubeIntersect(shadowRay, cubes[i]);
                            if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
                            }
@@ -560,6 +577,7 @@ void main() {
                     }
                     
                     if (!inShadow && cam.bvhCount > 0) {
+          
                         vec3 shadowInvDir = 1.0 / shadowRay.direction;
                         int stackS[64];
                         int stackPtrS = 0;
@@ -571,11 +589,12 @@ void main() {
                             if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < lightDistance) {
                                 if (node.triCount > 0) {
                                     for (int i = 0; i < node.triCount; i++) {
-                    
+        
+                                                  
                                         float dU, dV;
                                         float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                         if (dist > 0.0 && dist < lightDistance) { inShadow = true;
-                                        break; }
+                                            break; }
                                     }
                                     if (inShadow) break;
                                 } else {
@@ -586,7 +605,8 @@ void main() {
                         }
                     }
                     
-                    if (inShadow) shadowHits = float(cam.shadowRays); 
+   
+                     if (inShadow) shadowHits = float(cam.shadowRays);
                 }
 
                 else {
@@ -612,13 +632,16 @@ void main() {
                         }
                         if (!inShadow) {
                             for (int i = 0; i < cam.planeCount; i++) {
-                             
+             
+                                              
                                float dist = planeIntersect(shadowRay, planes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true;
-                                break; }
+                                break;
+                                }
                             }
                         }
                         if (!inShadow) {
+                      
                             for (int i = 0; i < cam.quadCount; i++) 
                             {
                                 float dist = quadIntersect(shadowRay, quads[i]);
@@ -627,6 +650,7 @@ void main() {
                             }
                         }
                         if (!inShadow) {
+                      
                             for (int i = 0; i < cam.cubeCount; i++) {
      
                                 float dist = cubeIntersect(shadowRay, cubes[i]);
@@ -634,6 +658,7 @@ void main() {
                                 }
                             }
                         }
+                        
                         
                         if (!inShadow && cam.bvhCount > 0) {
               
@@ -647,12 +672,13 @@ void main() {
                                 GPUBVHNode node = bvhNodes[nodeIdx];
                                 if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < jitteredLightDistance) {
                                     if (node.triCount > 0) {
-                                        for (int i = 0; i < node.triCount; i++) {
+                                        for (int i = 0; i < node.triCount; i++) 
+                                        {
             
                                             float dU, dV;
                                             float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                             if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true;
-                                            break; }
+                                                break; }
                                         }
                                         if (inShadow) break;
                                     } else {
@@ -663,7 +689,8 @@ void main() {
                             }
                         }
 
-                        if (inShadow) shadowHits += 1.0;
+           
+                     if (inShadow) shadowHits += 1.0;
                     }
                 }
 

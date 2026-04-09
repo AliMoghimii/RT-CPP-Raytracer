@@ -17,11 +17,21 @@ int main() {
     vector<GPUCube> cubes;
     vector<GPUBVHNode> bvhNodes;
 
-    // --- GLOBAL TOGGLES ---
+    // --- SETTINGS ---
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
+    int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
+	int MAX_DEPTH = 5; // recursion depth for ray tracing
+	int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
+
+    int ENABLE_DOF = 0; // 0 = Off, 1 = On 
+	float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
+	float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
+
+	int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+ 
     // --- MATERIALS ---
-    // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, p1, p2, p3 }
+    // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, EMISSION(R,G,B) }
     materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Mat Dark Mirror (#111111)
     materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 0.0f, 0.0f, 0.0f }); // Material 1: Mat Red Mirror (#FF0000)
     materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, 1.0f, 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: Mat White Shiny (#FFFFFF)
@@ -37,6 +47,7 @@ int main() {
     materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Mat Matte White
     materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Mat Matte Red
     materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Mat Matte Green
+    materials.push_back({ glm::vec3(0.0f), 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 15.0f, 15.0f }); // Material 15: Emissive Cyan
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
@@ -57,11 +68,12 @@ int main() {
     spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
     spheres.push_back({ glm::vec3(-0.4f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
     spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 3, 0.0f, 0.0f, 0.0f }); // Material 3: Black Pupils
-    spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.0f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror Sphere
+    spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.5f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror Sphere
     spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
     spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere
     spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
-    spheres.push_back({ glm::vec3(1.0f, 0.5f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
+    spheres.push_back({ glm::vec3(1.0f, 0.75f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
+    spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
 
     // --- CUBES ---
     // Format: { boundsMin(x,y,z), padding1, boundsMax(x,y,z), padding2, center(x,y,z), padding3, rotation(pitch,yaw,roll), materialIndex, padding4, padding5, padding6, padding7 }
@@ -86,7 +98,7 @@ int main() {
     auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
         glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
         triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
-    };
+        };
 
     pushTri(pts[0], pts[1], pts[2], 8); // Material 8: Orange Triangle
     pushTri(pts[0], pts[2], pts[3], 9); // Material 9: Purple Triangle
@@ -102,21 +114,24 @@ int main() {
     // --- LIGHTS ---
     glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 backLightColor = glm::vec3(1.0f, 0.674f, 0.957f);
-    float topLightRadius = 0.0f;
-    float backLightRadius = 0.0f;
+    glm::vec3 emissionLightColor = glm::vec3(0.0f, 1.0f, 1.0f);
 
+    float lightRadius = (ENABLE_SOFT_SHADOWS == 1) ? 5.0f : 0.0f;
     float lightIntensity = (GLOBAL_SHADING_MODEL == 1) ? 200.0f : 100.0f;
 
     // Format: { position(x,y,z), radius, color(r,g,b), padding }  // radius 0.0 = Point Light, > 0.0 = Area Light
-    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), topLightRadius, topLightColor * lightIntensity, 0.0f });
-    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), backLightRadius, backLightColor * lightIntensity, 0.0f });
-
+    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), lightRadius, topLightColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), lightRadius, backLightColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(1.0f, -0.3f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
 
     VulkanCore engine;
 
-    engine.maxDepth = 5;
-    engine.shadowRays = 4; // 4, 16, 32, 128
-    engine.samplesPerPixel = 1; // 1, 2, 4, 8, 16
+    engine.maxDepth = MAX_DEPTH;
+    engine.shadowRays = MAX_SHADOW_RAYS;
+    engine.samplesPerPixel = SAMPLES_PER_PIXEL;
+
+    engine.focalDistance = FOCAL_DISTANCE;
+    engine.lensRadius = (ENABLE_DOF == 1) ? LENS_RADIUS : 0.0f;
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
 

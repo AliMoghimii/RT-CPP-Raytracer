@@ -730,6 +730,8 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.maxDepth = maxDepth;
     pc.shadowRays = shadowRays;
     pc.samplesPerPixel = samplesPerPixel;
+    pc.focalDistance = focalDistance;
+    pc.lensRadius = lensRadius;
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 

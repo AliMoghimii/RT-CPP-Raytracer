@@ -14,9 +14,9 @@ struct GPUMaterial {
     int patternType;
     float roughness;
     float metallic;
-    float p1;
-    float p2;
-    float p3;
+    float emissionR;
+    float emissionG;
+    float emissionB;
 };
 
 struct GPUSphere {

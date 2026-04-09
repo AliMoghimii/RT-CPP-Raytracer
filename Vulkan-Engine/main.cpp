@@ -28,6 +28,9 @@ int main() {
     float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
     float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
+    int ENABLE_FOG = 0; // 0 = Off, 1 = On
+    glm::vec3 FOG_COLOR = glm::vec3(0.05, 0.05, 0.05); // Grey: glm::vec3(0.05, 0.05, 0.05); Blue: glm::vec3(0.1, 0.2, 0.5);  White: glm::vec3(1.0, 1.0, 1.0); Green: glm::vec3(0.2, 0.8, 0.2);
+
     int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
 
     // --- MATERIALS ---
@@ -132,6 +135,11 @@ int main() {
 
     engine.focalDistance = FOCAL_DISTANCE;
     engine.lensRadius = (ENABLE_DOF == 1) ? LENS_RADIUS : 0.0f;
+
+    engine.enableFog = ENABLE_FOG;
+    engine.fogR = FOG_COLOR.r;
+    engine.fogG = FOG_COLOR.g;
+    engine.fogB = FOG_COLOR.b;
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
 

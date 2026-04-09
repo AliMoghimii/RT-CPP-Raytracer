@@ -26,6 +26,10 @@ struct CameraPushConstants {
     int samplesPerPixel;
     float focalDistance;
     float lensRadius;
+    int enableFog;
+    float fogR;
+    float fogG;
+    float fogB;
 };
 
 class VulkanCore {
@@ -35,6 +39,10 @@ public:
     int samplesPerPixel = 4;
     float focalDistance = 1.0f;
     float lensRadius = 0.0f;
+    int enableFog = 0;
+    float fogR = 0.05f;
+    float fogG = 0.05f;
+    float fogB = 0.05f;
 
     void run();
     void loadScene(

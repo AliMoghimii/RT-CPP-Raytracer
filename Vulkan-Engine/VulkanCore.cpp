@@ -732,6 +732,10 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.samplesPerPixel = samplesPerPixel;
     pc.focalDistance = focalDistance;
     pc.lensRadius = lensRadius;
+    pc.enableFog = enableFog;
+    pc.fogR = fogR;
+    pc.fogG = fogG;
+    pc.fogB = fogB;
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 

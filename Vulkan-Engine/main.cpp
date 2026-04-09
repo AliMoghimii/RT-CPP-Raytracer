@@ -21,15 +21,15 @@ int main() {
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
     int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
-	int MAX_DEPTH = 5; // recursion depth for ray tracing
-	int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
+    int MAX_DEPTH = 5; // recursion depth for ray tracing
+    int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
 
     int ENABLE_DOF = 0; // 0 = Off, 1 = On 
-	float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
-	float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
+    float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
+    float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
-	int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
- 
+    int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+
     // --- MATERIALS ---
     // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, EMISSION(R,G,B) }
     materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, 1.0f, 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Mat Dark Mirror (#111111)
@@ -122,7 +122,7 @@ int main() {
     // Format: { position(x,y,z), radius, color(r,g,b), padding }  // radius 0.0 = Point Light, > 0.0 = Area Light
     lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), lightRadius, topLightColor * lightIntensity, 0.0f });
     lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), lightRadius, backLightColor * lightIntensity, 0.0f });
-    lights.push_back({ glm::vec3(1.0f, -0.3f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
+    lights.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
 
     VulkanCore engine;
 

@@ -21,11 +21,19 @@ struct CameraPushConstants {
     int cubeCount;
     int lightCount;
     int bvhCount;
-    float pad1;
+    int maxDepth;
+    int shadowRays;
+    int samplesPerPixel;
+    int pad1;
+    int pad2;
 };
 
 class VulkanCore {
 public:
+    int maxDepth = 5;
+    int shadowRays = 4;
+    int samplesPerPixel = 4;
+
     void run();
     void loadScene(
         const std::vector<GPUMaterial>& mats,

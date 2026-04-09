@@ -18,7 +18,7 @@ int main() {
     vector<GPUBVHNode> bvhNodes;
 
     // --- GLOBAL TOGGLES ---
-    int GLOBAL_SHADING_MODEL = 1; // 0 = Blinn-Phong, 1 = PBR
+    int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
     // --- MATERIALS ---
     // Format: { color(r,g,b), ambient, diffuse, specular, reflection, transparency, ior, SHADING_MODEL, PATTERN_TYPE, ROUGHNESS, METALLIC, p1, p2, p3 }
@@ -102,15 +102,22 @@ int main() {
     // --- LIGHTS ---
     glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 backLightColor = glm::vec3(1.0f, 0.674f, 0.957f);
+    float topLightRadius = 0.0f;
+    float backLightRadius = 0.0f;
 
-    float lightIntensity = (GLOBAL_SHADING_MODEL == 1) ? 100.0f : 100.0f;
+    float lightIntensity = (GLOBAL_SHADING_MODEL == 1) ? 200.0f : 100.0f;
 
     // Format: { position(x,y,z), radius, color(r,g,b), padding }  // radius 0.0 = Point Light, > 0.0 = Area Light
-    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), 0.0f, topLightColor * lightIntensity, 0.0f });
-    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), 0.0f, backLightColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), topLightRadius, topLightColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), backLightRadius, backLightColor * lightIntensity, 0.0f });
 
 
     VulkanCore engine;
+
+    engine.maxDepth = 5;
+    engine.shadowRays = 4; // 4, 16, 32, 128
+    engine.samplesPerPixel = 1; // 1, 2, 4, 8, 16
+
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
 
     try {

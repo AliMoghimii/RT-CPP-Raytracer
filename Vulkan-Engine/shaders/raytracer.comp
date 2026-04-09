@@ -14,7 +14,11 @@ layout(push_constant) uniform CameraData {
     int cubeCount;
     int lightCount;
     int bvhCount;
-    float pad1;
+    int maxDepth;
+    int shadowRays;
+    int samplesPerPixel;
+    int pad1;
+    int pad2;
 } cam;
 
 struct GPUMaterial {
@@ -205,7 +209,7 @@ float triangleIntersect(Ray ray, GPUTriangle tri, out float outU, out float outV
     vec3 q = cross(s, edge1);
     float v = f * dot(ray.direction, q);
     if (v < 0.0 || u + v > 1.0) return -1.0;
-    
+
     float t = f * dot(edge2, q);
     if (t > 0.0000001) {
         outU = u;
@@ -357,21 +361,21 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 
 vec3 pbrShading(GPUMaterial mat, vec3 baseColor, vec3 N, vec3 V, vec3 L, vec3 lightColor) {
     vec3 H = normalize(V + L);
-    
+
     vec3 F0 = vec3(0.04); 
     F0 = mix(F0, baseColor, mat.metallic);
 
-    float NDF = DistributionGGX(N, H, mat.roughness);   
+    float NDF = DistributionGGX(N, H, mat.roughness);
     float G   = GeometrySmith(N, V, L, mat.roughness);      
-    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);       
-    
+    vec3 F    = fresnelSchlick(max(dot(H, V), 0.0), F0);
+
     vec3 numerator    = NDF * G * F;
     float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001; 
     vec3 specular = numerator / denominator;
-    
+
     vec3 kS = F;
     vec3 kD = vec3(1.0) - kS;
-    kD *= 1.0 - mat.metallic; 
+    kD *= 1.0 - mat.metallic;
 
     float NdotL = max(dot(N, L), 0.0);        
 
@@ -379,8 +383,6 @@ vec3 pbrShading(GPUMaterial mat, vec3 baseColor, vec3 N, vec3 V, vec3 L, vec3 li
 }
 
 const float MIN_DISPLACEMENT = 0.0001;
-const int MAX_DEPTH = 5;
-const int SHADOW_RAYS = 4; 
 
 void main() {
     ivec2 pixelCoords = ivec2(gl_GlobalInvocationID.xy);
@@ -388,224 +390,172 @@ void main() {
     if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
 
     randState = pixelCoords.y * imageSize.x + pixelCoords.x + 1;
-
-    vec2 uv = vec2(pixelCoords) / vec2(imageSize) * 2.0 - 1.0;
-    uv.y = -uv.y;
-    uv.x *= float(imageSize.x) / float(imageSize.y); 
-
+    
     float fov = 60.0;
     float halfFovTan = tan(radians(fov * 0.5));
-    uv *= halfFovTan;
+    
+    vec3 accumulatedColor = vec3(0.0);
 
-    Ray ray;
-    ray.origin = cam.camPos.xyz;
-    ray.direction = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
-
-    vec3 finalColor = vec3(0.0);
-    vec3 attenuation = vec3(1.0); 
-
-    for (int depth = 0; depth < MAX_DEPTH; depth++) {
-        float minHitDistance = 999999.0;
-        int hitObjType = -1;
-        int hitObjIndex = -1;
-        
-        float hitU = 0.0;
-        float hitV = 0.0;
-        
-        for (int i = 0; i < cam.sphereCount; i++) {
-            float dist = sphereIntersect(ray, spheres[i]);
-            if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 0; hitObjIndex = i; }
-        }
-        
-        for (int i = 0; i < cam.planeCount; i++) {
-            float dist = planeIntersect(ray, planes[i]);
-            if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 2; hitObjIndex = i; }
-        }
-        
-        for (int i = 0; i < cam.quadCount; i++) {
-            float dist = quadIntersect(ray, quads[i]);
-            if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 3; hitObjIndex = i; }
-        }
-        
-        for (int i = 0; i < cam.cubeCount; i++) {
-            float dist = cubeIntersect(ray, cubes[i]);
-            if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 4; hitObjIndex = i; }
+    for (int s = 0; s < cam.samplesPerPixel; s++) {
+        vec2 subPixel = vec2(pixelCoords);
+        if (cam.samplesPerPixel > 1) {
+            subPixel += vec2(rand(), rand());
         }
 
-        if (cam.bvhCount > 0) {
-            vec3 invDir = 1.0 / ray.direction;
-            int stack[64];
-            int stackPtr = 0;
-            stack[stackPtr++] = 0;
+        vec2 uv = subPixel / vec2(imageSize) * 2.0 - 1.0;
+        uv.y = -uv.y;
+        uv.x *= float(imageSize.x) / float(imageSize.y);
+        uv *= halfFovTan;
+
+        Ray ray;
+        ray.origin = cam.camPos.xyz;
+        ray.direction = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
+
+        vec3 sampleColor = vec3(0.0);
+        vec3 attenuation = vec3(1.0);
+
+        for (int depth = 0; depth < cam.maxDepth; depth++) {
+            float minHitDistance = 999999.0;
+            int hitObjType = -1;
+            int hitObjIndex = -1;
             
-            while(stackPtr > 0) {
-                int nodeIdx = stack[--stackPtr];
-                GPUBVHNode node = bvhNodes[nodeIdx];
-                
-                float distAABB = intersectAABB(ray, invDir, node.aabbMin, node.aabbMax);
-                if (distAABB < minHitDistance) {
-                    if (node.triCount > 0) {
-                        for (int i = 0; i < node.triCount; i++) {
-                            int triIdx = node.leftFirst + i;
-                            float tempU, tempV;
-                            float dist = triangleIntersect(ray, triangles[triIdx], tempU, tempV);
-                            if (dist > 0.0 && dist < minHitDistance) {
-                                minHitDistance = dist; hitObjType = 1; hitObjIndex = triIdx; hitU = tempU; hitV = tempV;
-                            }
-                        }
-                    } else {
-                        stack[stackPtr++] = node.leftFirst;
-                        stack[stackPtr++] = node.leftFirst + 1;
-                    }
+            float hitU = 0.0;
+            float hitV = 0.0;
+            for (int i = 0; i < cam.sphereCount; i++) {
+                float dist = sphereIntersect(ray, spheres[i]);
+                if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 0; hitObjIndex = i;
                 }
             }
-        }
-
-        if (hitObjType == -1) {
-            finalColor += attenuation * vec3(0.05, 0.05, 0.05);
-            break;
-        }
-
-        vec3 hitPos = ray.origin + ray.direction * minHitDistance;
-        vec3 hitNormal;
-        GPUMaterial mat;
-
-        if (hitObjType == 0) {
-            hitNormal = normalize(hitPos - spheres[hitObjIndex].center);
-            mat = materials[spheres[hitObjIndex].materialIndex];
-        }
-        else if (hitObjType == 1) {
-            GPUTriangle tri = triangles[hitObjIndex];
-            if (tri.isSmooth == 1) {
-                float hitW = 1.0 - hitU - hitV;
-                hitNormal = normalize(tri.n0 * hitW + tri.n1 * hitU + tri.n2 * hitV);
-            } else {
-                hitNormal = tri.n0;
-            }
-            if (dot(ray.direction, hitNormal) > 0.0) hitNormal = -hitNormal;
-            mat = materials[tri.materialIndex];
-        }
-        else if (hitObjType == 2) {
-            hitNormal = planes[hitObjIndex].normalVector;
-            mat = materials[planes[hitObjIndex].materialIndex];
-        }
-        else if (hitObjType == 3) {
-            hitNormal = quads[hitObjIndex].normalVector;
-            mat = materials[quads[hitObjIndex].materialIndex];
-        }
-        else if (hitObjType == 4) {
-            hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]);
-            mat = materials[cubes[hitObjIndex].materialIndex];
-        }
-
-        vec3 baseColor = mat.color;
-        
-        if (mat.patternType == 1) { 
-            float pattern = mod(floor((hitPos.x + 5.0) * 3.0) + floor(hitPos.z * 3.0), 2.0);
-            baseColor = (pattern > 0.5) ? vec3(1.0) : mat.color;
-        }
-
-        vec3 rayToCameraDir = normalize(cam.camPos.xyz - hitPos);
-        vec3 localColor = baseColor * mat.ambient;
-
-        for (int l = 0; l < cam.lightCount; l++) {
-            vec3 baseLightDir = normalize(lights[l].position - hitPos);
-            float lightDistance = length(lights[l].position - hitPos);
-            float shadowHits = 0.0;
             
-            if (lights[l].radius <= 0.0001) {
-                Ray shadowRay;
-                shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
-                shadowRay.direction = baseLightDir;
-                bool inShadow = false;
+            for (int i = 0; i < cam.planeCount; i++) {
+                float dist = planeIntersect(ray, planes[i]);
+                if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 2; hitObjIndex = i;
+                }
+            }
+            
+            for (int i = 0; i < cam.quadCount; i++) {
+                float dist = quadIntersect(ray, quads[i]);
+                if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 3; hitObjIndex = i;
+                }
+            }
+            
+            for (int i = 0; i < cam.cubeCount; i++) {
+                float dist = cubeIntersect(ray, cubes[i]);
+                if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 4; hitObjIndex = i;
+                }
+            }
+
+            if (cam.bvhCount > 0) {
+                vec3 invDir = 1.0 / ray.direction;
+                int stack[64];
+                int stackPtr = 0;
+                stack[stackPtr++] = 0;
                 
-                for (int i = 0; i < cam.sphereCount; i++) {
-                    float dist = sphereIntersect(shadowRay, spheres[i]);
-                    if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
-                }
-                if (!inShadow) {
-                    for (int i = 0; i < cam.planeCount; i++) {
-                        float dist = planeIntersect(shadowRay, planes[i]);
-                        if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
-                    }
-                }
-                if (!inShadow) {
-                    for (int i = 0; i < cam.quadCount; i++) {
-                        float dist = quadIntersect(shadowRay, quads[i]);
-                        if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
-                    }
-                }
-                if (!inShadow) {
-                    for (int i = 0; i < cam.cubeCount; i++) {
-                        float dist = cubeIntersect(shadowRay, cubes[i]);
-                        if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
-                    }
-                }
-                
-                if (!inShadow && cam.bvhCount > 0) {
-                    vec3 shadowInvDir = 1.0 / shadowRay.direction;
-                    int stackS[64];
-                    int stackPtrS = 0;
-                    stackS[stackPtrS++] = 0;
+                while(stackPtr > 0) {
+                    int nodeIdx = stack[--stackPtr];
+                    GPUBVHNode node = bvhNodes[nodeIdx];
                     
-                    while(stackPtrS > 0) {
-                        int nodeIdx = stackS[--stackPtrS];
-                        GPUBVHNode node = bvhNodes[nodeIdx];
-                        if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < lightDistance) {
-                            if (node.triCount > 0) {
-                                for (int i = 0; i < node.triCount; i++) {
-                                    float dU, dV;
-                                    float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
-                                    if (dist > 0.0 && dist < lightDistance) { inShadow = true; break; }
+                    float distAABB = intersectAABB(ray, invDir, node.aabbMin, node.aabbMax);
+                    if (distAABB < minHitDistance) {
+                        if (node.triCount > 0) {
+                            for (int i = 0; i < node.triCount; i++) {
+                                int triIdx = node.leftFirst + i;
+                                float tempU, tempV;
+                                float dist = triangleIntersect(ray, triangles[triIdx], tempU, tempV);
+                                if (dist > 0.0 && dist < minHitDistance) {
+                                    minHitDistance = dist;
+                                    hitObjType = 1; hitObjIndex = triIdx; hitU = tempU; hitV = tempV;
                                 }
-                                if (inShadow) break;
-                            } else {
-                                stackS[stackPtrS++] = node.leftFirst;
-                                stackS[stackPtrS++] = node.leftFirst + 1;
                             }
+                        } else {
+                            stack[stackPtr++] = node.leftFirst;
+                            stack[stackPtr++] = node.leftFirst + 1;
                         }
                     }
                 }
-                
-                if (inShadow) shadowHits = SHADOW_RAYS; 
             }
 
-            else {
-                for (int sr = 0; sr < SHADOW_RAYS; sr++) {
-                    float u = (rand() * 2.0 - 1.0) * 0.8;
-                    float v = (rand() * 2.0 - 1.0) * 0.8;
-                    float w = (rand() * 2.0 - 1.0) * 0.8;
-                    vec3 jitter = vec3(u, v, w) * lights[l].radius;
-                    
-                    vec3 targetLightPos = lights[l].position + jitter;
-                    vec3 lightDir = normalize(targetLightPos - hitPos);
-                    float jitteredLightDistance = length(targetLightPos - hitPos);
-                    
+            if (hitObjType == -1) {
+                sampleColor += attenuation * vec3(0.05, 0.05, 0.05);
+                break;
+            }
+
+            vec3 hitPos = ray.origin + ray.direction * minHitDistance;
+            vec3 hitNormal;
+            GPUMaterial mat;
+
+            if (hitObjType == 0) {
+                hitNormal = normalize(hitPos - spheres[hitObjIndex].center);
+                mat = materials[spheres[hitObjIndex].materialIndex];
+            }
+            else if (hitObjType == 1) {
+                GPUTriangle tri = triangles[hitObjIndex];
+                if (tri.isSmooth == 1) {
+                    float hitW = 1.0 - hitU - hitV;
+                    hitNormal = normalize(tri.n0 * hitW + tri.n1 * hitU + tri.n2 * hitV);
+                } else {
+                    hitNormal = tri.n0;
+                }
+                if (dot(ray.direction, hitNormal) > 0.0) hitNormal = -hitNormal;
+                mat = materials[tri.materialIndex];
+            }
+            else if (hitObjType == 2) {
+                hitNormal = planes[hitObjIndex].normalVector;
+                mat = materials[planes[hitObjIndex].materialIndex];
+            }
+            else if (hitObjType == 3) {
+                hitNormal = quads[hitObjIndex].normalVector;
+                mat = materials[quads[hitObjIndex].materialIndex];
+            }
+            else if (hitObjType == 4) {
+                hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]);
+                mat = materials[cubes[hitObjIndex].materialIndex];
+            }
+
+            vec3 baseColor = mat.color;
+            if (mat.patternType == 1) { 
+                float pattern = mod(floor((hitPos.x + 5.0) * 3.0) + floor(hitPos.z * 3.0), 2.0);
+                baseColor = (pattern > 0.5) ? vec3(1.0) : mat.color;
+            }
+
+            vec3 rayToCameraDir = normalize(cam.camPos.xyz - hitPos);
+            vec3 localColor = baseColor * mat.ambient;
+
+            for (int l = 0; l < cam.lightCount; l++) {
+                vec3 baseLightDir = normalize(lights[l].position - hitPos);
+                float lightDistance = length(lights[l].position - hitPos);
+                float shadowHits = 0.0;
+                if (lights[l].radius <= 0.0001) {
                     Ray shadowRay;
                     shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
-                    shadowRay.direction = lightDir;
+                    shadowRay.direction = baseLightDir;
                     bool inShadow = false;
-                    
                     for (int i = 0; i < cam.sphereCount; i++) {
                         float dist = sphereIntersect(shadowRay, spheres[i]);
-                        if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break; }
+                        if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
+                        }
                     }
                     if (!inShadow) {
                         for (int i = 0; i < cam.planeCount; i++) {
                             float dist = planeIntersect(shadowRay, planes[i]);
-                            if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break; }
+                            if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
+                            }
                         }
                     }
                     if (!inShadow) {
                         for (int i = 0; i < cam.quadCount; i++) {
-                            float dist = quadIntersect(shadowRay, quads[i]);
-                            if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break; }
+                     
+                           float dist = quadIntersect(shadowRay, quads[i]);
+                           if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
+                           }
                         }
                     }
                     if (!inShadow) {
                         for (int i = 0; i < cam.cubeCount; i++) {
-                            float dist = cubeIntersect(shadowRay, cubes[i]);
-                            if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break; }
+                     
+                           float dist = cubeIntersect(shadowRay, cubes[i]);
+                           if (dist > 0.0 && dist < lightDistance) { inShadow = true; break;
+                           }
                         }
                     }
                     
@@ -618,12 +568,14 @@ void main() {
                         while(stackPtrS > 0) {
                             int nodeIdx = stackS[--stackPtrS];
                             GPUBVHNode node = bvhNodes[nodeIdx];
-                            if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < jitteredLightDistance) {
+                            if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < lightDistance) {
                                 if (node.triCount > 0) {
                                     for (int i = 0; i < node.triCount; i++) {
+                    
                                         float dU, dV;
                                         float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
-                                        if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break; }
+                                        if (dist > 0.0 && dist < lightDistance) { inShadow = true;
+                                        break; }
                                     }
                                     if (inShadow) break;
                                 } else {
@@ -633,68 +585,148 @@ void main() {
                             }
                         }
                     }
+                    
+                    if (inShadow) shadowHits = float(cam.shadowRays); 
+                }
 
-                    if (inShadow) shadowHits += 1.0;
+                else {
+                    for (int sr = 0; sr < cam.shadowRays; sr++) {
+                        float u = (rand() * 2.0 - 1.0) * 0.8;
+                        float v = (rand() * 2.0 - 1.0) * 0.8;
+                        float w = (rand() * 2.0 - 1.0) * 0.8;
+                        vec3 jitter = vec3(u, v, w) * lights[l].radius;
+                        
+                        vec3 targetLightPos = lights[l].position + jitter;
+                        vec3 lightDir = normalize(targetLightPos - hitPos);
+                        float jitteredLightDistance = length(targetLightPos - hitPos);
+                        
+                        Ray shadowRay;
+                        shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
+                        shadowRay.direction = lightDir;
+                        bool inShadow = false;
+                        
+                        for (int i = 0; i < cam.sphereCount; i++) {
+                            float dist = sphereIntersect(shadowRay, spheres[i]);
+                            if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break;
+                            }
+                        }
+                        if (!inShadow) {
+                            for (int i = 0; i < cam.planeCount; i++) {
+                             
+                               float dist = planeIntersect(shadowRay, planes[i]);
+                                if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true;
+                                break; }
+                            }
+                        }
+                        if (!inShadow) {
+                            for (int i = 0; i < cam.quadCount; i++) 
+                            {
+                                float dist = quadIntersect(shadowRay, quads[i]);
+                                if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break;
+                                }
+                            }
+                        }
+                        if (!inShadow) {
+                            for (int i = 0; i < cam.cubeCount; i++) {
+     
+                                float dist = cubeIntersect(shadowRay, cubes[i]);
+                                if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true; break;
+                                }
+                            }
+                        }
+                        
+                        if (!inShadow && cam.bvhCount > 0) {
+              
+                            vec3 shadowInvDir = 1.0 / shadowRay.direction;
+                            int stackS[64];
+                            int stackPtrS = 0;
+                            stackS[stackPtrS++] = 0;
+                            
+                            while(stackPtrS > 0) {
+                                int nodeIdx = stackS[--stackPtrS];
+                                GPUBVHNode node = bvhNodes[nodeIdx];
+                                if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < jitteredLightDistance) {
+                                    if (node.triCount > 0) {
+                                        for (int i = 0; i < node.triCount; i++) {
+            
+                                            float dU, dV;
+                                            float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
+                                            if (dist > 0.0 && dist < jitteredLightDistance) { inShadow = true;
+                                            break; }
+                                        }
+                                        if (inShadow) break;
+                                    } else {
+                                        stackS[stackPtrS++] = node.leftFirst;
+                                        stackS[stackPtrS++] = node.leftFirst + 1;
+                                    }
+                                }
+                            }
+                        }
+
+                        if (inShadow) shadowHits += 1.0;
+                    }
+                }
+
+                float visibility = 1.0 - (shadowHits / float(cam.shadowRays));
+                if (visibility > 0.0) {
+                    float attenuationFactor = 1.0 / max(lightDistance * lightDistance, 0.01);
+                    vec3 attenuatedLightColor = lights[l].color * attenuationFactor;
+
+                    if (mat.shadingModel == 1) {
+                        localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, attenuatedLightColor) * visibility;
+                    } else {
+                        localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, attenuatedLightColor) * visibility;
+                        localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0) * visibility;
+                    }
                 }
             }
 
-            float visibility = 1.0 - (shadowHits / float(SHADOW_RAYS));
-            if (visibility > 0.0) {
-                float attenuationFactor = 1.0 / max(lightDistance * lightDistance, 0.01);
-                vec3 attenuatedLightColor = lights[l].color * attenuationFactor;
-
-                if (mat.shadingModel == 1) {
-                    localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, attenuatedLightColor) * visibility;
+            if (mat.transparency > 0.0) {
+                float cosI = dot(ray.direction, hitNormal);
+                float eta;
+                vec3 n = hitNormal;
+                
+                if (cosI < 0.0) {
+                    eta = 1.0 / mat.ior;
+                    cosI = -cosI;
                 } else {
-                    localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, attenuatedLightColor) * visibility;
-                    localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0) * visibility;
+                    eta = mat.ior;
+                    n = -hitNormal;
                 }
-            }
-        }
-
-        if (mat.transparency > 0.0) {
-            float cosI = dot(ray.direction, hitNormal);
-            float eta;
-            vec3 n = hitNormal;
-            
-            if (cosI < 0.0) {
-                eta = 1.0 / mat.ior;
-                cosI = -cosI;
-            } else {
-                eta = mat.ior;
-                n = -hitNormal;
-            }
-            
-            float r0 = (1.0 - eta) / (1.0 + eta);
-            r0 = r0 * r0;
-            float fresnel = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
-            vec3 refractDir = refract(ray.direction, n, eta);
-            
-            if (length(refractDir) < 0.001) fresnel = 1.0;
-            
-            if (fresnel < 1.0 && length(refractDir) > 0.001) {
-                finalColor += attenuation * localColor * (1.0 - mat.transparency);
-                attenuation *= mat.transparency * (1.0 - fresnel);
-                ray.origin = hitPos - n * MIN_DISPLACEMENT; 
-                ray.direction = normalize(refractDir);
-            } else {
-                finalColor += attenuation * localColor * (1.0 - mat.reflection);
+                
+                float r0 = (1.0 - eta) / (1.0 + eta);
+                r0 = r0 * r0;
+                float fresnel = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
+                vec3 refractDir = refract(ray.direction, n, eta);
+                
+                if (length(refractDir) < 0.001) fresnel = 1.0;
+                if (fresnel < 1.0 && length(refractDir) > 0.001) {
+                    sampleColor += attenuation * localColor * (1.0 - mat.transparency);
+                    attenuation *= mat.transparency * (1.0 - fresnel);
+                    ray.origin = hitPos - n * MIN_DISPLACEMENT; 
+                    ray.direction = normalize(refractDir);
+                } else {
+                    sampleColor += attenuation * localColor * (1.0 - mat.reflection);
+                    attenuation *= mat.reflection;
+                    ray.origin = hitPos + n * MIN_DISPLACEMENT;
+                    ray.direction = reflect(ray.direction, n);
+                }
+            } 
+            else if (mat.reflection > 0.0) {
+                sampleColor += attenuation * localColor * (1.0 - mat.reflection);
                 attenuation *= mat.reflection;
-                ray.origin = hitPos + n * MIN_DISPLACEMENT;
-                ray.direction = reflect(ray.direction, n);
+                ray.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
+                ray.direction = reflect(ray.direction, hitNormal);
+            } 
+            else {
+                sampleColor += attenuation * localColor;
+                break; 
             }
-        } 
-        else if (mat.reflection > 0.0) {
-            finalColor += attenuation * localColor * (1.0 - mat.reflection);
-            attenuation *= mat.reflection;
-            ray.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
-            ray.direction = reflect(ray.direction, hitNormal);
-        } 
-        else {
-            finalColor += attenuation * localColor;
-            break; 
         }
+        
+        accumulatedColor += sampleColor;
     }
 
+    vec3 finalColor = accumulatedColor / float(cam.samplesPerPixel);
     imageStore(resultImage, pixelCoords, vec4(finalColor.b, finalColor.g, finalColor.r, 1.0));
 }

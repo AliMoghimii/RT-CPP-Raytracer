@@ -727,6 +727,9 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.cubeCount = static_cast<int>(sceneCubes.size());
     pc.lightCount = static_cast<int>(sceneLights.size());
     pc.bvhCount = static_cast<int>(sceneBVH.size());
+    pc.maxDepth = maxDepth;
+    pc.shadowRays = shadowRays;
+    pc.samplesPerPixel = samplesPerPixel;
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 

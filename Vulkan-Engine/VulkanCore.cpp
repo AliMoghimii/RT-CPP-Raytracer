@@ -79,7 +79,74 @@ void VulkanCore::pickPhysicalDevice() {
     vector<VkPhysicalDevice> devices(deviceCount);
     vkEnumeratePhysicalDevices(instance, &deviceCount, devices.data());
 
-    physicalDevice = devices[0];
+    int bestScore = -1;
+    VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
+
+    for (const auto& dev : devices) {
+        int score = ratePhysicalDevice(dev);
+        if (score > bestScore) {
+            bestScore = score;
+            bestDevice = dev;
+        }
+    }
+
+    if (bestDevice == VK_NULL_HANDLE || bestScore < 0) {
+        throw runtime_error("Failed to find a suitable GPU.");
+    }
+
+    physicalDevice = bestDevice;
+
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(physicalDevice, &props);
+    cout << "Selected GPU: " << props.deviceName << " (score: " << bestScore << ")\n";
+}
+
+int VulkanCore::ratePhysicalDevice(VkPhysicalDevice dev) {
+    VkPhysicalDeviceProperties props;
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceProperties(dev, &props);
+    vkGetPhysicalDeviceFeatures(dev, &features);
+
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, nullptr);
+    vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(dev, &queueFamilyCount, queueFamilies.data());
+
+    bool hasComputeAndPresent = false;
+    for (uint32_t i = 0; i < queueFamilyCount; i++) {
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(dev, i, surface, &presentSupport);
+        if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT) && presentSupport) {
+            hasComputeAndPresent = true;
+            break;
+        }
+    }
+    if (!hasComputeAndPresent) return -1;
+
+    uint32_t extCount = 0;
+    vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, nullptr);
+    vector<VkExtensionProperties> extensions(extCount);
+    vkEnumerateDeviceExtensionProperties(dev, nullptr, &extCount, extensions.data());
+
+    bool hasSwapchain = false;
+    for (const auto& ext : extensions) {
+        if (strcmp(ext.extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            hasSwapchain = true;
+            break;
+        }
+    }
+    if (!hasSwapchain) return -1;
+
+    int score = 0;
+
+    if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+        score += 10000;
+    else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+        score += 1000;
+
+    score += props.limits.maxImageDimension2D;
+
+    return score;
 }
 
 void VulkanCore::createLogicalDevice() {

@@ -2,6 +2,12 @@
 # Visual Studio
 #############################
 
+# Unit test and parasoft
+.cpptest/
+.parasoft.dat/
+.parasoft/
+*.parasoft
+
 # VS cache and temp files
 .vs/
 *.ipch

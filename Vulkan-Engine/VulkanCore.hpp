@@ -147,6 +147,7 @@ private:
     void createInstance();
     void createSurface();
     void pickPhysicalDevice();
+    int ratePhysicalDevice(VkPhysicalDevice dev);
     void createLogicalDevice();
     void createCommandPool();
     void createSwapchain();

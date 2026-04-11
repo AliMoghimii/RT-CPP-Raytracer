@@ -4,20 +4,27 @@
 struct GPUMaterial {
     glm::vec3 color;
     float ambient;
+    glm::vec3 emission;
     float diffuse;
+    glm::vec3 color2;
     float specular;
+
     float reflection;
     float transparency;
     float ior;
-
     int shadingModel;
+
     int patternType;
     float roughness;
     float metallic;
-    float emissionR;
-    float emissionG;
-    float emissionB;
     int castShadows;
+
+    int useTexture;
+    int textureIndex;
+    float p1;
+    float p2;
+
+    float p3;
     float p4;
     float p5;
     float p6;

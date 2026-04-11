@@ -26,18 +26,15 @@ struct CameraPushConstants {
     int samplesPerPixel;
     float focalDistance;
     float lensRadius;
+
+    glm::vec3 fogColor;
     int enableFog;
-    float fogR;
-    float fogG;
-    float fogB;
+
+    glm::vec3 skyBottomColor;
     int enableSkybox;
-    float skyBottomR;
-    float skyBottomG;
-    float skyBottomB;
-    float skyTopR;
-    float skyTopG;
-    float skyTopB;
-    float pad4;
+
+    glm::vec3 skyTopColor;
+    int enableTextures;
 };
 
 class VulkanCore {
@@ -47,17 +44,15 @@ public:
     int samplesPerPixel = 4;
     float focalDistance = 1.0f;
     float lensRadius = 0.0f;
+
     int enableFog = 0;
-    float fogR = 0.05f;
-    float fogG = 0.05f;
-    float fogB = 0.05f;
+    glm::vec3 fogColor = glm::vec3(0.05f, 0.05f, 0.05f);
+
     int enableSkybox = 0;
-    float skyBottomR = 1.0f;
-    float skyBottomG = 1.0f;
-    float skyBottomB = 1.0f;
-    float skyTopR = 0.1f;
-    float skyTopG = 0.3f;
-    float skyTopB = 0.7f;
+    glm::vec3 skyBottomColor = glm::vec3(1.0f, 1.0f, 1.0f);
+    glm::vec3 skyTopColor = glm::vec3(0.1f, 0.3f, 0.7f);
+
+    int enableTextures = 1;
 
     void run();
     void loadScene(

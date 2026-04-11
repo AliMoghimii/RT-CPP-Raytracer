@@ -10,6 +10,8 @@ using namespace std;
 void VulkanCore::run() {
     initWindow();
     initVulkan();
+    glfwShowWindow(window);
+
     mainLoop();
     cleanup();
 }
@@ -18,6 +20,8 @@ void VulkanCore::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
     window = glfwCreateWindow(1280, 720, "Vulkan Real-Time Raytracer", nullptr, nullptr);
 }
 
@@ -799,18 +803,15 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.samplesPerPixel = samplesPerPixel;
     pc.focalDistance = focalDistance;
     pc.lensRadius = lensRadius;
+
+    pc.fogColor = fogColor;
     pc.enableFog = enableFog;
-    pc.fogR = fogR;
-    pc.fogG = fogG;
-    pc.fogB = fogB;
+
+    pc.skyBottomColor = skyBottomColor;
     pc.enableSkybox = enableSkybox;
-    pc.skyBottomR = skyBottomR;
-    pc.skyBottomG = skyBottomG;
-    pc.skyBottomB = skyBottomB;
-    pc.skyTopR = skyTopR;
-    pc.skyTopG = skyTopG;
-    pc.skyTopB = skyTopB;
-    pc.pad4 = 0.0f;
+
+    pc.skyTopColor = skyTopColor;
+    pc.enableTextures = enableTextures;
 
     vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
 

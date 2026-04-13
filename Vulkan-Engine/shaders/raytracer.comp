@@ -1,7 +1,10 @@
 #version 460
+#extension GL_EXT_nonuniform_qualifier : enable
 layout (local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba8) uniform writeonly image2D resultImage;
+layout(binding = 9) uniform sampler2D textures[];
+
 layout(push_constant) uniform CameraData {
     vec4 camPos;
     vec4 camForward;
@@ -51,12 +54,17 @@ struct GPUMaterial {
     int castShadows;
 
     int useTexture;
-    int textureIndex;
-    float p1;
-    float p2;
+    int albedoIndex;
+    int normalMapIndex;
+    int roughnessIndex;
 
-    float p3;
-    float p4;
+    int aoIndex;
+    int heightMapIndex;
+    float proceduralScale;
+    float proceduralWobble;
+
+    float bumpStrength;
+    float parallaxScale;
     float p5;
     float p6;
 };
@@ -165,6 +173,13 @@ float rand() {
     randState = randState * 747796405u + 2891336453u;
     uint word = ((randState >> ((randState >> 28u) + 4u)) ^ randState) * 277803737u;
     return float((word >> 22u) ^ word) / 4294967295.0;
+}
+
+mat3 getTBN(vec3 n) {
+    vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 t = normalize(cross(up, n));
+    vec3 b = cross(n, t);
+    return mat3(t, b, n);
 }
 
 float hash(vec3 p) {
@@ -571,11 +586,13 @@ void main() {
 
             vec3 hitPos = ray.origin + ray.direction * minHitDistance;
             vec3 hitNormal;
+            vec2 hitUV = vec2(0.0);
             GPUMaterial mat;
 
             if (hitObjType == 0) {
                 hitNormal = normalize(hitPos - spheres[hitObjIndex].center);
                 mat = materials[spheres[hitObjIndex].materialIndex];
+                hitUV = vec2(0.5 + atan(hitNormal.z, hitNormal.x) / (2.0 * PI), 0.5 - asin(hitNormal.y) / PI);
             }
             else if (hitObjType == 1) {
                 GPUTriangle tri = triangles[hitObjIndex];
@@ -587,39 +604,93 @@ void main() {
                 }
                 if (dot(ray.direction, hitNormal) > 0.0) hitNormal = -hitNormal;
                 mat = materials[tri.materialIndex];
+                hitUV = vec2(hitU, hitV);
             }
             else if (hitObjType == 2) {
                 hitNormal = planes[hitObjIndex].normalVector;
                 mat = materials[planes[hitObjIndex].materialIndex];
+                hitUV = hitPos.xz * 0.1;
             }
             else if (hitObjType == 3) {
                 hitNormal = quads[hitObjIndex].normalVector;
                 mat = materials[quads[hitObjIndex].materialIndex];
+                vec3 p = hitPos - quads[hitObjIndex].corner;
+                hitUV = vec2(dot(p, quads[hitObjIndex].edge1) / dot(quads[hitObjIndex].edge1, quads[hitObjIndex].edge1), 
+                             dot(p, quads[hitObjIndex].edge2) / dot(quads[hitObjIndex].edge2, quads[hitObjIndex].edge2));
             }
             else if (hitObjType == 4) {
                 hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]);
                 mat = materials[cubes[hitObjIndex].materialIndex];
+                hitUV = hitPos.xy;
             }
 
             vec3 baseColor = mat.color;
             if (cam.enableTextures == 1 && mat.useTexture == 1) {
                 if (mat.patternType == 0) { 
-                    baseColor = mat.color;
+                    if (mat.heightMapIndex >= 0) {
+                        vec3 viewDir = normalize(getTBN(hitNormal) * -ray.direction);
+    
+                        float minLayers = 8.0;
+                        float maxLayers = 32.0;
+                        float numLayers = mix(maxLayers, minLayers, abs(dot(vec3(0.0, 0.0, 1.0), viewDir)));  
+    
+                        float layerDepth = 1.0 / numLayers;
+                        float currentLayerDepth = 0.0;
+    
+                        vec2 P = viewDir.xy * mat.parallaxScale; 
+                        vec2 deltaTexCoords = P / numLayers;
+    
+                        vec2 currentTexCoords = hitUV;
+                        float currentDepthMapValue = 1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], currentTexCoords, 0.0).r;
+    
+                        while(currentLayerDepth < currentDepthMapValue) {
+                            currentTexCoords -= deltaTexCoords;
+                            currentDepthMapValue = 1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], currentTexCoords, 0.0).r;  
+                            currentLayerDepth += layerDepth;  
+                        }
+    
+                        vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
+                        float afterDepth  = currentDepthMapValue - currentLayerDepth;
+                        float beforeDepth = (1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], prevTexCoords, 0.0).r) - currentLayerDepth + layerDepth;
+                        float weight = afterDepth / (afterDepth - beforeDepth);
+    
+                        hitUV = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
+    
+                        if(hitUV.x > 1.0 || hitUV.y > 1.0 || hitUV.x < 0.0 || hitUV.y < 0.0) {
+                        }
+                    }
+                    if (mat.albedoIndex >= 0) {
+                        vec3 texCol = textureLod(textures[nonuniformEXT(mat.albedoIndex)], hitUV, 0.0).rgb;
+                        baseColor = pow(max(texCol, vec3(0.0)), vec3(2.2));
+                    }
+                    if (mat.normalMapIndex >= 0) {
+                        vec3 mapN = textureLod(textures[nonuniformEXT(mat.normalMapIndex)], hitUV, 0.0).rgb * 2.0 - 1.0;
+                        
+                        // mapN.y = -mapN.y; (For NormalGL maps)
+                        
+                        hitNormal = normalize(getTBN(hitNormal) * mapN);
+                    }
+                    if (mat.roughnessIndex >= 0) {
+                        mat.roughness = textureLod(textures[nonuniformEXT(mat.roughnessIndex)], hitUV, 0.0).r;
+                    }
+                    if (mat.aoIndex >= 0) {
+                        mat.ambient *= textureLod(textures[nonuniformEXT(mat.aoIndex)], hitUV, 0.0).r;
+                    }
                 }
                 else if (mat.patternType == 1) { 
-                    float scale = mat.p1 > 0.0 ? mat.p1 : 3.0;
+                    float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 3.0;
                     float pattern = mod(floor((hitPos.x + 5.0) * scale) + floor(hitPos.z * scale), 2.0);
                     baseColor = (pattern > 0.5) ? mat.color2 : mat.color;
                 }
                 else if (mat.patternType == 2) { 
-                    float spacing = mat.p1 > 0.0 ? mat.p1 : 16.0;
-                    float wobble = mat.p2 > 0.0 ? mat.p2 : 3.0;
+                    float spacing = mat.proceduralScale > 0.0 ? mat.proceduralScale : 16.0;
+                    float wobble = mat.proceduralWobble > 0.0 ? mat.proceduralWobble : 3.0;
                     float turbulence = fbm(hitPos * 2.0);
                     float wood = fract(length(hitPos.xz) * spacing + turbulence * wobble);
                     baseColor = mix(mat.color2, mat.color, wood);
                 }
                 else if (mat.patternType == 3) { 
-                    float scale = mat.p1 > 0.0 ? mat.p1 : 2.0;
+                    float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 2.0;
                     float turbulence = fbm(hitPos * scale);
                     float marble = sin(hitPos.x * 5.0 + turbulence * 10.0) * 0.5 + 0.5;
                     baseColor = mix(mat.color, mat.color2, marble);
@@ -639,55 +710,65 @@ void main() {
                     Ray shadowRay;
                     shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
                     shadowRay.direction = baseLightDir;
-                    vec3 rayVisibility = vec3(1.0);
+                    vec3 shadowColor = vec3(1.0);
                     
                     for (int i = 0; i < cam.sphereCount; i++) {
                         float dist = sphereIntersect(shadowRay, spheres[i]);
                         if (dist > 0.0 && dist < lightDistance) { 
                             GPUMaterial smat = materials[spheres[i].materialIndex];
                             if (smat.castShadows == 1) {
-                                if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                else { rayVisibility = vec3(0.0); break; }
-                            }
-                        }
-                    }
-                    if (rayVisibility != vec3(0.0)) {
-                        for (int i = 0; i < cam.planeCount; i++) {
-                           float dist = planeIntersect(shadowRay, planes[i]);
-                            if (dist > 0.0 && dist < lightDistance) { 
-                                GPUMaterial smat = materials[planes[i].materialIndex];
-                                if (smat.castShadows == 1) {
-                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; } 
-                                    else { rayVisibility = vec3(0.0); break; }
+                                if (smat.transparency > 0.0) {
+                                    shadowColor *= smat.color * smat.transparency;
+                                } else {
+                                    shadowColor = vec3(0.0);
+                                    break;
                                 }
                             }
                         }
                     }
-                    if (rayVisibility != vec3(0.0)) {
-                       for (int i = 0; i < cam.quadCount; i++) {
+                    
+                    if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
+                        for (int i = 0; i < cam.planeCount; i++) 
+                        {
+                           float dist = planeIntersect(shadowRay, planes[i]);
+                            if (dist > 0.0 && dist < lightDistance) { 
+                                GPUMaterial smat = materials[planes[i].materialIndex];
+                                if (smat.castShadows == 1) {
+                                    if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; } 
+                                    else { shadowColor = vec3(0.0); break; }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
+                       for (int i = 0; i < cam.quadCount; i++) 
+                        {
                            float dist = quadIntersect(shadowRay, quads[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
                                GPUMaterial smat = materials[quads[i].materialIndex];
                                if (smat.castShadows == 1) {
-                                   if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                   else { rayVisibility = vec3(0.0); break; }
+                                   if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                   else { shadowColor = vec3(0.0); break; }
                                }
                            }
                         }
                     }
-                    if (rayVisibility != vec3(0.0)) {
+                    
+                    if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
                           for (int i = 0; i < cam.cubeCount; i++) {
                            float dist = cubeIntersect(shadowRay, cubes[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
                                GPUMaterial smat = materials[cubes[i].materialIndex];
                                if (smat.castShadows == 1) {
-                                   if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                   else { rayVisibility = vec3(0.0); break; }
+                                   if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                   else { shadowColor = vec3(0.0); break; }
                                }
                            }
                         }
                     }
-                    if (rayVisibility != vec3(0.0) && cam.bvhCount > 0) {
+                    
+                    if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && cam.bvhCount > 0) {
                         vec3 shadowInvDir = 1.0 / shadowRay.direction;
                         int stackS[64];
                         int stackPtrS = 0;
@@ -704,12 +785,15 @@ void main() {
                                         if (dist > 0.0 && dist < lightDistance) { 
                                             GPUMaterial smat = materials[triangles[node.leftFirst + i].materialIndex];
                                             if (smat.castShadows == 1) {
-                                                if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                                else { rayVisibility = vec3(0.0); break; }
+                                                if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                                else { shadowColor = vec3(0.0); break; }
                                             }
                                         }
                                     }
-                                    if (rayVisibility == vec3(0.0)) break;
+                                    if (shadowColor == vec3(0.0)) {
+                                        stackPtrS = 0; 
+                                        break;
+                                    }
                                 } else {
                                     stackS[stackPtrS++] = node.leftFirst;
                                     stackS[stackPtrS++] = node.leftFirst + 1;
@@ -717,7 +801,7 @@ void main() {
                             }
                         }
                     }
-                    totalVisibility = rayVisibility;
+                    totalVisibility = shadowColor;
                 }
 
                 else {
@@ -734,55 +818,59 @@ void main() {
                         Ray shadowRay;
                         shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
                         shadowRay.direction = lightDir;
-                        vec3 rayVisibility = vec3(1.0);
+                        vec3 shadowColor = vec3(1.0);
                         
                         for (int i = 0; i < cam.sphereCount; i++) {
                             float dist = sphereIntersect(shadowRay, spheres[i]);
                             if (dist > 0.0 && dist < jitteredLightDistance) { 
                                 GPUMaterial smat = materials[spheres[i].materialIndex];
                                 if (smat.castShadows == 1) {
-                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                    else { rayVisibility = vec3(0.0); break; }
+                                    if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                    else { shadowColor = vec3(0.0); break; }
                                 }
                             }
                         }
-                        if (rayVisibility != vec3(0.0)) {
+                        if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
                            for (int i = 0; i < cam.planeCount; i++) {
                               float dist = planeIntersect(shadowRay, planes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
                                     GPUMaterial smat = materials[planes[i].materialIndex];
                                     if (smat.castShadows == 1) {
-                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                        else { rayVisibility = vec3(0.0); break; }
+                                        if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                        else { shadowColor = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-                         if (rayVisibility != vec3(0.0)) {
-                            for (int i = 0; i < cam.quadCount; i++) {
+               
+                         if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
+                            for (int i = 0; i < cam.quadCount; i++) 
+                            {
                                 float dist = quadIntersect(shadowRay, quads[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
                                     GPUMaterial smat = materials[quads[i].materialIndex];
                                     if (smat.castShadows == 1) {
-                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                        else { rayVisibility = vec3(0.0); break; }
+                                        if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                        else { shadowColor = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-                         if (rayVisibility != vec3(0.0)) {
+               
+                         if (shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) {
                             for (int i = 0; i < cam.cubeCount; i++) {
                                 float dist = cubeIntersect(shadowRay, cubes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
                                     GPUMaterial smat = materials[cubes[i].materialIndex];
                                     if (smat.castShadows == 1) {
-                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                        else { rayVisibility = vec3(0.0); break; }
+                                        if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                        else { shadowColor = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-                        if (rayVisibility != vec3(0.0) && cam.bvhCount > 0) {
+               
+                        if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && cam.bvhCount > 0) {
                              vec3 shadowInvDir = 1.0 / shadowRay.direction;
                             int stackS[64];
                             int stackPtrS = 0;
@@ -793,18 +881,22 @@ void main() {
                                 GPUBVHNode node = bvhNodes[nodeIdx];
                                 if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < jitteredLightDistance) {
                                     if (node.triCount > 0) {
-                                        for (int i = 0; i < node.triCount; i++) {
+                                        for (int i = 0; i < node.triCount; i++) 
+                                        {
                                             float dU, dV;
                                             float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                             if (dist > 0.0 && dist < jitteredLightDistance) { 
                                                 GPUMaterial smat = materials[triangles[node.leftFirst + i].materialIndex];
                                                 if (smat.castShadows == 1) {
-                                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
-                                                    else { rayVisibility = vec3(0.0); break; }
+                                                    if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                                    else { shadowColor = vec3(0.0); break; }
                                                 }
                                             }
                                         }
-                                         if (rayVisibility == vec3(0.0)) break;
+                                         if (shadowColor == vec3(0.0)) {
+                                            stackPtrS = 0;
+                                            break;
+                                         }
                                     } else {
                                         stackS[stackPtrS++] = node.leftFirst;
                                         stackS[stackPtrS++] = node.leftFirst + 1;
@@ -812,20 +904,20 @@ void main() {
                                 }
                             }
                         }
-                        totalVisibility += rayVisibility;
+                     totalVisibility += shadowColor;
                     }
                     totalVisibility /= float(cam.shadowRays);
                 }
 
                 if (totalVisibility.x > 0.0 || totalVisibility.y > 0.0 || totalVisibility.z > 0.0) {
                     float attenuationFactor = 1.0 / max(lightDistance * lightDistance, 0.01);
-                    vec3 finalLightColor = lights[l].color * attenuationFactor * totalVisibility;
+                    vec3 attenuatedLightColor = lights[l].color * attenuationFactor * totalVisibility;
 
                     if (mat.shadingModel == 1) {
-                        localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, finalLightColor);
+                        localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, attenuatedLightColor);
                     } else {
-                        localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, finalLightColor);
-                        localColor += blingPhongShading(mat, finalLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0);
+                        localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, attenuatedLightColor);
+                        localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0);
                     }
                 }
             }
@@ -851,7 +943,7 @@ void main() {
                 if (length(refractDir) < 0.001) fresnel = 1.0;
                 if (fresnel < 1.0 && length(refractDir) > 0.001) {
                     sampleColor += attenuation * localColor * (1.0 - mat.transparency);
-                    attenuation *= mat.transparency * (1.0 - fresnel) * baseColor;
+                    attenuation *= mat.transparency * (1.0 - fresnel) * baseColor; 
                     ray.origin = hitPos - n * MIN_DISPLACEMENT; 
                     ray.direction = normalize(refractDir);
                 } else {

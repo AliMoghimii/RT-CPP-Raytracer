@@ -1,6 +1,7 @@
 #include "VulkanCore.hpp"
 #include "ModelLoader.hpp"
 #include "MathUtils.hpp"
+#include "ImageLoader.hpp" 
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
@@ -16,15 +17,16 @@ int main() {
     vector<GPUQuad> quads;
     vector<GPUCube> cubes;
     vector<GPUBVHNode> bvhNodes;
+    vector<string> texturePaths;
 
     // --- SETTINGS ---
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
-    int ENABLE_SOFT_SHADOWS = 1; // 0 = Off, 1 = On
+    int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
-    int MAX_SHADOW_RAYS = 8; // 4, 8, 16, 32, 64, 128
+    int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
 
-    int ENABLE_DOF = 1; // 0 = Off, 1 = On 
+    int ENABLE_DOF = 0; // 0 = Off, 1 = On 
     float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
     float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
@@ -37,30 +39,80 @@ int main() {
 
     int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
-    int SAMPLES_PER_PIXEL = 2; //1 (Off), 2, 4, 8, 16, 32
+    int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+
+    // --- TEXTURES ---
+    // Format: ImageLoader::load("path", vector) - If a material lacks a map pass -1 to the material constructor.
+
+    // Paving Stone Textures
+    int pavingColor = ImageLoader::load("assets/Textures/PavingStone/Color.jpg", texturePaths);
+    int pavingNormal = ImageLoader::load("assets/Textures/PavingStone/Normal.jpg", texturePaths);
+    int pavingRoughness = ImageLoader::load("assets/Textures/PavingStone/Roughness.jpg", texturePaths);
+    int pavingAO = ImageLoader::load("assets/Textures/PavingStone/AmbientOcclusion.jpg", texturePaths);
+    int pavingDisp = ImageLoader::load("assets/Textures/PavingStone/Displacement.jpg", texturePaths);
+
+    // Ice Textures
+    int iceColor = ImageLoader::load("assets/Textures/Ice/Color.jpg", texturePaths);
+    int iceNormal = ImageLoader::load("assets/Textures/Ice/Normal.jpg", texturePaths);
+    int iceRoughness = ImageLoader::load("assets/Textures/Ice/Roughness.jpg", texturePaths);
+    int iceDisp = ImageLoader::load("assets/Textures/Ice/Displacement.jpg", texturePaths);
+
+    // Pool Tiles Textures
+    int tilesColor = ImageLoader::load("assets/Textures/Tiles/Color.jpg", texturePaths);
+    int tilesNormal = ImageLoader::load("assets/Textures/Tiles/Normal.jpg", texturePaths);
+    int tilesRoughness = ImageLoader::load("assets/Textures/Tiles/Roughness.jpg", texturePaths);
+    int tilesAO = ImageLoader::load("assets/Textures/Tiles/AmbientOcclusion.jpg", texturePaths);
+    int tilesDisp = ImageLoader::load("assets/Textures/Tiles/Displacement.jpg", texturePaths);
+
+    // Wood Textures
+    int woodColor = ImageLoader::load("assets/Textures/Wood/Color.jpg", texturePaths);
+    int woodNormal = ImageLoader::load("assets/Textures/Wood/Normal.jpg", texturePaths);
+    int woodRoughness = ImageLoader::load("assets/Textures/Wood/Roughness.jpg", texturePaths);
+    int woodAO = ImageLoader::load("assets/Textures/Wood/AmbientOcclusion.jpg", texturePaths);
+    int woodDisp = ImageLoader::load("assets/Textures/Wood/Displacement.jpg", texturePaths);
+
+    // Ground Textures
+    int groundColor = ImageLoader::load("assets/Textures/Ground/Color.jpg", texturePaths);
+    int groundNormal = ImageLoader::load("assets/Textures/Ground/Normal.jpg", texturePaths);
+    int groundRoughness = ImageLoader::load("assets/Textures/Ground/Roughness.jpg", texturePaths);
+    int groundAO = ImageLoader::load("assets/Textures/Ground/AmbientOcclusion.jpg", texturePaths);
+    int groundDisp = ImageLoader::load("assets/Textures/Ground/Displacement.jpg", texturePaths);
+
+    // Sand Textures
+    int sandColor = ImageLoader::load("assets/Textures/Sand/Color.jpg", texturePaths);
+    int sandNormal = ImageLoader::load("assets/Textures/Sand/Normal.jpg", texturePaths);
+    int sandRoughness = ImageLoader::load("assets/Textures/Sand/Roughness.jpg", texturePaths);
+    int sandAO = ImageLoader::load("assets/Textures/Sand/AmbientOcclusion.jpg", texturePaths);
+    int sandDisp = ImageLoader::load("assets/Textures/Sand/Displacement.jpg", texturePaths);
 
     // --- MATERIALS ---
-    // Format: { color, ambient, emission, diffuse, color2, specular, reflection, transparency, ior, shadingModel, patternType, roughness, metallic, castShadows, useTexture, textureIndex, p1, p2, p3, p4, p5, p6 }
-    materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Mirror (#111111)
-    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 1: Red Mirror (#FF0000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: White Shiny (#FFFFFF)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 3: Black Shiny (#000000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.5f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror (#FFFF00)
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 5: Green Mirror (#00FF00)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 1, 1, -1, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Blue and White
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Cyan Mirror (#00FFFF)
-    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 8: Orange Mirror (#FFA500)
-    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Purple Mirror (#800080)
-    materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 10: Purple Mirror (#8A2BE2)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass (IOR 1.5)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Matte White
-    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Matte Red
-    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Matte Green
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 15.0f, 15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 15: Emissive Cyan (Cast Shadows = 0)
-    materials.push_back({ glm::vec3(1.0f, 0.8f, 0.2f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.4f, 0.32f, 0.08f), 0.1f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 2, 0.8f, 0.0f, 1, 1, -1, 16.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Matte Procedural Texture Wood
-    materials.push_back({ glm::vec3(0.0f, 0.8f, 0.3f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.05f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 3, 0.8f, 0.0f, 1, 1, -1, 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Shiny Procedural Texture Marble
-    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass
-    materials.push_back({ glm::vec3(0.1f, 0.1f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass
+    // Format: { color, ambient, emission, diffuse, color2, specular, reflection, transparency, ior, shadingModel, patternType, roughness, metallic, castShadows, useTexture, albedoIdx, normalIdx, roughIdx, aoIdx, heightIdx, procScale, procWobble, bumpStr, parallax, p5, p6 }
+    materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Mirror (#111111)
+    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 1: Red Mirror (#FF0000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: White Shiny (#FFFFFF)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 3: Black Shiny (#000000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.5f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror (#FFFF00)
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 5: Green Mirror (#00FF00)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Blue and White
+    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Cyan Mirror (#00FFFF)
+    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 8: Orange Mirror (#FFA500)
+    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Purple Mirror (#800080)
+    materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 10: Purple Mirror (#8A2BE2)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.75f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass (IOR 1.5)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Matte White
+    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Matte Red
+    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Matte Green
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 15.0f, 15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 15: Emissive Cyan (Cast Shadows = 0)
+    materials.push_back({ glm::vec3(1.0f, 0.8f, 0.2f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.4f, 0.32f, 0.08f), 0.1f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 2, 0.8f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 16.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Matte Procedural Texture Wood
+    materials.push_back({ glm::vec3(0.0f, 0.8f, 0.3f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.05f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 3, 0.8f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Shiny Procedural Texture Marble
+    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass
+    materials.push_back({ glm::vec3(0.1f, 0.1f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass
+    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, pavingColor, pavingNormal, pavingRoughness, pavingAO, pavingDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 20: Paving (Tiled 4x)
+    materials.push_back({ glm::vec3(0.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.5f, 1.31f, 1, 0, 1.0f, 0.0f, 1, 1, iceColor, iceNormal, iceRoughness, -1, iceDisp, 2.0f, 0.0f, 1.5f, 0.03f, 0.0f, 0.0f }); // Material 21: Ice (Tiled 2x)
+    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, tilesColor, tilesNormal, tilesRoughness, tilesAO, tilesDisp, 4.0f, 0.0f, 2.0f, 0.04f, 0.0f, 0.0f }); // Material 22: Tiles (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, woodColor, woodNormal, woodRoughness, woodAO, woodDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 23: Wood (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, groundColor, groundNormal, groundRoughness, groundAO, groundDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 24: Ground (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, sandColor, sandNormal, sandRoughness, sandAO, sandDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 25: Sand (Tiled 4x)
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
@@ -88,6 +140,12 @@ int main() {
     spheres.push_back({ glm::vec3(1.0f, 0.75f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
     spheres.push_back({ glm::vec3(10.0f, 2.0f, 20.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
+    spheres.push_back({ glm::vec3(7.0f, 1.0f, -13.0f), 1.0f, 20, 0.0f, 0.0f, 0.0f }); // Material 20: Paving Stone
+    spheres.push_back({ glm::vec3(7.0f, 1.0f, -10.5f), 1.0f, 21, 0.0f, 0.0f, 0.0f }); // Material 21: Ice
+    spheres.push_back({ glm::vec3(7.0f, 1.0f, -8.0f), 1.0f, 22, 0.0f, 0.0f, 0.0f }); // Material 22: Pool Tiles
+    spheres.push_back({ glm::vec3(7.0f, 3.5f, -13.0f), 1.0f, 23, 0.0f, 0.0f, 0.0f }); // Material 23: Wood
+    spheres.push_back({ glm::vec3(7.0f, 3.5f, -10.5f), 1.0f, 24, 0.0f, 0.0f, 0.0f }); // Material 24: Ground
+    spheres.push_back({ glm::vec3(7.0f, 3.5f, -8.0f), 1.0f, 25, 0.0f, 0.0f, 0.0f }); // Material 25: Sand
 
     // --- CUBES ---
     // Format: { boundsMin(x,y,z), padding1, boundsMax(x,y,z), padding2, center(x,y,z), padding3, rotation(pitch,yaw,roll), materialIndex, padding4, padding5, padding6, padding7 }
@@ -160,6 +218,7 @@ int main() {
     engine.enableTextures = ENABLE_TEXTURES;
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
+    engine.loadTextures(texturePaths);
 
     try {
         engine.run();

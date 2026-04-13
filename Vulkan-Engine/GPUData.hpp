@@ -20,12 +20,17 @@ struct GPUMaterial {
     int castShadows;
 
     int useTexture;
-    int textureIndex;
-    float p1;
-    float p2;
+    int albedoIndex;
+    int normalMapIndex;
+    int roughnessIndex;
 
-    float p3;
-    float p4;
+    int aoIndex;
+    int heightMapIndex;
+    float proceduralScale;
+    float proceduralWobble;
+
+    float bumpStrength;
+    float parallaxScale;
     float p5;
     float p6;
 };

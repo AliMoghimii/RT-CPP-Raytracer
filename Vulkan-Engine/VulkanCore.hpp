@@ -8,6 +8,7 @@
 
 #include "GPUData.hpp"
 #include "ModelLoader.hpp"
+#include "ImageLoader.hpp"
 
 struct CameraPushConstants {
     glm::vec4 camPos;
@@ -66,6 +67,8 @@ public:
         const std::vector<GPUBVHNode>& bvh
     );
 
+    void loadTextures(const std::vector<std::string>& paths);
+
 private:
     GLFWwindow* window;
     VkInstance instance;
@@ -114,6 +117,12 @@ private:
     VkBuffer bvhBuffer;
     VkDeviceMemory bvhMemory;
 
+    std::vector<VkImage> textureImages;
+    std::vector<VkDeviceMemory> textureImageMemories;
+    std::vector<VkImageView> textureImageViews;
+    VkSampler textureSampler;
+    std::vector<std::string> pendingTexturePaths;
+
     std::vector<GPUMaterial> sceneMaterials;
     std::vector<GPUSphere> sceneSpheres;
     std::vector<GPUTriangle> sceneTriangles;
@@ -148,6 +157,10 @@ private:
     void createSwapchain();
     void createSwapchainImageViews();
     void createComputeImage();
+
+    void createTextureSampler();
+    void createTextureResources();
+
     void createSceneBuffers();
     void createDescriptorSetLayout();
     void createComputePipeline();

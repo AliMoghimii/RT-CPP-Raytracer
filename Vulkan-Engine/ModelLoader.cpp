@@ -19,12 +19,12 @@ void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangl
     if (extension == "obj" || extension == "OBJ") {
         loadOBJ(filename, sceneTriangles, materialIndex, position, rotation, scale);
 
-        cout << "Building BVH...\n";
+        cout << "ModelLoader: Building BVH...\n";
         buildBVH(sceneTriangles, bvhNodes);
-        cout << "BVH Built successfully.\n";
+        cout << "ModelLoader: BVH Built successfully.\n";
     }
     else {
-        cout << "Error: Unsupported file format '." << extension << "'\n";
+        cout << "Error ModelLoader: Unsupported file format '." << extension << "'\n";
     }
 }
 
@@ -32,7 +32,7 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
     ifstream file(filename);
 
     if (!file.is_open()) {
-        cout << "Error: Could not open file.\n";
+        cout << "Error ModelLoader: Could not open file.\n";
         return;
     }
 
@@ -147,7 +147,7 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
             }
         }
     }
-    cout << "Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n"; 
+    cout << "ModelLoader: Loaded " << filename << " with " << vertices.size() << " vertices and " << facesCount << " faces.\n"; 
 }
 
 void ModelLoader::updateNodeBounds(int nodeIdx, vector<GPUBVHNode>& bvhNodes, const vector<GPUTriangle>& triangles) {

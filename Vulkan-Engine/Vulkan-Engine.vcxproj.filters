@@ -31,7 +31,9 @@
     <ClInclude Include="VulkanCore.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="MathUtils.hpp" />
+    <ClInclude Include="MathUtils.hpp">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat">

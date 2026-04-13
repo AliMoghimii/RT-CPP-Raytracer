@@ -560,7 +560,6 @@ void main() {
                 break; 
             }
 
-            // --- SEGMENT FOG LOGIC ---
             if (cam.enableFog == 1) {
                 float fogDensity = 0.04;
                 float transmittance = exp(-minHitDistance * fogDensity);
@@ -605,7 +604,6 @@ void main() {
             vec3 baseColor = mat.color;
             if (cam.enableTextures == 1 && mat.useTexture == 1) {
                 if (mat.patternType == 0) { 
-                    // TODO: Actual image sampling
                     baseColor = mat.color;
                 }
                 else if (mat.patternType == 1) { 
@@ -635,68 +633,61 @@ void main() {
             for (int l = 0; l < cam.lightCount; l++) {
                 vec3 baseLightDir = normalize(lights[l].position - hitPos);
                 float lightDistance = length(lights[l].position - hitPos);
-                float shadowHits = 0.0;
+                vec3 totalVisibility = vec3(0.0);
+
                 if (lights[l].radius <= 0.0001) {
                     Ray shadowRay;
                     shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
                     shadowRay.direction = baseLightDir;
-                    bool inShadow = false;
+                    vec3 rayVisibility = vec3(1.0);
+                    
                     for (int i = 0; i < cam.sphereCount; i++) {
                         float dist = sphereIntersect(shadowRay, spheres[i]);
                         if (dist > 0.0 && dist < lightDistance) { 
-                            if (materials[spheres[i].materialIndex].castShadows == 1) {
-                                inShadow = true;
-                                break;
+                            GPUMaterial smat = materials[spheres[i].materialIndex];
+                            if (smat.castShadows == 1) {
+                                if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                else { rayVisibility = vec3(0.0); break; }
                             }
                         }
                     }
-                    if (!inShadow) {
-                        for (int i = 0; i < cam.planeCount; i++) 
-                        {
-                         
+                    if (rayVisibility != vec3(0.0)) {
+                        for (int i = 0; i < cam.planeCount; i++) {
                            float dist = planeIntersect(shadowRay, planes[i]);
                             if (dist > 0.0 && dist < lightDistance) { 
-                                if (materials[planes[i].materialIndex].castShadows == 1) {
-                                    inShadow = true;
-                                    break;
+                                GPUMaterial smat = materials[planes[i].materialIndex];
+                                if (smat.castShadows == 1) {
+                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; } 
+                                    else { rayVisibility = vec3(0.0); break; }
                                 }
                             }
                         }
                     }
-                    if (!inShadow) {
-     
-                       for (int i = 0; i < cam.quadCount; i++) 
-                        {
-                     
-                           
+                    if (rayVisibility != vec3(0.0)) {
+                       for (int i = 0; i < cam.quadCount; i++) {
                            float dist = quadIntersect(shadowRay, quads[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
-                               if (materials[quads[i].materialIndex].castShadows == 1) {
-                                   inShadow = true;
-                                   break;
+                               GPUMaterial smat = materials[quads[i].materialIndex];
+                               if (smat.castShadows == 1) {
+                                   if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                   else { rayVisibility = vec3(0.0); break; }
                                }
                            }
                         }
                     }
-                    if (!inShadow) {
-      
+                    if (rayVisibility != vec3(0.0)) {
                           for (int i = 0; i < cam.cubeCount; i++) {
- 
-                                              
-                          
                            float dist = cubeIntersect(shadowRay, cubes[i]);
                            if (dist > 0.0 && dist < lightDistance) { 
-                               if (materials[cubes[i].materialIndex].castShadows == 1) {
-                                   inShadow = true;
-                                   break;
+                               GPUMaterial smat = materials[cubes[i].materialIndex];
+                               if (smat.castShadows == 1) {
+                                   if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                   else { rayVisibility = vec3(0.0); break; }
                                }
                            }
                         }
                     }
-                    
-        
-                    if (!inShadow && cam.bvhCount > 0) {
-          
+                    if (rayVisibility != vec3(0.0) && cam.bvhCount > 0) {
                         vec3 shadowInvDir = 1.0 / shadowRay.direction;
                         int stackS[64];
                         int stackPtrS = 0;
@@ -708,19 +699,17 @@ void main() {
                             if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < lightDistance) {
                                 if (node.triCount > 0) {
                                     for (int i = 0; i < node.triCount; i++) {
-        
-                                                  
                                         float dU, dV;
                                         float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                         if (dist > 0.0 && dist < lightDistance) { 
-                                            if (materials[triangles[node.leftFirst + i].materialIndex].castShadows == 1) {
-                                
-                                                inShadow = true; break;
+                                            GPUMaterial smat = materials[triangles[node.leftFirst + i].materialIndex];
+                                            if (smat.castShadows == 1) {
+                                                if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                                else { rayVisibility = vec3(0.0); break; }
                                             }
                                         }
                                     }
-                        
-                                    if (inShadow) break;
+                                    if (rayVisibility == vec3(0.0)) break;
                                 } else {
                                     stackS[stackPtrS++] = node.leftFirst;
                                     stackS[stackPtrS++] = node.leftFirst + 1;
@@ -728,9 +717,7 @@ void main() {
                             }
                         }
                     }
-                    
-   
-                     if (inShadow) shadowHits = float(cam.shadowRays);
+                    totalVisibility = rayVisibility;
                 }
 
                 else {
@@ -747,68 +734,55 @@ void main() {
                         Ray shadowRay;
                         shadowRay.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
                         shadowRay.direction = lightDir;
-                        bool inShadow = false;
+                        vec3 rayVisibility = vec3(1.0);
                         
                         for (int i = 0; i < cam.sphereCount; i++) {
                             float dist = sphereIntersect(shadowRay, spheres[i]);
                             if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                if (materials[spheres[i].materialIndex].castShadows == 1) {
-                                    inShadow = true;
-                                    break;
+                                GPUMaterial smat = materials[spheres[i].materialIndex];
+                                if (smat.castShadows == 1) {
+                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                    else { rayVisibility = vec3(0.0); break; }
                                 }
                             }
                         }
-                        if (!inShadow) {
-                     
+                        if (rayVisibility != vec3(0.0)) {
                            for (int i = 0; i < cam.planeCount; i++) {
-             
-                                              
-                         
                               float dist = planeIntersect(shadowRay, planes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (materials[planes[i].materialIndex].castShadows == 1) {
-                                        inShadow = true;
-                                        break;
+                                    GPUMaterial smat = materials[planes[i].materialIndex];
+                                    if (smat.castShadows == 1) {
+                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                        else { rayVisibility = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-               
-                         if (!inShadow) {
-                      
-                            for (int i = 0; i < cam.quadCount; i++) 
-                            {
-  
+                         if (rayVisibility != vec3(0.0)) {
+                            for (int i = 0; i < cam.quadCount; i++) {
                                 float dist = quadIntersect(shadowRay, quads[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (materials[quads[i].materialIndex].castShadows == 1) {
-                                        inShadow = true;
-                                        break;
+                                    GPUMaterial smat = materials[quads[i].materialIndex];
+                                    if (smat.castShadows == 1) {
+                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                        else { rayVisibility = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-               
-                         if (!inShadow) {
-                      
+                         if (rayVisibility != vec3(0.0)) {
                             for (int i = 0; i < cam.cubeCount; i++) {
-     
-                         
                                 float dist = cubeIntersect(shadowRay, cubes[i]);
                                 if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                    if (materials[cubes[i].materialIndex].castShadows == 1) {
-                                        inShadow = true;
-                                        break;
+                                    GPUMaterial smat = materials[cubes[i].materialIndex];
+                                    if (smat.castShadows == 1) {
+                                        if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                        else { rayVisibility = vec3(0.0); break; }
                                     }
                                 }
                             }
                         }
-               
-                         
-                        
-                        if (!inShadow && cam.bvhCount > 0) {
-              
-                       
+                        if (rayVisibility != vec3(0.0) && cam.bvhCount > 0) {
                              vec3 shadowInvDir = 1.0 / shadowRay.direction;
                             int stackS[64];
                             int stackPtrS = 0;
@@ -819,21 +793,18 @@ void main() {
                                 GPUBVHNode node = bvhNodes[nodeIdx];
                                 if (intersectAABB(shadowRay, shadowInvDir, node.aabbMin, node.aabbMax) < jitteredLightDistance) {
                                     if (node.triCount > 0) {
-                                        for (int i = 0; i < node.triCount; i++) 
-                                        {
-            
+                                        for (int i = 0; i < node.triCount; i++) {
                                             float dU, dV;
                                             float dist = triangleIntersect(shadowRay, triangles[node.leftFirst + i], dU, dV);
                                             if (dist > 0.0 && dist < jitteredLightDistance) { 
-                                                if (materials[triangles[node.leftFirst + i].materialIndex].castShadows == 1) {
-                            
-                                                    inShadow = true;
-                                                    break; 
+                                                GPUMaterial smat = materials[triangles[node.leftFirst + i].materialIndex];
+                                                if (smat.castShadows == 1) {
+                                                    if (smat.transparency > 0.0) { rayVisibility *= smat.color * smat.transparency; }
+                                                    else { rayVisibility = vec3(0.0); break; }
                                                 }
                                             }
                                         }
-               
-                                         if (inShadow) break;
+                                         if (rayVisibility == vec3(0.0)) break;
                                     } else {
                                         stackS[stackPtrS++] = node.leftFirst;
                                         stackS[stackPtrS++] = node.leftFirst + 1;
@@ -841,22 +812,20 @@ void main() {
                                 }
                             }
                         }
-
-           
-                     if (inShadow) shadowHits += 1.0;
+                        totalVisibility += rayVisibility;
                     }
+                    totalVisibility /= float(cam.shadowRays);
                 }
 
-                float visibility = 1.0 - (shadowHits / float(cam.shadowRays));
-                if (visibility > 0.0) {
+                if (totalVisibility.x > 0.0 || totalVisibility.y > 0.0 || totalVisibility.z > 0.0) {
                     float attenuationFactor = 1.0 / max(lightDistance * lightDistance, 0.01);
-                    vec3 attenuatedLightColor = lights[l].color * attenuationFactor;
+                    vec3 finalLightColor = lights[l].color * attenuationFactor * totalVisibility;
 
                     if (mat.shadingModel == 1) {
-                        localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, attenuatedLightColor) * visibility;
+                        localColor += pbrShading(mat, baseColor, hitNormal, rayToCameraDir, baseLightDir, finalLightColor);
                     } else {
-                        localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, attenuatedLightColor) * visibility;
-                        localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0) * visibility;
+                        localColor += lambertianShading(mat, baseColor, hitNormal, baseLightDir, finalLightColor);
+                        localColor += blingPhongShading(mat, finalLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0);
                     }
                 }
             }
@@ -882,7 +851,7 @@ void main() {
                 if (length(refractDir) < 0.001) fresnel = 1.0;
                 if (fresnel < 1.0 && length(refractDir) > 0.001) {
                     sampleColor += attenuation * localColor * (1.0 - mat.transparency);
-                    attenuation *= mat.transparency * (1.0 - fresnel);
+                    attenuation *= mat.transparency * (1.0 - fresnel) * baseColor;
                     ray.origin = hitPos - n * MIN_DISPLACEMENT; 
                     ray.direction = normalize(refractDir);
                 } else {

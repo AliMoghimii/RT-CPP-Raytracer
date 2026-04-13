@@ -20,11 +20,11 @@ int main() {
     // --- SETTINGS ---
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
-    int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
+    int ENABLE_SOFT_SHADOWS = 1; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
-    int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
+    int MAX_SHADOW_RAYS = 8; // 4, 8, 16, 32, 64, 128
 
-    int ENABLE_DOF = 0; // 0 = Off, 1 = On 
+    int ENABLE_DOF = 1; // 0 = Off, 1 = On 
     float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
     float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
@@ -37,7 +37,7 @@ int main() {
 
     int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
-    int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+    int SAMPLES_PER_PIXEL = 2; //1 (Off), 2, 4, 8, 16, 32
 
     // --- MATERIALS ---
     // Format: { color, ambient, emission, diffuse, color2, specular, reflection, transparency, ior, shadingModel, patternType, roughness, metallic, castShadows, useTexture, textureIndex, p1, p2, p3, p4, p5, p6 }
@@ -59,6 +59,8 @@ int main() {
     materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 15.0f, 15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 15: Emissive Cyan (Cast Shadows = 0)
     materials.push_back({ glm::vec3(1.0f, 0.8f, 0.2f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.4f, 0.32f, 0.08f), 0.1f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 2, 0.8f, 0.0f, 1, 1, -1, 16.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Matte Procedural Texture Wood
     materials.push_back({ glm::vec3(0.0f, 0.8f, 0.3f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.05f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 3, 0.8f, 0.0f, 1, 1, -1, 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Shiny Procedural Texture Marble
+    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass
+    materials.push_back({ glm::vec3(0.1f, 0.1f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
@@ -85,6 +87,7 @@ int main() {
     spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.75f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
+    spheres.push_back({ glm::vec3(10.0f, 2.0f, 20.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
 
     // --- CUBES ---
     // Format: { boundsMin(x,y,z), padding1, boundsMax(x,y,z), padding2, center(x,y,z), padding3, rotation(pitch,yaw,roll), materialIndex, padding4, padding5, padding6, padding7 }
@@ -92,6 +95,7 @@ int main() {
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.0f, -0.2f), 0.0f, glm::vec3(0.0f, 20.0f, 0.0f), 11, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Glass Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.3f, -0.2f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 16, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Wood Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.6f, -0.2f), 0.0f, glm::vec3(0.0f, 10.0f, 0.0f), 17, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Marble Cube
+    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-13.0f, 1.5f, 25.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
 
     // --- PYRAMID ---
     glm::vec3 pts[4] = {

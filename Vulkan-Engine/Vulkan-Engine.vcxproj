@@ -102,7 +102,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\nlohmann\include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -126,7 +126,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\nlohmann\include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -143,11 +143,13 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="source\core\VMA.cpp" />
     <ClCompile Include="source\passes\LegacyPass.cpp" />
     <ClCompile Include="source\core\VulkanCore.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\scene\ImageLoader.cpp" />
     <ClCompile Include="source\scene\ModelLoader.cpp" />
+    <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\VulkanCore.hpp" />

@@ -66,6 +66,9 @@
     <Filter Include="Source\Debug">
       <UniqueIdentifier>{ad0da187-33b2-4c8e-974a-b95464e42376}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Third-Party">
+      <UniqueIdentifier>{e3a1b2c4-5d6e-7f80-91a2-b3c4d5e6f7a8}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">
@@ -80,8 +83,14 @@
     <ClCompile Include="source\scene\ModelLoader.cpp">
       <Filter>Source\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="source\core\VMA.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
     <ClCompile Include="source\core\VulkanCore.cpp">
       <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp">
+      <Filter>Third-Party</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

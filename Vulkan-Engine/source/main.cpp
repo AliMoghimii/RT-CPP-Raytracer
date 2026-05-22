@@ -1,7 +1,7 @@
-#include "VulkanCore.hpp"
-#include "ModelLoader.hpp"
-#include "MathUtils.hpp"
-#include "ImageLoader.hpp" 
+#include "core/VulkanCore.hpp"
+#include "scene/ModelLoader.hpp"
+#include "math/MathUtils.hpp"
+#include "scene/ImageLoader.hpp" 
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
@@ -182,9 +182,9 @@ int main() {
 
     // --- MODELS ---
     // Format: ModelLoader::load("filepath", trianglesVector, bvhNodesVector, materialIndex, position(x,y,z), rotation(pitch,yaw,roll), scale)
-    //ModelLoader::load("assets/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
-    //ModelLoader::load("assets/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
-    ModelLoader::load("assets/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
+    //ModelLoader::load("assets/models/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
+    //ModelLoader::load("assets/models/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
+    ModelLoader::load("assets/models/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
 
     // --- LIGHTS ---
     glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);

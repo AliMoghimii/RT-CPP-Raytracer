@@ -1,52 +1,113 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
-    <Filter Include="Source Files">
-      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
-      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    <Filter Include="Include">
+      <UniqueIdentifier>{56d6c23d-dfdd-4bac-acae-5aa6506cec2f}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resource Files">
+    <Filter Include="Include\Math">
+      <UniqueIdentifier>{d40067ed-e545-40ba-be0e-dfd1f5f78731}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\Passes">
+      <UniqueIdentifier>{c5aa6715-8909-43c0-94e5-9abb5f176a3b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\Scene">
+      <UniqueIdentifier>{9af101bf-7991-440b-8088-13314bb0d61f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\Debug">
+      <UniqueIdentifier>{a4f5e819-cd67-4284-a3e2-be5e6e9d5e5d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\Core">
+      <UniqueIdentifier>{76a60205-3a75-4701-b13d-0a07d89a8bbb}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\GI">
+      <UniqueIdentifier>{d089cf1f-ee7e-47a5-abd6-d82654ad98c6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader">
+      <UniqueIdentifier>{f71a2153-478a-49ad-bc6c-b04f89a70d09}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\Common">
+      <UniqueIdentifier>{d5ecdf89-1d78-4b38-942f-4c0e4063f891}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\RC">
+      <UniqueIdentifier>{6c31301f-4403-4765-ba43-e998ef53817f}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\Shading">
+      <UniqueIdentifier>{310cf171-0f4b-4ecf-b239-e9d65e253fb7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\Tonemap">
+      <UniqueIdentifier>{d9d7c3b7-6dc9-4eea-bafd-f8cc2620a432}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\Visibility">
+      <UniqueIdentifier>{cf25baec-544b-4a5d-91c5-302de83c913d}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Shader\Legacy">
+      <UniqueIdentifier>{99e2a8ac-ebfd-4985-94a2-fe5b1095dc4c}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resource">
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
     </Filter>
+    <Filter Include="Source">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Source\Core">
+      <UniqueIdentifier>{b6d28eb0-fb9e-4e4a-858c-b15d2c5444d8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Scene">
+      <UniqueIdentifier>{20110e92-5911-4e04-ba4a-5b86cb6c9a68}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\GI">
+      <UniqueIdentifier>{25b68e1a-6ca1-42f2-a645-bfc525327023}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Passes">
+      <UniqueIdentifier>{43a7f098-7006-43ca-b0d2-d764a9eb58ba}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Debug">
+      <UniqueIdentifier>{ad0da187-33b2-4c8e-974a-b95464e42376}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="main.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="source\passes\LegacyPass.cpp">
+      <Filter>Source\Passes</Filter>
     </ClCompile>
-    <ClCompile Include="ModelLoader.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="source\main.cpp">
+      <Filter>Source</Filter>
     </ClCompile>
-    <ClCompile Include="VulkanCore.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="source\scene\ImageLoader.cpp">
+      <Filter>Source\Scene</Filter>
     </ClCompile>
-    <ClCompile Include="ImageLoader.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="source\scene\ModelLoader.cpp">
+      <Filter>Source\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\VulkanCore.cpp">
+      <Filter>Source\Core</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="GPUData.hpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="include\passes\LegacyPass.hpp">
+      <Filter>Include\Passes</Filter>
     </ClInclude>
-    <ClInclude Include="ModelLoader.hpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="include\math\MathUtils.hpp">
+      <Filter>Include\Math</Filter>
     </ClInclude>
-    <ClInclude Include="VulkanCore.hpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="include\core\VulkanCore.hpp">
+      <Filter>Include\Core</Filter>
     </ClInclude>
-    <ClInclude Include="MathUtils.hpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="include\scene\GPUData.hpp">
+      <Filter>Include\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="ImageLoader.hpp">
-      <Filter>Source Files</Filter>
+    <ClInclude Include="include\scene\ImageLoader.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\ModelLoader.hpp">
+      <Filter>Include\Scene</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <None Include="compile_shaders.bat">
-      <Filter>Source Files</Filter>
-    </None>
-    <None Include="shaders\raytracer.comp">
-      <Filter>Source Files</Filter>
+    <None Include="compile_shaders.bat" />
+    <None Include="shaders\legacy\raytracer.comp">
+      <Filter>Shader\Legacy</Filter>
     </None>
   </ItemGroup>
 </Project>

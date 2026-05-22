@@ -6,9 +6,9 @@
 #include <iostream>
 #include <string>
 
-#include "GPUData.hpp"
-#include "ModelLoader.hpp"
-#include "ImageLoader.hpp"
+#include "scene/GPUData.hpp"
+#include "scene/ModelLoader.hpp"
+#include "scene/ImageLoader.hpp"
 
 struct CameraPushConstants {
     glm::vec4 camPos;

@@ -1,5 +1,5 @@
-#include "ModelLoader.hpp"
-#include "MathUtils.hpp"
+#include "scene/ModelLoader.hpp"
+#include "math/MathUtils.hpp"
 #include <fstream>
 #include <sstream>
 #include <iostream>

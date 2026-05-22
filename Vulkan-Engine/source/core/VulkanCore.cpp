@@ -1,4 +1,5 @@
-#include "VulkanCore.hpp"
+#include "core/VulkanCore.hpp"
+
 #include <stdexcept>
 #include <vector>
 #include <iostream>
@@ -580,7 +581,7 @@ void VulkanCore::createDescriptorSetLayout() {
 }
 
 void VulkanCore::createComputePipeline() {
-    auto compShaderCode = readFile("shaders/raytracer.comp.spv");
+    auto compShaderCode = readFile("shaders/legacy/raytracer.comp.spv");
     VkShaderModule compShaderModule = createShaderModule(compShaderCode);
 
     VkPipelineShaderStageCreateInfo shaderStageInfo{};

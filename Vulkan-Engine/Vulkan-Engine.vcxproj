@@ -143,21 +143,23 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="ImageLoader.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="ModelLoader.cpp" />
-    <ClCompile Include="VulkanCore.cpp" />
+    <ClCompile Include="source\passes\LegacyPass.cpp" />
+    <ClCompile Include="source\core\VulkanCore.cpp" />
+    <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\scene\ImageLoader.cpp" />
+    <ClCompile Include="source\scene\ModelLoader.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="GPUData.hpp" />
-    <ClInclude Include="ImageLoader.hpp" />
-    <ClInclude Include="MathUtils.hpp" />
-    <ClInclude Include="ModelLoader.hpp" />
-    <ClInclude Include="VulkanCore.hpp" />
+    <ClInclude Include="include\core\VulkanCore.hpp" />
+    <ClInclude Include="include\math\MathUtils.hpp" />
+    <ClInclude Include="include\scene\GPUData.hpp" />
+    <ClInclude Include="include\scene\ImageLoader.hpp" />
+    <ClInclude Include="include\scene\ModelLoader.hpp" />
+    <ClInclude Include="include\passes\LegacyPass.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
-    <None Include="shaders\raytracer.comp" />
+    <None Include="shaders\legacy\raytracer.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

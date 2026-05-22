@@ -462,6 +462,7 @@ void main() {
     ivec2 imageSize = imageSize(resultImage);
     if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
 
+
     randState = pixelCoords.y * imageSize.x + pixelCoords.x + 1;
 
     float fov = 60.0;

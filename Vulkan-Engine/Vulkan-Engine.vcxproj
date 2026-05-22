@@ -149,6 +149,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\scene\ImageLoader.cpp" />
     <ClCompile Include="source\scene\ModelLoader.cpp" />
+    <ClCompile Include="source\scene\Primitive.cpp" />
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -158,6 +159,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\scene\ImageLoader.hpp" />
     <ClInclude Include="include\scene\ModelLoader.hpp" />
     <ClInclude Include="include\passes\LegacyPass.hpp" />
+    <ClInclude Include="include\scene\Primitive.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />

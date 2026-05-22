@@ -1,10 +1,12 @@
 #include "core/VulkanCore.hpp"
 #include "scene/ModelLoader.hpp"
 #include "math/MathUtils.hpp"
-#include "scene/ImageLoader.hpp" 
+#include "scene/ImageLoader.hpp"
+#include "scene/Primitive.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
+
 
 using namespace std;
 
@@ -216,6 +218,24 @@ int main() {
     engine.skyTopColor = SKY_TOP_COLOR;
 
     engine.enableTextures = ENABLE_TEXTURES;
+
+    // Tessellate object primitives into the BVH so RC probes can see them.
+    // Quads (walls/ceiling) and planes (floor) stay analytical — their large
+    // triangles bloat the BVH root AABB and make shadow traversal O(N).
+    for (const auto& sphere : spheres) {
+        tessellateSphere(sphere, sphere.materialIndex, triangles);
+    }
+    for (const auto& cube : cubes) {
+        tessellateCube(cube, cube.materialIndex, triangles);
+    }
+
+    // Clear only the primitives now in the BVH. Quads and planes remain
+    // in their SSBOs as fast analytical shadow occluders.
+    spheres.clear();
+    cubes.clear();
+
+    // Rebuild BVH from unified triangle pool
+    ModelLoader::buildBVH(triangles, bvhNodes);
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
     engine.loadTextures(texturePaths);

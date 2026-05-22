@@ -16,6 +16,11 @@ public:
         float scale
     );
 
+    static void buildBVH(
+        std::vector<GPUTriangle>& triangles,
+        std::vector<GPUBVHNode>& bvhNodes
+    );
+
 private:
     static void loadOBJ(
         const std::string& filename,
@@ -24,11 +29,6 @@ private:
         const glm::vec3& position,
         const glm::vec3& rotation,
         float scale
-    );
-
-    static void buildBVH(
-        std::vector<GPUTriangle>& triangles,
-        std::vector<GPUBVHNode>& bvhNodes
     );
 
     static void updateNodeBounds(

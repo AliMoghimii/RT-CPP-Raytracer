@@ -5,8 +5,44 @@
 #include <iostream>
 #include <cmath>
 #include <algorithm>
+#include <limits>
 
 using namespace std;
+
+// ---- SAH BVH helpers (file-local) ----
+
+struct AABB {
+    glm::vec3 min{ std::numeric_limits<float>::infinity() };
+    glm::vec3 max{ -std::numeric_limits<float>::infinity() };
+};
+
+struct BinInfo {
+    AABB bounds;
+    int  count = 0;
+};
+
+static glm::vec3 triCentroid(const GPUTriangle& t) {
+    return (t.v0 + t.v1 + t.v2) / 3.0f;
+}
+
+static AABB triAABB(const GPUTriangle& t) {
+    return { glm::min(glm::min(t.v0, t.v1), t.v2),
+             glm::max(glm::max(t.v0, t.v1), t.v2) };
+}
+
+static AABB unionAABB(const AABB& a, const AABB& b) {
+    return { glm::min(a.min, b.min), glm::max(a.max, b.max) };
+}
+
+static float surfaceArea(const AABB& box) {
+    glm::vec3 e = box.max - box.min;
+    return 2.0f * (e.x * e.y + e.y * e.z + e.z * e.x);
+}
+
+static float surfaceArea(const GPUBVHNode& node) {
+    glm::vec3 e = node.aabbMax - node.aabbMin;
+    return 2.0f * (e.x * e.y + e.y * e.z + e.z * e.x);
+}
 
 void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, vector<GPUBVHNode>& bvhNodes, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
     string extension = "";
@@ -226,6 +262,96 @@ void ModelLoader::subdivide(int nodeIdx, vector<GPUBVHNode>& bvhNodes, vector<GP
     subdivide(rightChildIdx, bvhNodes, triangles, nodesUsed);
 }
 
+void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
+                               vector<GPUTriangle>& triangles, int& nodesUsed)
+{
+    GPUBVHNode& node = bvhNodes[nodeIdx];
+    if (node.triCount <= 4) return;
+
+    const int NUM_BINS = 16;
+    float bestCost  = std::numeric_limits<float>::infinity();
+    int   bestAxis  = -1;
+    float bestSplit = 0.0f;
+
+    for (int axis = 0; axis < 3; axis++) {
+        float axisMin =  std::numeric_limits<float>::infinity();
+        float axisMax = -std::numeric_limits<float>::infinity();
+
+        for (int i = 0; i < node.triCount; i++) {
+            float c = triCentroid(triangles[node.leftFirst + i])[axis];
+            axisMin = std::min(axisMin, c);
+            axisMax = std::max(axisMax, c);
+        }
+        if (axisMax - axisMin < 1e-6f) continue;
+
+        float scale = float(NUM_BINS) / (axisMax - axisMin);
+
+        BinInfo bins[NUM_BINS] = {};
+        for (int i = 0; i < node.triCount; i++) {
+            const GPUTriangle& tri = triangles[node.leftFirst + i];
+            int b = std::min(NUM_BINS - 1, int((triCentroid(tri)[axis] - axisMin) * scale));
+            bins[b].count++;
+            bins[b].bounds = unionAABB(bins[b].bounds, triAABB(tri));
+        }
+
+        int  lCounts[NUM_BINS], rCounts[NUM_BINS];
+        AABB lAABB[NUM_BINS],   rAABB[NUM_BINS];
+
+        int  lSum = 0; AABB lAcc;
+        for (int i = 0; i < NUM_BINS; i++) {
+            lSum += bins[i].count; lCounts[i] = lSum;
+            lAcc = unionAABB(lAcc, bins[i].bounds); lAABB[i] = lAcc;
+        }
+
+        int  rSum = 0; AABB rAcc;
+        for (int i = NUM_BINS - 1; i >= 0; i--) {
+            rSum += bins[i].count; rCounts[i] = rSum;
+            rAcc = unionAABB(rAcc, bins[i].bounds); rAABB[i] = rAcc;
+        }
+
+        float parentSA = surfaceArea(node);
+        for (int s = 0; s < NUM_BINS - 1; s++) {
+            if (lCounts[s] == 0 || rCounts[s + 1] == 0) continue;
+            float cost = 1.0f
+                + (surfaceArea(lAABB[s])     / parentSA) * float(lCounts[s])
+                + (surfaceArea(rAABB[s + 1]) / parentSA) * float(rCounts[s + 1]);
+            if (cost < bestCost) {
+                bestCost  = cost;
+                bestAxis  = axis;
+                bestSplit = axisMin + float(s + 1) / scale;
+            }
+        }
+    }
+
+    if (bestAxis == -1 || bestCost >= float(node.triCount)) return;
+
+    int i = node.leftFirst, j = i + node.triCount - 1;
+    while (i <= j) {
+        if (triCentroid(triangles[i])[bestAxis] < bestSplit) i++;
+        else std::swap(triangles[i], triangles[j--]);
+    }
+
+    int leftCount = i - node.leftFirst;
+    if (leftCount == 0 || leftCount == node.triCount) return;
+
+    int leftChild  = nodesUsed++;
+    int rightChild = nodesUsed++;
+
+    bvhNodes[leftChild].leftFirst  = node.leftFirst;
+    bvhNodes[leftChild].triCount   = leftCount;
+    updateNodeBounds(leftChild, bvhNodes, triangles);
+
+    bvhNodes[rightChild].leftFirst = i;
+    bvhNodes[rightChild].triCount  = node.triCount - leftCount;
+    updateNodeBounds(rightChild, bvhNodes, triangles);
+
+    node.leftFirst = leftChild;
+    node.triCount  = 0;
+
+    subdivideSAH(leftChild,  bvhNodes, triangles, nodesUsed);
+    subdivideSAH(rightChild, bvhNodes, triangles, nodesUsed);
+}
+
 void ModelLoader::buildBVH(vector<GPUTriangle>& triangles, vector<GPUBVHNode>& bvhNodes) {
     if (triangles.empty()) {
         return;
@@ -240,7 +366,7 @@ void ModelLoader::buildBVH(vector<GPUTriangle>& triangles, vector<GPUBVHNode>& b
     updateNodeBounds(0, bvhNodes, triangles);
 
     int nodesUsed = 1;
-    subdivide(0, bvhNodes, triangles, nodesUsed);
+    subdivideSAH(0, bvhNodes, triangles, nodesUsed);
 
     bvhNodes.resize(nodesUsed);
 }

@@ -43,4 +43,11 @@ private:
         std::vector<GPUTriangle>& triangles,
         int& nodesUsed
     );
+
+    static void subdivideSAH(
+        int nodeIdx,
+        std::vector<GPUBVHNode>& bvhNodes,
+        std::vector<GPUTriangle>& triangles,
+        int& nodesUsed
+    );
 };

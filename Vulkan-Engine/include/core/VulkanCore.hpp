@@ -24,7 +24,7 @@ struct CameraPushConstants {
     int bvhCount;
     int maxDepth;
     int shadowRays;
-    int samplesPerPixel;
+    int primaryRaysPerPixel;
     float focalDistance;
     float lensRadius;
 
@@ -42,7 +42,7 @@ class VulkanCore {
 public:
     int maxDepth = 5;
     int shadowRays = 4;
-    int samplesPerPixel = 4;
+    int primaryRaysPerPixel = 1;
     float focalDistance = 1.0f;
     float lensRadius = 0.0f;
 

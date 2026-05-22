@@ -39,7 +39,7 @@ int main() {
 
     int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
-    int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+    int PRIMARY_RAYS_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
 
     // --- TEXTURES ---
     // Format: ImageLoader::load("path", vector) - If a material lacks a map pass -1 to the material constructor.
@@ -203,7 +203,7 @@ int main() {
 
     engine.maxDepth = MAX_DEPTH;
     engine.shadowRays = MAX_SHADOW_RAYS;
-    engine.samplesPerPixel = SAMPLES_PER_PIXEL;
+    engine.primaryRaysPerPixel = PRIMARY_RAYS_PER_PIXEL;
 
     engine.focalDistance = FOCAL_DISTANCE;
     engine.lensRadius = (ENABLE_DOF == 1) ? LENS_RADIUS : 0.0f;

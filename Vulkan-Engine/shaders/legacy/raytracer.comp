@@ -19,7 +19,7 @@ layout(push_constant) uniform CameraData {
     int bvhCount;
     int maxDepth;
     int shadowRays;
-    int samplesPerPixel;
+    int primaryRaysPerPixel;
     float focalDistance;
     float lensRadius;
     
@@ -32,6 +32,8 @@ layout(push_constant) uniform CameraData {
     vec3 skyTopColor;
     int enableTextures;
 } cam;
+
+#define BVH_STACK_SIZE 64
 
 struct GPUMaterial {
     vec3 color;
@@ -467,9 +469,9 @@ void main() {
     
     vec3 accumulatedColor = vec3(0.0);
 
-    for (int s = 0; s < cam.samplesPerPixel; s++) {
+    for (int s = 0; s < cam.primaryRaysPerPixel; s++) {
         vec2 subPixel = vec2(pixelCoords);
-        if (cam.samplesPerPixel > 1) {
+        if (cam.primaryRaysPerPixel > 1) {
             subPixel += vec2(rand(), rand());
         }
 
@@ -525,7 +527,7 @@ void main() {
 
             if (cam.bvhCount > 0) {
                 vec3 invDir = 1.0 / ray.direction;
-                int stack[64];
+                int stack[BVH_STACK_SIZE];
                 int stackPtr = 0;
                 stack[stackPtr++] = 0;
                 
@@ -770,7 +772,7 @@ void main() {
                     
                     if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && cam.bvhCount > 0) {
                         vec3 shadowInvDir = 1.0 / shadowRay.direction;
-                        int stackS[64];
+                        int stackS[BVH_STACK_SIZE];
                         int stackPtrS = 0;
                         stackS[stackPtrS++] = 0;
                         
@@ -872,7 +874,7 @@ void main() {
                
                         if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && cam.bvhCount > 0) {
                              vec3 shadowInvDir = 1.0 / shadowRay.direction;
-                            int stackS[64];
+                            int stackS[BVH_STACK_SIZE];
                             int stackPtrS = 0;
                             stackS[stackPtrS++] = 0;
                             
@@ -968,6 +970,13 @@ void main() {
         accumulatedColor += sampleColor;
     }
 
-    vec3 finalColor = accumulatedColor / float(cam.samplesPerPixel);
-    imageStore(resultImage, pixelCoords, vec4(finalColor.b, finalColor.g, finalColor.r, 1.0));
+    vec3 finalColor = accumulatedColor / float(cam.primaryRaysPerPixel);
+
+    // Apply Reinhard tonemap
+    vec3 tonemapped = finalColor / (1.0 + finalColor);
+
+    // Apply gamma correction (linear -> sRGB)
+    tonemapped = pow(tonemapped, vec3(1.0 / 2.2));
+
+    imageStore(resultImage, pixelCoords, vec4(tonemapped, 1.0));
 }

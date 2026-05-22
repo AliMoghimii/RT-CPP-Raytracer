@@ -55,7 +55,7 @@ void VulkanCore::createInstance() {
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "RTRT Engine";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -225,7 +225,7 @@ void VulkanCore::createSwapchain() {
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     createInfo.surface = surface;
     createInfo.minImageCount = 2;
-    createInfo.imageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    createInfo.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
     createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     createInfo.imageExtent = { 1280, 720 };
     createInfo.imageArrayLayers = 1;
@@ -245,7 +245,7 @@ void VulkanCore::createSwapchain() {
     swapChainImages.resize(imageCount);
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
 
-    swapChainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+    swapChainImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
     swapChainExtent = { 1280, 720 };
 }
 
@@ -964,7 +964,7 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.bvhCount = static_cast<int>(sceneBVH.size());
     pc.maxDepth = maxDepth;
     pc.shadowRays = shadowRays;
-    pc.samplesPerPixel = samplesPerPixel;
+    pc.primaryRaysPerPixel = primaryRaysPerPixel;
     pc.focalDistance = focalDistance;
     pc.lensRadius = lensRadius;
 

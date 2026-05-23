@@ -163,7 +163,15 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
+    <None Include="shaders\common\bvh.glsl" />
+    <None Include="shaders\common\lighting.glsl" />
+    <None Include="shaders\common\material.glsl" />
+    <None Include="shaders\common\octahedral.glsl" />
+    <None Include="shaders\common\push_constants.glsl" />
+    <None Include="shaders\common\random.glsl" />
+    <None Include="shaders\common\ray.glsl" />
     <None Include="shaders\legacy\raytracer.comp" />
+    <None Include="shaders\monolith\raytracer.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

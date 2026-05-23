@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM  Vulkan Engine — Shader Compilation
+REM  Vulkan Engine ï¿½ Shader Compilation
 REM  Compiles all .comp / .vert / .frag files in every shader
 REM  subfolder, with shaders/common as the include path.
 REM ============================================================
@@ -15,7 +15,7 @@ set TARGET=--target-env=vulkan1.3
 set ERROR_COUNT=0
 
 REM --- Folders that contain compilable shaders (NOT 'common', which is headers only) ---
-set FOLDERS=legacy visibility rc shading tonemap
+set FOLDERS=legacy monolith visibility rc shading tonemap
 
 REM --- Sanity check: is glslc on PATH? ---
 where %GLSLC% >nul 2>&1

@@ -84,7 +84,10 @@ private:
     std::vector<VkImageView> swapChainImageViews;
 
     VkPipeline computePipeline;
+    VkPipeline legacyComputePipeline;
     VkPipelineLayout pipelineLayout;
+
+    bool useLegacyRenderer = false;
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;

@@ -581,15 +581,6 @@ void VulkanCore::createDescriptorSetLayout() {
 }
 
 void VulkanCore::createComputePipeline() {
-    auto compShaderCode = readFile("shaders/legacy/raytracer.comp.spv");
-    VkShaderModule compShaderModule = createShaderModule(compShaderCode);
-
-    VkPipelineShaderStageCreateInfo shaderStageInfo{};
-    shaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    shaderStageInfo.module = compShaderModule;
-    shaderStageInfo.pName = "main";
-
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset = 0;
@@ -606,16 +597,42 @@ void VulkanCore::createComputePipeline() {
         throw runtime_error("Vulkan: Failed to create layout.");
     }
 
+    // Primary pipeline — monolith shader (actively developed)
+    auto monolithCode = readFile("shaders/monolith/raytracer.comp.spv");
+    VkShaderModule monolithModule = createShaderModule(monolithCode);
+
+    VkPipelineShaderStageCreateInfo monolithStage{};
+    monolithStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    monolithStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    monolithStage.module = monolithModule;
+    monolithStage.pName = "main";
+
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
     pipelineInfo.layout = pipelineLayout;
-    pipelineInfo.stage = shaderStageInfo;
+    pipelineInfo.stage = monolithStage;
 
     if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to create pipeline.");
+        throw runtime_error("Vulkan: Failed to create compute pipeline.");
     }
+    vkDestroyShaderModule(device, monolithModule, nullptr);
 
-    vkDestroyShaderModule(device, compShaderModule, nullptr);
+    // Legacy pipeline — frozen reference shader
+    auto legacyCode = readFile("shaders/legacy/raytracer.comp.spv");
+    VkShaderModule legacyModule = createShaderModule(legacyCode);
+
+    VkPipelineShaderStageCreateInfo legacyStage{};
+    legacyStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    legacyStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    legacyStage.module = legacyModule;
+    legacyStage.pName = "main";
+
+    pipelineInfo.stage = legacyStage;
+
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &legacyComputePipeline) != VK_SUCCESS) {
+        throw runtime_error("Vulkan: Failed to create legacy compute pipeline.");
+    }
+    vkDestroyShaderModule(device, legacyModule, nullptr);
 }
 
 void VulkanCore::createDescriptorPool() {
@@ -947,7 +964,8 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+    VkPipeline activePipeline = useLegacyRenderer ? legacyComputePipeline : computePipeline;
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, activePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 
     CameraPushConstants pc{};
@@ -1181,6 +1199,7 @@ void VulkanCore::cleanup() {
     vkFreeMemory(device, bvhMemory, nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
+    vkDestroyPipeline(device, legacyComputePipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 
     vkDestroyDevice(device, nullptr);

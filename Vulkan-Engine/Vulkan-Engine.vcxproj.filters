@@ -69,6 +69,9 @@
     <Filter Include="Third-Party">
       <UniqueIdentifier>{e3a1b2c4-5d6e-7f80-91a2-b3c4d5e6f7a8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Shader\Monolith">
+      <UniqueIdentifier>{c1f21e6b-72af-47bb-afc0-31920cab2817}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">
@@ -92,6 +95,9 @@
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp">
       <Filter>Third-Party</Filter>
     </ClCompile>
+    <ClCompile Include="source\scene\Primitive.cpp">
+      <Filter>Source</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\passes\LegacyPass.hpp">
@@ -112,11 +118,36 @@
     <ClInclude Include="include\scene\ModelLoader.hpp">
       <Filter>Include\Scene</Filter>
     </ClInclude>
+    <ClInclude Include="include\scene\Primitive.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
     <None Include="shaders\legacy\raytracer.comp">
       <Filter>Shader\Legacy</Filter>
+    </None>
+    <None Include="shaders\common\ray.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\bvh.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\lighting.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\material.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\octahedral.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\push_constants.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\common\random.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\monolith\raytracer.comp">
+      <Filter>Shader\Monolith</Filter>
     </None>
   </ItemGroup>
 </Project>

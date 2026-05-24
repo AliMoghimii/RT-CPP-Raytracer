@@ -1,4 +1,4 @@
-#include "core/VulkanCore.hpp"
+#include "renderer/Renderer.hpp"
 #include "scene/ModelLoader.hpp"
 #include "math/MathUtils.hpp"
 #include "scene/ImageLoader.hpp"
@@ -201,7 +201,7 @@ int main() {
     lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), lightRadius, backLightColor * lightIntensity, 0.0f });
     lights.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
 
-    VulkanCore engine;
+    Renderer engine;
 
     engine.maxDepth = MAX_DEPTH;
     engine.shadowRays = MAX_SHADOW_RAYS;

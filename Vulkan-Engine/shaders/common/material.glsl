@@ -1,6 +1,8 @@
 #ifndef MATERIAL_GLSL
 #define MATERIAL_GLSL
 
+#extension GL_EXT_nonuniform_qualifier : enable
+
 layout(binding = 9) uniform sampler2D textures[];
 
 struct GPUMaterial {
@@ -46,6 +48,14 @@ mat3 getTBN(vec3 n) {
     vec3 t = normalize(cross(up, n));
     vec3 b = cross(n, t);
     return mat3(t, b, n);
+}
+
+vec3 sampleAlbedo(GPUMaterial mat, vec2 uv) {
+    if (mat.useTexture == 1 && mat.albedoIndex >= 0) {
+        vec3 texCol = textureLod(textures[nonuniformEXT(mat.albedoIndex)], uv, 0.0).rgb;
+        return pow(max(texCol, vec3(0.0)), vec3(2.2));
+    }
+    return mat.color;
 }
 
 #endif

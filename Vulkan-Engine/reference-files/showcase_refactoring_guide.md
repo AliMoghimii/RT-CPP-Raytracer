@@ -1275,11 +1275,21 @@ Add an `enum { MEDIAN_SPLIT, BINNED_SAH }` choice in `BVHBuilder::Settings` and 
 
 # Part B — Architectural Refactor
 
+> **Note (Implementation-Validated):** This section has been updated to reflect what was actually built and tested during the refactor session, including critical bugs discovered and their fixes. The original guide text has been retained and expanded with real pitfalls, measured results, and implementation decisions that were not captured in the planning phase. If something in this section contradicts the earlier plan text, trust this section — it represents ground truth.
+
 ## 6. Phase 1: Extract the Mega-Shader into Modules
 
 The current `raytracer.comp` is ~970 lines doing everything. The goal is to split it into reusable GLSL headers that both the monolith and future pass shaders can share.
 
 **Working copy: `shaders/monolith/raytracer.comp`** — this is the file you modify during Phase 1. `shaders/legacy/raytracer.comp` stays frozen. All `#include` directive additions, struct removals, and function extractions happen in the monolith copy only.
+
+### Critical Pitfall: Unicode / UTF-16 BOM in GLSL Files
+
+**Never use a text editor that saves `.comp` or `.glsl` files as UTF-16 with BOM.** Visual Studio, by default, saves files detected as "non-ASCII" in UTF-16 LE with BOM. `glslc` reads shader files as raw bytes and chokes on the BOM (`\xFF\xFE`), producing cryptic "unexpected character" errors on line 1 even when the GLSL source is syntactically valid.
+
+**Fix:** In Visual Studio, every time you create a new `.comp` or `.glsl` file, immediately go to **File → Save [filename] As → Save with Encoding → UTF-8** (no BOM). Alternatively, create files using a terminal (`type nul > shader.comp`) and then open them in VS.
+
+This applies to every file in `shaders/common/`, `shaders/visibility/`, `shaders/rc/`, `shaders/shading/`, and `shaders/tonemap/`. One UTF-16 file silently corrupts the entire include chain.
 
 ### Create the Common Header Directory
 
@@ -1793,13 +1803,22 @@ public:
 };
 ```
 
-### The Primary Visibility Shader
+### The Primary Visibility Shader — MANDATORY: Hybrid Analytical + BVH Intersection
 
-Create `shaders/visibility/primary.comp`:
+> **CRITICAL — Do not skip this section.** The guide originally showed a BVH-only `primary.comp`. That version was implemented and measured: **it runs at 2 FPS (700ms per frame)** with any scene that has room walls, floor, or ceiling as planes or quads.
+>
+> **Root cause:** Planes and quads (room walls, floor, ceiling) are analytical primitives — they are NOT in the BVH. With BVH-only intersection, every pixel pointing at a wall executes a full BVH miss traversal across all 83K triangles before returning false. In a camera-inside-a-room setup, the vast majority of pixels are wall pixels. The CPU cannot even close the window normally because the GPU is TDRing.
+>
+> **Fix — measured at 60 FPS:** Test planes and quads analytically first. Store the nearest hit as `analyticalT`. Set `ray.tMax = analyticalT` before calling `traverseBVH`. The BVH now terminates early on every wall pixel (any node beyond the wall distance is immediately rejected). This is a permanent architectural constraint — it must survive every future refactor of `primary.comp`.
+
+Create `shaders/visibility/primary.comp` with the **hybrid analytical + BVH approach**. The G-buffer images live at `set = 1` (not `set = 0`) to avoid colliding with the scene SSBO bindings in `set = 0`.
+
+Bindings 5 and 6 in `set = 0` are declared for planes and quads (matching `sceneDescSetLayout`). The push constants provide `cam.planeCount` and `cam.quadCount` to drive the loops.
 
 ```glsl
 #version 460
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
 layout(local_size_x = 16, local_size_y = 16) in;
 
 #include "../common/ray.glsl"
@@ -1807,63 +1826,138 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/material.glsl"
 #include "../common/push_constants.glsl"
 
-layout(set = 0, binding = 0, rgba32f) uniform writeonly image2D gPosition;
-layout(set = 0, binding = 1, rgba16f) uniform writeonly image2D gNormal;
-layout(set = 0, binding = 2, rgba8)   uniform writeonly image2D gAlbedo;
-layout(set = 0, binding = 3, rgba16f) uniform writeonly image2D gEmissive;
-layout(set = 0, binding = 4, r32f)    uniform writeonly image2D gLinearDepth;
+// G-buffer images at set=1 (set=0 is reserved for scene SSBOs)
+layout(set = 1, binding = 0, rgba32f) uniform writeonly image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform writeonly image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform writeonly image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform writeonly image2D gEmissive;
+layout(set = 1, binding = 4, r32f)    uniform writeonly image2D gLinearDepth;
+
+struct GPUPlane {
+    vec3 center; float p1;
+    vec3 normal; int  materialIndex;
+    float p2; float p3; float p4; float p5;
+};
+
+struct GPUQuad {
+    vec3 corner;       float p1;
+    vec3 edge1;        float p2;
+    vec3 edge2;        float p3;
+    vec3 normalVector; int   materialIndex;
+    float p4; float p5; float p6; float p7;
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer PlaneBuffer { GPUPlane planes[]; };
+layout(std430, set = 0, binding = 6) readonly buffer QuadBuffer  { GPUQuad  quads[];  };
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(gPosition);
+    ivec2 size  = imageSize(gPosition);
     if (pixel.x >= size.x || pixel.y >= size.y) return;
-    
-    // Construct primary ray
+
     vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
     uv.y = -uv.y;
     uv.x *= float(size.x) / float(size.y);
-    float halfFovTan = tan(radians(60.0 * 0.5));
-    uv *= halfFovTan;
-    
-    vec3 rayDir = normalize(cam.camRight.xyz * uv.x 
-                          + cam.camUp.xyz * uv.y 
+    uv *= tan(radians(60.0 * 0.5));
+
+    vec3 rayDir = normalize(cam.camRight.xyz * uv.x
+                          + cam.camUp.xyz    * uv.y
                           + cam.camForward.xyz);
-    
     Ray ray;
-    ray.origin = cam.camPos.xyz;
+    ray.origin    = cam.camPos.xyz;
     ray.direction = rayDir;
-    ray.tMin = 0.001;
-    ray.tMax = 1e6;
-    
+    ray.tMin      = 0.001;
+    ray.tMax      = 1e6;
+
+    // --- Step 1: Test planes and quads analytically.
+    // This is mandatory for bounded-room scenes. Without it, every wall pixel
+    // exhausts the full BVH (O(N) miss traversal) → 700ms/frame at 83K triangles.
+    float analyticalT      = ray.tMax;
+    int   analyticalMat    = -1;
+    vec3  analyticalNormal = vec3(0.0);
+    vec2  analyticalUV     = vec2(0.0);
+
+    for (int i = 0; i < cam.planeCount; i++) {
+        float denom = dot(planes[i].normal, rayDir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(planes[i].center - ray.origin, planes[i].normal) / denom;
+        if (t > ray.tMin && t < analyticalT) {
+            analyticalT      = t;
+            analyticalMat    = planes[i].materialIndex;
+            analyticalNormal = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
+            analyticalUV     = vec2(0.0);
+        }
+    }
+
+    for (int i = 0; i < cam.quadCount; i++) {
+        float denom = dot(quads[i].normalVector, rayDir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(quads[i].corner - ray.origin, quads[i].normalVector) / denom;
+        if (t <= ray.tMin || t >= analyticalT) continue;
+
+        vec3  p    = ray.origin + rayDir * t - quads[i].corner;
+        float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+        float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+        float qu   = dot(p, quads[i].edge1) / e1l2;
+        float qv   = dot(p, quads[i].edge2) / e2l2;
+        if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+
+        analyticalT      = t;
+        analyticalMat    = quads[i].materialIndex;
+        analyticalNormal = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
+        analyticalUV     = vec2(qu, qv);
+    }
+
+    // --- Step 2: BVH traversal capped to the nearest analytical hit.
+    // Wall pixels now exit BVH early; only BVH geometry closer than the wall is tested.
+    ray.tMax = analyticalT;
     HitInfo hit;
-    if (traverseBVH(ray, cam.bvhCount, hit)) {
-        GPUMaterial mat = materials[hit.materialIndex];
-        vec3 baseColor = sampleAlbedo(mat, hit.uv);
-        
-        imageStore(gPosition,    pixel, vec4(hit.position, hit.t));
-        imageStore(gNormal,      pixel, vec4(hit.normal, mat.roughness));
-        imageStore(gAlbedo,      pixel, vec4(baseColor, mat.metallic));
-        imageStore(gEmissive,    pixel, vec4(mat.emission, float(hit.materialIndex)));
-        imageStore(gLinearDepth, pixel, vec4(hit.t, 0, 0, 0));
+    bool hasBVH = traverseBVH(ray, cam.bvhCount, hit);
+
+    if (hasBVH) {
+        GPUMaterial mat   = materials[hit.materialIndex];
+        vec3        color = sampleAlbedo(mat, hit.uv);
+        imageStore(gPosition,    pixel, vec4(hit.position,     hit.t));
+        imageStore(gNormal,      pixel, vec4(hit.normal,       mat.roughness));
+        imageStore(gAlbedo,      pixel, vec4(color,            mat.metallic));
+        imageStore(gEmissive,    pixel, vec4(mat.emission,     float(hit.materialIndex)));
+        imageStore(gLinearDepth, pixel, vec4(hit.t, 0.0, 0.0, 0.0));
+    } else if (analyticalMat >= 0) {
+        GPUMaterial mat   = materials[analyticalMat];
+        vec3        color = sampleAlbedo(mat, analyticalUV);
+        vec3        pos   = ray.origin + rayDir * analyticalT;
+        imageStore(gPosition,    pixel, vec4(pos,              analyticalT));
+        imageStore(gNormal,      pixel, vec4(analyticalNormal, mat.roughness));
+        imageStore(gAlbedo,      pixel, vec4(color,            mat.metallic));
+        imageStore(gEmissive,    pixel, vec4(mat.emission,     float(analyticalMat)));
+        imageStore(gLinearDepth, pixel, vec4(analyticalT, 0.0, 0.0, 0.0));
     } else {
-        // Sky pixel — mark depth as max
         vec3 skyColor = mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (rayDir.y + 1.0));
-        imageStore(gPosition,    pixel, vec4(0, 0, 0, 1e6));
-        imageStore(gNormal,      pixel, vec4(0, 1, 0, 0));
-        imageStore(gAlbedo,      pixel, vec4(0, 0, 0, 0));
-        imageStore(gEmissive,    pixel, vec4(skyColor, -1.0)); // negative materialIndex = sky
-        imageStore(gLinearDepth, pixel, vec4(1e6, 0, 0, 0));
+        imageStore(gPosition,    pixel, vec4(0.0, 0.0, 0.0,  1e6));
+        imageStore(gNormal,      pixel, vec4(0.0, 1.0, 0.0,  0.0));
+        imageStore(gAlbedo,      pixel, vec4(0.0, 0.0, 0.0,  0.0));
+        imageStore(gEmissive,    pixel, vec4(skyColor,       -1.0)); // negative = sky sentinel
+        imageStore(gLinearDepth, pixel, vec4(1e6,  0.0, 0.0, 0.0));
     }
 }
 ```
 
+**Preserving this pattern:** Any future refactor of `primary.comp` that removes the analytical pre-test will immediately regress to 2 FPS on any room-style scene. The rule is: planes and quads must always be tested analytically first, cap `ray.tMax`, then call `traverseBVH`.
+
 ### The Composite Shader (Temporary)
 
-While cascades aren't implemented yet, you need *something* that reads the G-buffer and produces a final image identical to your old direct-lit output. Create `shaders/shading/composite_temp.comp`:
+While cascades aren't implemented yet, you need *something* that reads the G-buffer and produces a final image. Create `shaders/shading/composite_temp.comp`.
+
+**G-buffer bindings use `set = 1`** (matching the `gbufDescSetLayout` created in Phase 2b). Note that `outHDR` is at `set = 1, binding = 5` — the same set as the G-buffer images.
+
+> **MANDATORY: Tonemapping in composite_temp.** The composite shader writes to `outHDR` (R16G16B16A16_SFLOAT). This image is then blitted to the swapchain (R8G8B8A8_UNORM). Without tonemapping, any HDR value above 1.0 (e.g. direct light hitting a bright albedo) clamps to white — the entire scene looks blown out/burned.
+>
+> Add Reinhard tonemapping + gamma correction at the end of `main()`, before `imageStore`. This is a known-temporary measure; it will be replaced by a proper `TonemapPass` in Part C.
 
 ```glsl
 #version 460
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
 layout(local_size_x = 16, local_size_y = 16) in;
 
 #include "../common/ray.glsl"
@@ -1872,54 +1966,55 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/lighting.glsl"
 #include "../common/push_constants.glsl"
 
-layout(set = 0, binding = 0, rgba32f) uniform readonly  image2D gPosition;
-layout(set = 0, binding = 1, rgba16f) uniform readonly  image2D gNormal;
-layout(set = 0, binding = 2, rgba8)   uniform readonly  image2D gAlbedo;
-layout(set = 0, binding = 3, rgba16f) uniform readonly  image2D gEmissive;
-layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D outHDR;
+layout(set = 1, binding = 0, rgba32f) uniform readonly  image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform readonly  image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform readonly  image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform readonly  image2D gEmissive;
+layout(set = 1, binding = 5, rgba16f) uniform writeonly image2D outHDR;
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(outHDR);
     if (pixel.x >= size.x || pixel.y >= size.y) return;
-    
-    vec4 posData = imageLoad(gPosition, pixel);
-    vec3 worldPos = posData.xyz;
-    float depth = posData.w;
-    
+
     vec4 emissiveData = imageLoad(gEmissive, pixel);
     if (emissiveData.a < 0.0) {
-        // Sky pixel
-        imageStore(outHDR, pixel, vec4(emissiveData.rgb, 1.0));
+        // Sky pixel — tonemap before storing
+        vec3 sky = emissiveData.rgb / (emissiveData.rgb + vec3(1.0));
+        sky = pow(max(sky, vec3(0.0)), vec3(1.0 / 2.2));
+        imageStore(outHDR, pixel, vec4(sky, 1.0));
         return;
     }
-    
-    vec3 normal = imageLoad(gNormal, pixel).xyz;
-    vec4 albedoData = imageLoad(gAlbedo, pixel);
-    vec3 albedo = albedoData.rgb;
-    
-    vec3 viewDir = normalize(cam.camPos.xyz - worldPos);
-    vec3 color = emissiveData.rgb + albedo * 0.1; // ambient
-    
-    // Direct light loop (same as before)
+
+    vec4 posData  = imageLoad(gPosition, pixel);
+    vec3 worldPos = posData.xyz;
+    vec3 normal   = normalize(imageLoad(gNormal, pixel).xyz);
+    vec3 albedo   = imageLoad(gAlbedo, pixel).rgb;
+
+    vec3 color = emissiveData.rgb + albedo * 0.1; // ambient term
+
     for (int l = 0; l < cam.lightCount; l++) {
-        vec3 lightDir = normalize(lights[l].position - worldPos);
-        float lightDist = length(lights[l].position - worldPos);
-        
-        // Shadow ray
+        vec3  toLight   = lights[l].position - worldPos;
+        vec3  lightDir  = normalize(toLight);
+        float lightDist = length(toLight);
+
         Ray shadowRay;
-        shadowRay.origin = worldPos + normal * 0.001;
+        shadowRay.origin    = worldPos + normal * 0.001;
         shadowRay.direction = lightDir;
-        shadowRay.tMin = 0.001;
-        shadowRay.tMax = lightDist - 0.01;
-        
+        shadowRay.tMin      = 0.001;
+        shadowRay.tMax      = lightDist - 0.01;
+
         HitInfo shadowHit;
         if (!traverseBVH(shadowRay, cam.bvhCount, shadowHit)) {
             float NdotL = max(0.0, dot(normal, lightDir));
             color += albedo * lights[l].color * NdotL;
         }
     }
-    
+
+    // Reinhard tonemapping + gamma (temporary until TonemapPass is added in Part C)
+    color = color / (color + vec3(1.0));
+    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
+
     imageStore(outHDR, pixel, vec4(color, 1.0));
 }
 ```
@@ -1928,9 +2023,522 @@ After this phase, the renderer is **structurally** identical to before but **arc
 
 Commit as **"Split render into primary visibility + composite passes via G-buffer"**.
 
+---
+
+## 7b. Phase 2b: Wire G-Buffer into VulkanCore (Proof of Concept)
+
+> **Goal**: Make the two new shaders (`primary.comp` and `composite_temp.comp`) actually run inside VulkanCore using raw Vulkan handles — no helper classes, no VMA, no render graph. This is the simplest possible integration that lets you confirm the G-buffer architecture works end-to-end before the bigger Phase 3 cleanup.
+>
+> **Note (Implementation):** In practice, Phase 2b was done directly against the new `Renderer` class (Phase 4) rather than the legacy VulkanCore, since VulkanCore was already being retired. The concepts and bindings below are correct regardless of which class you wire them into.
+
+### The Binding Conflict Problem
+
+The common headers (`bvh.glsl`, `material.glsl`, `lighting.glsl`) already claim **set=0** bindings (1, 3, 4, 8, 9). If `primary.comp` and `composite_temp.comp` use **set=0** for their G-buffer images (bindings 0–4), they collide — `gNormal` at set=0 binding=1 would alias `materialBuffer`, and `outHDR` at set=0 binding=5 would alias `planeBuffer`.
+
+The fix is **two descriptor sets**:
+
+| Set | Contents | Used by |
+|-----|----------|---------|
+| `set = 0` (`sceneDescSet`) | Placeholder image (b0), scene SSBOs (b1–b8), texture array (b9) | Both passes |
+| `set = 1` (`gbufDescSet`) | G-buffer images b0–b4, hdrImage at b5 | Pass-specific |
+
+The `sceneDescSet` (set=0) is reused as-is for both passes. Extra bindings in the layout that a shader ignores are fine in Vulkan.
+
+Always add `#extension GL_EXT_nonuniform_qualifier : enable` to both pass shaders — `material.glsl` declares a runtime texture array that requires it:
+
+```glsl
+// primary.comp — see full listing in Phase 7 above
+layout(set = 1, binding = 0, rgba32f) uniform writeonly image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform writeonly image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform writeonly image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform writeonly image2D gEmissive;
+layout(set = 1, binding = 4, r32f)    uniform writeonly image2D gLinearDepth;
+
+// composite_temp.comp — see full listing in Phase 7 above
+layout(set = 1, binding = 0, rgba32f) uniform readonly  image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform readonly  image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform readonly  image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform readonly  image2D gEmissive;
+layout(set = 1, binding = 5, rgba16f) uniform writeonly image2D outHDR;
+```
+
+Note that `linearDepth` (b4) is written by primary but **not** read by composite_temp — it exists for future passes (cascade allocation).
+
+### HDR Image → Swapchain: Use Blit, Not Copy
+
+`outHDR` is `VK_FORMAT_R16G16B16A16_SFLOAT`. The swapchain is `VK_FORMAT_R8G8B8A8_UNORM`. **`vkCmdCopyImage` requires identical formats** — it will produce a Vulkan validation error if the formats differ. Use `vkCmdBlitImage` instead, which handles format conversion automatically.
+
+```cpp
+// WRONG — formats are incompatible, validation error fires
+vkCmdCopyImage(cmd, hdrImage, ..., swapchainImage, ...);
+
+// CORRECT — blit handles R16G16B16A16_SFLOAT → R8G8B8A8_UNORM
+vkCmdBlitImage(cmd,
+    hdrImage,     VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+    swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+    1, &blitRegion, VK_FILTER_NEAREST);
+```
+
+The blit clamps values to [0, 1] — this is why tonemapping in `composite_temp` is mandatory. Without it, HDR values above 1.0 clip to white after the blit.
+
+`hdrImage` must be created with `VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT`. The swapchain already has `VK_IMAGE_USAGE_TRANSFER_DST_BIT`.
+
+### New Members in `VulkanCore.hpp`
+
+```cpp
+// Two-pass G-buffer pipelines
+VkPipeline primaryPassPipeline;
+VkPipeline compositePassPipeline;
+VkPipelineLayout twoPassPipelineLayout;
+
+bool useTwoPassRenderer = false;
+
+// G-buffer descriptor set (set = 1 for pass images)
+VkDescriptorSetLayout gbufDescSetLayout;
+VkDescriptorSet gbufDescSet;
+
+// G-buffer images (written by primary pass, read by composite pass)
+VkImage gbufPosition,  gbufNormal,  gbufAlbedo,  gbufEmissive,  gbufLinearDepth;
+VkImageView gbufPositionV, gbufNormalV, gbufAlbedoV, gbufEmissiveV, gbufLinearDepthV;
+VkDeviceMemory gbufPositionM, gbufNormalM, gbufAlbedoM, gbufEmissiveM, gbufLinearDepthM;
+
+// HDR output image (written by composite pass, blitted to swapchain)
+VkImage hdrImage;
+VkImageView hdrImageView;
+VkDeviceMemory hdrMemory;
+```
+
+Also declare three new private methods and two helpers:
+
+```cpp
+void createGBufferImages();
+void createTwoPassPipelines();
+void createGBufferDescriptorSet();
+
+void createStorageImage(VkFormat format, VkImage& image, VkImageView& view, VkDeviceMemory& memory);
+VkPipeline createComputePipelineFromSpv(const std::string& path, VkPipelineLayout layout);
+```
+
+### Expand the Descriptor Pool
+
+The pool needs to supply the second descriptor set (`gbufDescSet`) and the additional storage image descriptors:
+
+```cpp
+void VulkanCore::createDescriptorPool() {
+    vector<VkDescriptorPoolSize> poolSizes(3);
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 7; // 1 monolith output + 6 G-buffer/HDR images
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = 8;
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[2].descriptorCount = 100;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    poolInfo.maxSets = 2; // set=0 (scene) + set=1 (G-buffer images)
+    // ...
+}
+```
+
+### `createStorageImage()` Helper
+
+Extracted as a private method so each G-buffer image doesn't repeat the create/allocate/bind/view pattern:
+
+```cpp
+void VulkanCore::createStorageImage(VkFormat format, VkImage& image, VkImageView& view, VkDeviceMemory& memory) {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    vkCreateImage(device, &imageInfo, nullptr, &image);
+
+    VkMemoryRequirements memReqs;
+    vkGetImageMemoryRequirements(device, image, &memReqs);
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vkAllocateMemory(device, &allocInfo, nullptr, &memory);
+    vkBindImageMemory(device, image, memory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vkCreateImageView(device, &viewInfo, nullptr, &view);
+}
+```
+
+### `createGBufferImages()`
+
+Creates all 6 images then transitions them all to `GENERAL` in **one batched command buffer submission**:
+
+```cpp
+void VulkanCore::createGBufferImages() {
+    createStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT, gbufPosition,    gbufPositionV,    gbufPositionM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, gbufNormal,      gbufNormalV,      gbufNormalM);
+    createStorageImage(VK_FORMAT_R8G8B8A8_UNORM,      gbufAlbedo,      gbufAlbedoV,      gbufAlbedoM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, gbufEmissive,    gbufEmissiveV,    gbufEmissiveM);
+    createStorageImage(VK_FORMAT_R32_SFLOAT,           gbufLinearDepth, gbufLinearDepthV, gbufLinearDepthM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, hdrImage,        hdrImageView,     hdrMemory);
+
+    VkCommandBuffer cmd; // allocate one-time command buffer...
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkImage toInit[] = { gbufPosition, gbufNormal, gbufAlbedo, gbufEmissive, gbufLinearDepth, hdrImage };
+    for (VkImage img : toInit)
+        transitionImageLayout(cmd, img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+    // submit, wait idle, free cmd
+}
+```
+
+### `createComputePipelineFromSpv()` Helper
+
+Extracted to avoid repeating the load/module/stage/create/destroy pattern for each of the two pass pipelines:
+
+```cpp
+VkPipeline VulkanCore::createComputePipelineFromSpv(const std::string& path, VkPipelineLayout layout) {
+    auto code = readFile(path);
+    VkShaderModule mod = createShaderModule(code);
+
+    VkPipelineShaderStageCreateInfo stageInfo{};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = mod;
+    stageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = layout;
+    pipelineInfo.stage = stageInfo;
+
+    VkPipeline pipeline;
+    vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline);
+    vkDestroyShaderModule(device, mod, nullptr);
+    return pipeline;
+}
+```
+
+### `createTwoPassPipelines()`
+
+```cpp
+void VulkanCore::createTwoPassPipelines() {
+    // set=1 layout: 6 storage images (bindings 0-4 = G-buffer, 5 = HDR output)
+    vector<VkDescriptorSetLayoutBinding> imgBindings(6);
+    for (uint32_t i = 0; i < 6; i++) {
+        imgBindings[i].binding = i;
+        imgBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        imgBindings[i].descriptorCount = 1;
+        imgBindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dlci{};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = 6;
+    dlci.pBindings = imgBindings.data();
+    vkCreateDescriptorSetLayout(device, &dlci, nullptr, &gbufDescSetLayout);
+
+    // Pipeline layout: set=0 (existing scene layout) + set=1 (G-buffer images)
+    VkDescriptorSetLayout layouts[] = { descriptorSetLayout, gbufDescSetLayout };
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(CameraPushConstants);
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 2;
+    plci.pSetLayouts = layouts;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pushRange;
+    vkCreatePipelineLayout(device, &plci, nullptr, &twoPassPipelineLayout);
+
+    primaryPassPipeline   = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv",      twoPassPipelineLayout);
+    compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv", twoPassPipelineLayout);
+}
+```
+
+### `createGBufferDescriptorSet()`
+
+```cpp
+void VulkanCore::createGBufferDescriptorSet() {
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &gbufDescSetLayout;
+    vkAllocateDescriptorSets(device, &ai, &gbufDescSet);
+
+    VkImageView views[6] = { gbufPositionV, gbufNormalV, gbufAlbedoV, gbufEmissiveV, gbufLinearDepthV, hdrImageView };
+    vector<VkWriteDescriptorSet> writes(6);
+    vector<VkDescriptorImageInfo> imgInfos(6);
+
+    for (uint32_t i = 0; i < 6; i++) {
+        imgInfos[i].imageView = views[i];
+        imgInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        imgInfos[i].sampler = VK_NULL_HANDLE;
+
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = gbufDescSet;
+        writes[i].dstBinding = i;
+        writes[i].dstArrayElement = 0;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo = &imgInfos[i];
+    }
+    vkUpdateDescriptorSets(device, 6, writes.data(), 0, nullptr);
+}
+```
+
+### `initVulkan()` Call Order
+
+```cpp
+void VulkanCore::initVulkan() {
+    createInstance();
+    createSurface();
+    pickPhysicalDevice();
+    createLogicalDevice();
+    createCommandPool();
+    createSwapchain();
+    createSwapchainImageViews();
+    createComputeImage();
+    createGBufferImages();          // NEW — before texture/scene setup
+
+    createTextureSampler();
+    createTextureResources();
+
+    createSceneBuffers();
+    createDescriptorSetLayout();
+    createComputePipeline();
+    createTwoPassPipelines();       // NEW — needs descriptorSetLayout
+    createDescriptorPool();         // expanded: maxSets=2, STORAGE_IMAGE=7
+    createDescriptorSets();
+    createGBufferDescriptorSet();   // NEW — needs pool + gbufDescSetLayout
+    createCommandBuffers();
+    createSyncObjects();
+}
+```
+
+### `recordCommandBuffer()` — Two-Pass Branch
+
+The engine code uses the **classic** Vulkan sync API (`vkCmdPipelineBarrier` + `VkMemoryBarrier`), not synchronization2. The inter-pass barrier uses a `VkMemoryBarrier` covering all G-buffer images in one call — no layout transition needed since both passes keep images in `GENERAL`.
+
+```cpp
+void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
+    // ... build CameraPushConstants pc{} ...
+
+    uint32_t dispatchX = swapChainExtent.width  / 16;
+    uint32_t dispatchY = swapChainExtent.height / 16;
+
+    if (useTwoPassRenderer) {
+        VkDescriptorSet sets[] = { descriptorSet, gbufDescSet };
+
+        // --- Pass 1: Primary Visibility ---
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(cmd, twoPassPipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+        // --- Barrier: all G-buffer writes visible to composite reads ---
+        VkMemoryBarrier memBarrier{};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &memBarrier, 0, nullptr, 0, nullptr);
+
+        // --- Pass 2: Composite Shading ---
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(cmd, twoPassPipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+        // --- Blit hdrImage (R16G16B16A16_SFLOAT) → swapchain (R8G8B8A8_UNORM) ---
+        // vkCmdCopyImage cannot be used here — the formats are incompatible.
+        // vkCmdBlitImage handles the format conversion and clamps values to [0,1].
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageBlit blitRegion{};
+        blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blitRegion.srcOffsets[0] = { 0, 0, 0 };
+        blitRegion.srcOffsets[1] = { (int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1 };
+        blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blitRegion.dstOffsets[0] = { 0, 0, 0 };
+        blitRegion.dstOffsets[1] = { (int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1 };
+
+        vkCmdBlitImage(cmd,
+            hdrImage,                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &blitRegion, VK_FILTER_NEAREST);
+
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    } else {
+        // --- Single-pipeline path (monolith or legacy) — unchanged ---
+        VkPipeline activePipeline = useLegacyRenderer ? legacyComputePipeline : computePipeline;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, activePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+        vkCmdPushConstants(cmd, pipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+        transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageCopy copyRegion{};
+        copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+        vkCmdCopyImage(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+        transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
+}
+```
+
+### Cleanup
+
+Destroyed after the descriptor pool (which implicitly frees `gbufDescSet`), before `vkDestroyDevice`:
+
+```cpp
+vkDestroyPipeline(device, primaryPassPipeline, nullptr);
+vkDestroyPipeline(device, compositePassPipeline, nullptr);
+vkDestroyPipelineLayout(device, twoPassPipelineLayout, nullptr);
+vkDestroyDescriptorSetLayout(device, gbufDescSetLayout, nullptr);
+
+vkDestroyImageView(device, gbufPositionV,    nullptr); vkDestroyImage(device, gbufPosition,    nullptr); vkFreeMemory(device, gbufPositionM,    nullptr);
+vkDestroyImageView(device, gbufNormalV,      nullptr); vkDestroyImage(device, gbufNormal,      nullptr); vkFreeMemory(device, gbufNormalM,      nullptr);
+vkDestroyImageView(device, gbufAlbedoV,      nullptr); vkDestroyImage(device, gbufAlbedo,      nullptr); vkFreeMemory(device, gbufAlbedoM,      nullptr);
+vkDestroyImageView(device, gbufEmissiveV,    nullptr); vkDestroyImage(device, gbufEmissive,    nullptr); vkFreeMemory(device, gbufEmissiveM,    nullptr);
+vkDestroyImageView(device, gbufLinearDepthV, nullptr); vkDestroyImage(device, gbufLinearDepth, nullptr); vkFreeMemory(device, gbufLinearDepthM, nullptr);
+vkDestroyImageView(device, hdrImageView,     nullptr); vkDestroyImage(device, hdrImage,        nullptr); vkFreeMemory(device, hdrMemory,        nullptr);
+```
+
+### Sanity Check
+
+Compile shaders (`compile_shaders.bat`), set `useTwoPassRenderer = true`, run. The rendered output should be **visually identical** to the monolith (same Lambertian direct lighting, same shadows, same sky). Materials that use textures will show the raw `mat.color` instead — texture sampling via `sampleAlbedo()` is deferred to Phase 3. Flip back to `false` to confirm the monolith path still works unchanged.
+
+Commit as **"Wire two-pass G-buffer render path into VulkanCore (raw handles)"**.
+
+---
+
 ## 8. Phase 3: Decouple Vulkan Initialization
 
-`VulkanCore.cpp` is 1190 lines. Most of it is boilerplate that should never need to change again. Extract into focused classes:
+`VulkanCore.cpp` is 1190 lines. Most of it is boilerplate that should never need to change again. Extract into focused classes.
+
+> **Three bugs discovered during Phase 3 that are not obvious from the guide.**  They are documented here permanently because they will recur if you ever rebuild these classes.
+
+### Bug A — Single `renderFinishedSemaphore` (VUID-vkQueueSubmit-pSignalSemaphores-00067)
+
+The original plan described one `renderFinishedSemaphore`. **This triggers a Vulkan validation error** the moment the swapchain returns image index 0 on frame N+1 while the presentation engine is still holding the semaphore from frame N.
+
+`CommandManager` must hold **one semaphore per swapchain image**, not one total:
+
+```cpp
+class CommandManager {
+public:
+    VkCommandPool   pool   = VK_NULL_HANDLE;
+    VkCommandBuffer buffer = VK_NULL_HANDLE;
+    VkSemaphore     imageAvailableSemaphore = VK_NULL_HANDLE;
+    std::vector<VkSemaphore> renderFinishedSemaphores; // one per swapchain image
+    VkFence inFlightFence = VK_NULL_HANDLE;
+
+    void create(VulkanContext& ctx, uint32_t swapchainImageCount);
+    void destroy(VulkanContext& ctx);
+    VkCommandBuffer beginOneTime(VulkanContext& ctx);
+    void submitOneTime(VulkanContext& ctx, VkCommandBuffer cmd);
+};
+```
+
+`create()` takes `swapchainImageCount` and creates that many semaphores:
+
+```cpp
+void CommandManager::create(VulkanContext& ctx, uint32_t swapchainImageCount) {
+    // ... pool, buffer, fence, imageAvailableSemaphore creation ...
+    renderFinishedSemaphores.resize(swapchainImageCount);
+    VkSemaphoreCreateInfo si{ VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+    for (uint32_t i = 0; i < swapchainImageCount; i++) {
+        vkCreateSemaphore(ctx.device, &si, nullptr, &renderFinishedSemaphores[i]);
+    }
+}
+```
+
+In `drawFrame()`, index by the acquired image:
+
+```cpp
+VkSemaphore signalSems[] = { cmdManager.renderFinishedSemaphores[imageIndex] };
+```
+
+**Do not add `vkQueueWaitIdle` as a workaround.** It stalls the CPU every frame until the GPU and presentation engine both finish — even when the GPU is fast, this adds ~700ms of apparent camera sluggishness and destroys interactive performance. Fix the semaphores properly.
+
+### Bug B — `lastFrame` Initialized to 0.0f (First-Frame Camera Teleport)
+
+`lastFrame` is a class member defaulting to `0.0f`. The first frame's `deltaTime = glfwGetTime() - 0.0f` equals the entire application startup time (1–2+ seconds). Every key pressed during startup feeds this giant deltaTime into camera movement — the camera teleports across the scene on the first frame.
+
+**Fix: seed `lastFrame` from `glfwGetTime()` immediately before the `while` loop**, not in the class initializer or constructor:
+
+```cpp
+void Renderer::mainLoop() {
+    lastFrame = (float)glfwGetTime(); // MUST be here, not in class declaration
+    while (!glfwWindowShouldClose(window)) {
+        float currentFrame = (float)glfwGetTime();
+        deltaTime  = currentFrame - lastFrame;
+        lastFrame  = currentFrame;
+        // ...
+    }
+}
+```
+
+### Bug C — VMA Buffer Cleanup Order (Use-After-Free)
+
+VMA buffers (`Buffer` objects holding a `VmaAllocation`) must be destroyed **before** `vmaDestroyAllocator` is called inside `ctx.shutdown()`. If you let `Buffer` destructors run after the allocator goes away, VMA writes to freed memory.
+
+In `Renderer::cleanup()`, explicitly null all `Buffer` members before calling `ctx.shutdown()`:
+
+```cpp
+void Renderer::cleanup() {
+    // Destroy VMA-backed buffers before the allocator shuts down
+    materialBuffer = Buffer();
+    sphereBuffer   = Buffer();
+    triangleBuffer = Buffer();
+    lightBuffer    = Buffer();
+    planeBuffer    = Buffer();
+    quadBuffer     = Buffer();
+    cubeBuffer     = Buffer();
+    bvhBuffer      = Buffer();
+
+    // ... destroy images, pipelines, descriptor sets ...
+
+    cmdManager.destroy(ctx);
+    swapchain.destroy(ctx);
+    ctx.shutdown();  // vmaDestroyAllocator happens here — all buffers already gone
+}
+```
+
+This requires `Buffer`'s move assignment operator to null `handle` and `allocation` so the moved-from destructor is a no-op.
 
 ### `core/VulkanContext.{hpp,cpp}`
 
@@ -2041,63 +2649,271 @@ public:
 
 This removes ~300 lines of manual `vkCreateBuffer + vkAllocateMemory + vkBindBufferMemory` from your codebase.
 
-Commit each class extraction as a separate PR.
+### `passes/GBuffer.{hpp,cpp}`
 
-## 9. Phase 4: Add a Render Graph
-
-Don't overengineer this. A "render graph" for the showcase is just an ordered list of passes, each with input/output declarations:
+With `Image` and `VulkanContext` now defined, implement `GBuffer.cpp` properly. The `.hpp` was written as a stub in Phase 2; now fill in the body:
 
 ```cpp
-// Renderer.hpp
-class Renderer {
-public:
-    void initialize(VulkanContext& ctx, Swapchain& sc);
-    void render(const Scene& scene, const Camera& cam);
-    
-private:
-    PrimaryVisibilityPass primary;
-    ProbeAllocationPass probeAlloc;
-    ProbeTracePass probeTrace[MAX_CASCADES];
-    CascadeMergePass cascadeMerge[MAX_CASCADES - 1];
-    FinalGatherPass finalGather;
-    TonemapPass tonemap;
-    
-    GBuffer gbuffer;
-    CascadeStorage cascades;
-    Image hdrColor;
-};
+void GBuffer::create(VulkanContext& ctx, VkExtent2D size) {
+    auto make = [&](VkFormat fmt) -> Image {
+        return Image(ctx.allocator, size.width, size.height, fmt,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+    };
+    position    = make(VK_FORMAT_R32G32B32A32_SFLOAT);
+    normal      = make(VK_FORMAT_R16G16B16A16_SFLOAT);
+    albedo      = make(VK_FORMAT_R8G8B8A8_UNORM);
+    emissive    = make(VK_FORMAT_R16G16B16A16_SFLOAT);
+    linearDepth = make(VK_FORMAT_R32_SFLOAT);
+}
 
-void Renderer::render(const Scene& scene, const Camera& cam) {
-    VkCommandBuffer cmd = beginFrame();
-    
-    primary.execute(cmd, scene, cam, gbuffer);
-    barrier_gbuffer_write_to_read(cmd);
-    
-    probeAlloc.execute(cmd, gbuffer, cam, cascades);
-    barrier_cascades(cmd);
-    
-    for (int level = MAX_CASCADES - 1; level >= 0; level--) {
-        probeTrace[level].execute(cmd, scene, cascades, level);
-        barrier_cascades(cmd);
-    }
-    
-    for (int level = MAX_CASCADES - 2; level >= 0; level--) {
-        cascadeMerge[level].execute(cmd, cascades, level);
-        barrier_cascades(cmd);
-    }
-    
-    finalGather.execute(cmd, gbuffer, cascades, cam, hdrColor);
-    barrier_hdr(cmd);
-    
-    tonemap.execute(cmd, hdrColor, swapchain.currentImage());
-    
-    endFrame();
+void GBuffer::destroy(VulkanContext& ctx) {
+    position.destroy(ctx.allocator);
+    normal.destroy(ctx.allocator);
+    albedo.destroy(ctx.allocator);
+    emissive.destroy(ctx.allocator);
+    linearDepth.destroy(ctx.allocator);
 }
 ```
 
-That's the entire orchestration. ~40 lines. Each `Pass` is a class with: descriptor set, pipeline, `execute()` method.
+`transitionForWrite()` / `transitionForRead()` emit `VkImageMemoryBarrier2` records via `vkCmdPipelineBarrier2` (synchronization2), changing layout between `UNDEFINED → GENERAL` (write) and `GENERAL → GENERAL` (read after write, access mask only).
 
-Commit as **"Introduce Renderer class with explicit pass ordering"**.
+### Upgrade `shaders/common/material.glsl`: add `sampleAlbedo()`
+
+Now that the full G-buffer pipeline is wired and the texture path is tested, replace the `mat.color` placeholder in `primary.comp` with a real texture-aware function. Add to the **bottom** of `material.glsl` (after the GPUMaterial struct and existing helpers):
+
+```glsl
+// Returns the base color for a surface hit, sampling the albedo texture if present.
+// Converts from sRGB to linear by undoing gamma (pow 2.2 approximation).
+vec3 sampleAlbedo(GPUMaterial mat, vec2 uv) {
+    if (mat.useTexture == 1 && mat.albedoIndex >= 0) {
+        vec3 texCol = textureLod(textures[nonuniformEXT(mat.albedoIndex)], uv, 0.0).rgb;
+        return pow(max(texCol, vec3(0.0)), vec3(2.2));
+    }
+    return mat.color;
+}
+```
+
+Then update `primary.comp` to use it:
+
+```glsl
+// Replace:
+vec3 baseColor = mat.color; // Phase 2: use raw color; sampleAlbedo() added in Phase 3
+// With:
+vec3 baseColor = sampleAlbedo(mat, hit.uv);
+```
+
+`material.glsl` already has the `#extension GL_EXT_nonuniform_qualifier` via the textures[] binding — add it at the top of the file if it isn't there yet, since `nonuniformEXT()` requires it:
+
+```glsl
+#extension GL_EXT_nonuniform_qualifier : enable
+```
+
+Commit each class extraction as a separate PR.
+
+## 9. Phase 4: Add a Render Graph (Renderer Class)
+
+Don't overengineer this. A "render graph" for the showcase is a `Renderer` class that owns all Vulkan state and dispatches passes in explicit order. No separate `Pass` classes are needed yet — integrate them into `Renderer` directly.
+
+### Actual Descriptor Set Layout (What Was Implemented)
+
+```
+set = 0  (sceneDescSet, sceneDescSetLayout)
+    binding 0  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (placeholder; hdrImage used as dummy)
+    binding 1  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (materialBuffer)
+    binding 2  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (sphereBuffer)
+    binding 3  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (triangleBuffer)
+    binding 4  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (lightBuffer)
+    binding 5  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (planeBuffer)
+    binding 6  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (quadBuffer)
+    binding 7  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (cubeBuffer)
+    binding 8  — VK_DESCRIPTOR_TYPE_STORAGE_BUFFER  (bvhBuffer)
+    binding 9  — VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER [100] (textures)
+
+set = 1  (gbufDescSet, gbufDescSetLayout)
+    binding 0  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (gPosition  rgba32f)
+    binding 1  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (gNormal    rgba16f)
+    binding 2  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (gAlbedo    rgba8)
+    binding 3  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (gEmissive  rgba16f)
+    binding 4  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (gLinearDepth r32f)
+    binding 5  — VK_DESCRIPTOR_TYPE_STORAGE_IMAGE   (hdrImage   rgba16f — write target)
+```
+
+**Descriptor pool:** `maxSets = 2`, `STORAGE_IMAGE = 7` (1 placeholder + 6 gbuf/hdr), `STORAGE_BUFFER = 8`, `COMBINED_IMAGE_SAMPLER = 100`.
+
+Binding 9 (texture array) needs all 100 slots filled even if fewer textures are loaded — fill unused slots with `hdrImage.view` at `VK_IMAGE_LAYOUT_GENERAL` as a harmless dummy.
+
+### Pipeline Layout
+
+A single `twoPassPipelineLayout` covers both passes:
+
+```cpp
+VkDescriptorSetLayout setLayouts[] = { sceneDescSetLayout, gbufDescSetLayout };
+
+VkPushConstantRange pushRange{};
+pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+pushRange.offset     = 0;
+pushRange.size       = sizeof(CameraPushConstants);
+
+VkPipelineLayoutCreateInfo plci{};
+plci.setLayoutCount      = 2;
+plci.pSetLayouts         = setLayouts;
+plci.pushConstantRangeCount = 1;
+plci.pPushConstantRanges = &pushRange;
+```
+
+`CameraPushConstants` is ~160 bytes. Most modern GPUs support 256 bytes; the Vulkan spec only guarantees 128 bytes. If targeting older hardware, reduce the struct (e.g. move fog/sky to a UBO).
+
+### `initVulkan()` Call Order
+
+```cpp
+void Renderer::initVulkan() {
+    ctx.initialize(window);
+    swapchain.create(ctx, ctx.surface, { 1280, 720 });
+    gbuffer.create(ctx, swapchain.extent);
+    cmdManager.create(ctx, (uint32_t)swapchain.images.size()); // pass image count!
+
+    hdrImage = Image(ctx.allocator, width, height,
+                     VK_FORMAT_R16G16B16A16_SFLOAT,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+
+    // Transition all storage images to VK_IMAGE_LAYOUT_GENERAL in one submission
+    VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+    gbuffer.transitionForWrite(cmd);
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    cmdManager.submitOneTime(ctx, cmd);
+
+    createTextureSampler();
+    createTextureResources();
+    createSceneBuffers();
+    createSceneDescriptorSetLayout();
+    createGBufferDescriptorSetLayout();
+    createPipelines();
+    createDescriptorPool();
+    createSceneDescriptorSet();
+    createGBufferDescriptorSet();
+}
+```
+
+### `recordCommandBuffer()` — Two-Pass Frame
+
+```cpp
+void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    vkBeginCommandBuffer(cmd, &bi);
+
+    CameraPushConstants pc = buildPushConstants();
+    uint32_t dispatchX = swapchain.extent.width  / 16;
+    uint32_t dispatchY = swapchain.extent.height / 16;
+    VkDescriptorSet sets[] = { sceneDescSet, gbufDescSet };
+
+    // Pass 1: Primary Visibility (fills G-buffer)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+    // Barrier: G-buffer writes visible to composite reads
+    VkMemoryBarrier memBarrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &memBarrier, 0, nullptr, 0, nullptr);
+
+    // Pass 2: Composite Shading (reads G-buffer, writes hdrImage)
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(pc), &pc);
+    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+    // Blit hdrImage (R16G16B16A16_SFLOAT) → swapchain (R8G8B8A8_UNORM)
+    // Must use BlitImage, not CopyImage — formats are incompatible for Copy
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    VkImageBlit blitRegion{};
+    blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blitRegion.srcOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+    blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blitRegion.dstOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+
+    vkCmdBlitImage(cmd,
+        hdrImage.handle,              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &blitRegion, VK_FILTER_NEAREST);
+
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    vkEndCommandBuffer(cmd);
+}
+```
+
+### FPS Measurement Loop
+
+Add this to `mainLoop()` to track performance during development:
+
+```cpp
+void Renderer::mainLoop() {
+    lastFrame = (float)glfwGetTime(); // seed here — see Bug B in Phase 3
+    float fpsTimer  = 0.0f;
+    int   frameCount = 0;
+
+    while (!glfwWindowShouldClose(window)) {
+        float currentFrame = (float)glfwGetTime();
+        deltaTime  = currentFrame - lastFrame;
+        lastFrame  = currentFrame;
+
+        fpsTimer += deltaTime;
+        frameCount++;
+        if (fpsTimer >= 1.0f) {
+            std::cout << "FPS: " << frameCount
+                      << " | Frame: " << (fpsTimer / frameCount * 1000.0f) << " ms\n";
+            fpsTimer  = 0.0f;
+            frameCount = 0;
+        }
+
+        glfwPollEvents();
+        processInput();
+        updateDynamicData();
+        drawFrame();
+    }
+    vkDeviceWaitIdle(ctx.device);
+}
+```
+
+This was critical for diagnosing the 700ms/frame issue. Without it, "feels slow" is the only signal. With it, "2 FPS | 700ms" immediately points at a GPU bottleneck, not a camera bug.
+
+### Part B Completion Checklist
+
+Before moving to Part C, verify all of the following:
+
+- [ ] `compile_shaders.bat` compiles `shaders/visibility/primary.comp` and `shaders/shading/composite_temp.comp` without errors
+- [ ] No Vulkan validation errors in the debug output (especially `VUID-vkQueueSubmit-pSignalSemaphores-00067`)
+- [ ] FPS is 60 (vsync-limited) or >100 uncapped — NOT 2-15 FPS
+- [ ] Camera moves smoothly from the first frame (no first-frame snap or teleport)
+- [ ] The rendered image is correctly lit — not blown out/all white (tonemapping working)
+- [ ] The rendered image is not flat/dark — Lambertian direct lighting visible on all surfaces
+- [ ] VMA buffer destructor order warning: no crash or validation error on close
+- [ ] `VulkanCore.cpp` is excluded from compilation (not retired from disk, but excluded)
+
+### What composite_temp Deliberately Does NOT Do
+
+`composite_temp.comp` is a known-minimal placeholder. The following are intentional regressions compared to the old monolith, to be restored by Part C passes or separately:
+
+- No specular highlights (needs direct specular term in FinalGatherPass)
+- No mirror reflections (needs reflection ray pass or SSR)
+- No glass / refraction (needs transmission ray pass)
+- No soft shadows (BVH shadow only; hard shadows only)
+- No procedural textures or normal maps (code exists in material.glsl; not called)
+- No fog (post-process after FinalGather)
+- No depth-of-field
+
+The render looks "flat" compared to the monolith because all of the above are missing. **RC specifically replaces the `albedo × 0.1` ambient hack with real indirect radiance from cascade probes.** Everything else on the list is separate work, independent of RC.
+
+Commit as **"Part B complete: Renderer replaces VulkanCore, all Vulkan classes extracted, 60 FPS restored"**.
 
 ---
 

@@ -1,0 +1,715 @@
+#include "renderer/Renderer.hpp"
+#include "scene/ImageLoader.hpp"
+
+#include <stdexcept>
+#include <vector>
+#include <fstream>
+#include <iostream>
+#include <algorithm>
+#include <cstring>
+
+using namespace std;
+
+// ---- Public API ----
+
+void Renderer::run() {
+    initWindow();
+    initVulkan();
+    glfwShowWindow(window);
+    mainLoop();
+    cleanup();
+}
+
+void Renderer::loadScene(
+    const vector<GPUMaterial>& mats, const vector<GPUSphere>&   sphs,
+    const vector<GPUTriangle>& tris, const vector<GPULight>&    lghts,
+    const vector<GPUPlane>&    plns, const vector<GPUQuad>&     quds,
+    const vector<GPUCube>&     cbs,  const vector<GPUBVHNode>&  bvh)
+{
+    sceneMaterials = mats;
+    sceneSpheres   = sphs;
+    sceneTriangles = tris;
+    sceneLights    = lghts;
+    scenePlanes    = plns;
+    sceneQuads     = quds;
+    sceneCubes     = cbs;
+    sceneBVH       = bvh;
+}
+
+void Renderer::loadTextures(const vector<string>& paths) {
+    pendingTexturePaths = paths;
+}
+
+// ---- Initialization ----
+
+void Renderer::initWindow() {
+    glfwInit();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    window = glfwCreateWindow(1280, 720, "Vulkan Real-Time Raytracer", nullptr, nullptr);
+}
+
+void Renderer::initVulkan() {
+    ctx.initialize(window);
+    swapchain.create(ctx, ctx.surface, { 1280, 720 });
+
+    gbuffer.create(ctx, swapchain.extent);
+    cmdManager.create(ctx, (uint32_t)swapchain.images.size());
+
+    // SAMPLED_BIT allows hdrImage to serve as fallback in the texture descriptor array
+    hdrImage = Image(ctx.allocator, swapchain.extent.width, swapchain.extent.height,
+                     VK_FORMAT_R16G16B16A16_SFLOAT,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+
+    VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+    gbuffer.transitionForWrite(cmd);
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    cmdManager.submitOneTime(ctx, cmd);
+
+    createTextureSampler();
+    createTextureResources();
+    createSceneBuffers();
+    createSceneDescriptorSetLayout();
+    createGBufferDescriptorSetLayout();
+    createPipelines();
+    createDescriptorPool();
+    createSceneDescriptorSet();
+    createGBufferDescriptorSet();
+}
+
+// ---- Scene Buffers ----
+
+void Renderer::createSceneBuffers() {
+    auto make = [&](size_t sz) {
+        return Buffer(ctx.allocator, sz, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+    };
+
+    materialBuffer = make(sizeof(GPUMaterial) * max((size_t)1, sceneMaterials.size()));
+    sphereBuffer   = make(sizeof(GPUSphere)   * max((size_t)1, sceneSpheres.size()));
+    triangleBuffer = make(sizeof(GPUTriangle) * max((size_t)1, sceneTriangles.size()));
+    lightBuffer    = make(sizeof(GPULight)    * max((size_t)1, sceneLights.size()));
+    planeBuffer    = make(sizeof(GPUPlane)    * max((size_t)1, scenePlanes.size()));
+    quadBuffer     = make(sizeof(GPUQuad)     * max((size_t)1, sceneQuads.size()));
+    cubeBuffer     = make(sizeof(GPUCube)     * max((size_t)1, sceneCubes.size()));
+    bvhBuffer      = make(sizeof(GPUBVHNode)  * max((size_t)1, sceneBVH.size()));
+
+    uploadSceneData();
+}
+
+void Renderer::uploadSceneData() {
+    if (!sceneMaterials.empty()) memcpy(materialBuffer.mapped, sceneMaterials.data(), sizeof(GPUMaterial) * sceneMaterials.size());
+    if (!sceneSpheres.empty())   memcpy(sphereBuffer.mapped,   sceneSpheres.data(),   sizeof(GPUSphere)   * sceneSpheres.size());
+    if (!sceneTriangles.empty()) memcpy(triangleBuffer.mapped,  sceneTriangles.data(), sizeof(GPUTriangle) * sceneTriangles.size());
+    if (!sceneLights.empty())    memcpy(lightBuffer.mapped,     sceneLights.data(),    sizeof(GPULight)    * sceneLights.size());
+    if (!scenePlanes.empty())    memcpy(planeBuffer.mapped,     scenePlanes.data(),    sizeof(GPUPlane)    * scenePlanes.size());
+    if (!sceneQuads.empty())     memcpy(quadBuffer.mapped,      sceneQuads.data(),     sizeof(GPUQuad)     * sceneQuads.size());
+    if (!sceneCubes.empty())     memcpy(cubeBuffer.mapped,      sceneCubes.data(),     sizeof(GPUCube)     * sceneCubes.size());
+    if (!sceneBVH.empty())       memcpy(bvhBuffer.mapped,       sceneBVH.data(),       sizeof(GPUBVHNode)  * sceneBVH.size());
+}
+
+// ---- Textures ----
+
+void Renderer::createTextureSampler() {
+    VkSamplerCreateInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    si.magFilter = VK_FILTER_LINEAR;
+    si.minFilter = VK_FILTER_LINEAR;
+    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.anisotropyEnable = VK_TRUE;
+    si.maxAnisotropy = 16.0f;
+    si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+    if (vkCreateSampler(ctx.device, &si, nullptr, &textureSampler) != VK_SUCCESS)
+        throw runtime_error("Renderer: sampler creation failed.");
+}
+
+void Renderer::createTextureResources() {
+    for (const auto& path : pendingTexturePaths) {
+        auto img = ImageLoader::loadPixels(path);
+        VkDeviceSize imgSize = (VkDeviceSize)img.width * img.height * 4;
+
+        Buffer staging(ctx.allocator, imgSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+        memcpy(staging.mapped, img.pixels, imgSize);
+        ImageLoader::freePixels(img);
+
+        VkImageCreateInfo ici{};
+        ici.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        ici.imageType = VK_IMAGE_TYPE_2D;
+        ici.extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
+        ici.mipLevels = 1;
+        ici.arrayLayers = 1;
+        ici.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        ici.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        ici.samples = VK_SAMPLE_COUNT_1_BIT;
+
+        VkImage texImage;
+        VmaAllocation texAlloc;
+        VmaAllocationCreateInfo aci{};
+        aci.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        if (vmaCreateImage(ctx.allocator, &ici, &aci, &texImage, &texAlloc, nullptr) != VK_SUCCESS)
+            throw runtime_error("Renderer: texture image creation failed.");
+
+        VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+        transitionImageLayout(cmd, texImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkBufferImageCopy region{};
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
+        vkCmdCopyBufferToImage(cmd, staging.handle, texImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+        transitionImageLayout(cmd, texImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        cmdManager.submitOneTime(ctx, cmd);
+
+        VkImageViewCreateInfo vci{};
+        vci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        vci.image = texImage;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = VK_FORMAT_R8G8B8A8_UNORM;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+        VkImageView texView;
+        if (vkCreateImageView(ctx.device, &vci, nullptr, &texView) != VK_SUCCESS)
+            throw runtime_error("Renderer: texture view creation failed.");
+
+        textureImages.push_back(texImage);
+        textureImageAllocs.push_back(texAlloc);
+        textureImageViews.push_back(texView);
+    }
+}
+
+// ---- Descriptor Set Layouts ----
+
+void Renderer::createSceneDescriptorSetLayout() {
+    vector<VkDescriptorSetLayoutBinding> bindings(10);
+
+    // binding 0: placeholder storage image (the two-pass shaders don't declare it but the layout must match)
+    bindings[0].binding = 0;
+    bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    // bindings 1-8: scene SSBOs (materials, spheres, triangles, lights, planes, quads, cubes, bvh)
+    for (uint32_t i = 1; i <= 8; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    // binding 9: texture array
+    bindings[9].binding = 9;
+    bindings[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[9].descriptorCount = 100;
+    bindings[9].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    ci.bindingCount = 10;
+    ci.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &sceneDescSetLayout) != VK_SUCCESS)
+        throw runtime_error("Renderer: scene descriptor set layout creation failed.");
+}
+
+void Renderer::createGBufferDescriptorSetLayout() {
+    vector<VkDescriptorSetLayoutBinding> bindings(6);
+    for (uint32_t i = 0; i < 6; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo ci{};
+    ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    ci.bindingCount = 6;
+    ci.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &gbufDescSetLayout) != VK_SUCCESS)
+        throw runtime_error("Renderer: G-buffer descriptor set layout creation failed.");
+}
+
+// ---- Pipelines ----
+
+void Renderer::createPipelines() {
+    VkDescriptorSetLayout setLayouts[] = { sceneDescSetLayout, gbufDescSetLayout };
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(CameraPushConstants);
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 2;
+    plci.pSetLayouts = setLayouts;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pushRange;
+
+    if (vkCreatePipelineLayout(ctx.device, &plci, nullptr, &twoPassPipelineLayout) != VK_SUCCESS)
+        throw runtime_error("Renderer: pipeline layout creation failed.");
+
+    primaryPassPipeline   = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv",      twoPassPipelineLayout);
+    compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv",  twoPassPipelineLayout);
+}
+
+VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipelineLayout layout) {
+    auto code = readFile(path);
+    VkShaderModule mod = createShaderModule(code);
+
+    VkPipelineShaderStageCreateInfo stageInfo{};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = mod;
+    stageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = layout;
+    pipelineInfo.stage = stageInfo;
+
+    VkPipeline pipeline;
+    if (vkCreateComputePipelines(ctx.device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
+        throw runtime_error("Renderer: failed to create compute pipeline from " + path);
+
+    vkDestroyShaderModule(ctx.device, mod, nullptr);
+    return pipeline;
+}
+
+// ---- Descriptor Pool ----
+
+void Renderer::createDescriptorPool() {
+    vector<VkDescriptorPoolSize> poolSizes(3);
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 7; // 1 placeholder (set=0 b0) + 6 gbuffer+hdr (set=1)
+    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = 8;
+    poolSizes[2].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[2].descriptorCount = 100;
+
+    VkDescriptorPoolCreateInfo pi{};
+    pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.poolSizeCount = 3;
+    pi.pPoolSizes = poolSizes.data();
+    pi.maxSets = 2;
+
+    if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
+        throw runtime_error("Renderer: descriptor pool creation failed.");
+}
+
+// ---- Descriptor Sets ----
+
+void Renderer::createSceneDescriptorSet() {
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &sceneDescSetLayout;
+
+    if (vkAllocateDescriptorSets(ctx.device, &ai, &sceneDescSet) != VK_SUCCESS)
+        throw runtime_error("Renderer: scene descriptor set allocation failed.");
+
+    // binding 0: hdrImage as placeholder (storage image)
+    VkDescriptorImageInfo placeholderInfo{};
+    placeholderInfo.imageView   = hdrImage.view;
+    placeholderInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+    // bindings 1-8: scene SSBOs
+    Buffer* bufs[] = { &materialBuffer, &sphereBuffer, &triangleBuffer, &lightBuffer,
+                       &planeBuffer,    &quadBuffer,   &cubeBuffer,     &bvhBuffer };
+
+    vector<VkDescriptorBufferInfo> bufInfos(8);
+    for (int i = 0; i < 8; i++) {
+        bufInfos[i].buffer = bufs[i]->handle;
+        bufInfos[i].offset = 0;
+        bufInfos[i].range  = VK_WHOLE_SIZE;
+    }
+
+    // binding 9: texture sampler array — fill unused slots with hdrImage (in GENERAL layout)
+    vector<VkDescriptorImageInfo> texInfos(100);
+    for (int i = 0; i < 100; i++) {
+        texInfos[i].sampler = textureSampler;
+        if (i < (int)textureImageViews.size()) {
+            texInfos[i].imageView   = textureImageViews[i];
+            texInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        } else {
+            texInfos[i].imageView   = hdrImage.view;
+            texInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        }
+    }
+
+    vector<VkWriteDescriptorSet> writes(10);
+
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = sceneDescSet;
+    writes[0].dstBinding      = 0;
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[0].pImageInfo      = &placeholderInfo;
+
+    for (int i = 0; i < 8; i++) {
+        writes[i + 1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i + 1].dstSet          = sceneDescSet;
+        writes[i + 1].dstBinding      = (uint32_t)(i + 1);
+        writes[i + 1].descriptorCount = 1;
+        writes[i + 1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i + 1].pBufferInfo     = &bufInfos[i];
+    }
+
+    writes[9].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[9].dstSet          = sceneDescSet;
+    writes[9].dstBinding      = 9;
+    writes[9].descriptorCount = 100;
+    writes[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[9].pImageInfo      = texInfos.data();
+
+    vkUpdateDescriptorSets(ctx.device, 10, writes.data(), 0, nullptr);
+}
+
+void Renderer::createGBufferDescriptorSet() {
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &gbufDescSetLayout;
+
+    if (vkAllocateDescriptorSets(ctx.device, &ai, &gbufDescSet) != VK_SUCCESS)
+        throw runtime_error("Renderer: G-buffer descriptor set allocation failed.");
+
+    VkImageView views[6] = {
+        gbuffer.position.view, gbuffer.normal.view,     gbuffer.albedo.view,
+        gbuffer.emissive.view, gbuffer.linearDepth.view, hdrImage.view
+    };
+
+    vector<VkDescriptorImageInfo> imgInfos(6);
+    vector<VkWriteDescriptorSet>  writes(6);
+
+    for (uint32_t i = 0; i < 6; i++) {
+        imgInfos[i].imageView   = views[i];
+        imgInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        imgInfos[i].sampler     = VK_NULL_HANDLE;
+
+        writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet          = gbufDescSet;
+        writes[i].dstBinding      = i;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo      = &imgInfos[i];
+    }
+
+    vkUpdateDescriptorSets(ctx.device, 6, writes.data(), 0, nullptr);
+}
+
+// ---- Main Loop ----
+
+void Renderer::mainLoop() {
+    lastFrame = (float)glfwGetTime();
+    float fpsTimer  = 0.0f;
+    int   frameCount = 0;
+    cout << "Renderer: Rendering started.\n";
+    while (!glfwWindowShouldClose(window)) {
+        float currentFrame = (float)glfwGetTime();
+        deltaTime = currentFrame - lastFrame;
+        lastFrame = currentFrame;
+
+        fpsTimer += deltaTime;
+        frameCount++;
+        if (fpsTimer >= 1.0f) {
+            cout << "FPS: " << frameCount
+                 << " | Frame: " << (fpsTimer / frameCount * 1000.0f) << " ms\n";
+            fpsTimer  = 0.0f;
+            frameCount = 0;
+        }
+
+        glfwPollEvents();
+        processInput();
+        updateDynamicData();
+        drawFrame();
+    }
+    vkDeviceWaitIdle(ctx.device);
+}
+
+void Renderer::processInput() {
+    float cameraSpeed = 3.5f * deltaTime;
+    float rotSpeed    = 90.0f * deltaTime;
+
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)        cameraPos += cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)            yaw += rotSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)            yaw -= rotSpeed;
+
+    glm::vec3 right     = glm::normalize(glm::cross(cameraUp, cameraFront));
+    glm::vec3 flatFront = glm::normalize(glm::vec3(cameraFront.x, 0.0f, cameraFront.z));
+
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cameraPos += cameraSpeed * flatFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cameraPos -= cameraSpeed * flatFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cameraPos -= right * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cameraPos += right * cameraSpeed;
+
+    glm::vec3 front;
+    front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+    front.y = sin(glm::radians(pitch));
+    front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    cameraFront = glm::normalize(front);
+}
+
+void Renderer::updateDynamicData() {
+    if (sceneSpheres.size() > 4) {
+        glm::vec3 eyeRCenter = sceneSpheres[1].center;
+        sceneSpheres[2].center = eyeRCenter + glm::normalize(cameraPos - eyeRCenter) * 0.09f;
+
+        glm::vec3 eyeLCenter = sceneSpheres[3].center;
+        sceneSpheres[4].center = eyeLCenter + glm::normalize(cameraPos - eyeLCenter) * 0.09f;
+
+        memcpy(sphereBuffer.mapped, sceneSpheres.data(), sizeof(GPUSphere) * sceneSpheres.size());
+    }
+}
+
+void Renderer::drawFrame() {
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    if (width == 0 || height == 0) return;
+
+    vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
+    vkResetFences(ctx.device, 1, &cmdManager.inFlightFence);
+
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(ctx.device, swapchain.handle, UINT64_MAX,
+                          cmdManager.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+    vkResetCommandBuffer(cmdManager.buffer, 0);
+    recordCommandBuffer(cmdManager.buffer, imageIndex);
+
+    VkSemaphore waitSems[]   = { cmdManager.imageAvailableSemaphore };
+    VkSemaphore signalSems[] = { cmdManager.renderFinishedSemaphores[imageIndex] };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT };
+
+    VkSubmitInfo si{};
+    si.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount   = 1;
+    si.pWaitSemaphores      = waitSems;
+    si.pWaitDstStageMask    = waitStages;
+    si.commandBufferCount   = 1;
+    si.pCommandBuffers      = &cmdManager.buffer;
+    si.signalSemaphoreCount = 1;
+    si.pSignalSemaphores    = signalSems;
+
+    vkQueueSubmit(ctx.computeQueue, 1, &si, cmdManager.inFlightFence);
+
+    VkPresentInfoKHR pi{};
+    pi.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    pi.waitSemaphoreCount = 1;
+    pi.pWaitSemaphores    = signalSems;
+    pi.swapchainCount     = 1;
+    pi.pSwapchains        = &swapchain.handle;
+    pi.pImageIndices      = &imageIndex;
+
+    vkQueuePresentKHR(ctx.computeQueue, &pi);
+}
+
+void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    vkBeginCommandBuffer(cmd, &bi);
+
+    CameraPushConstants pc{};
+    pc.camPos     = glm::vec4(cameraPos, 0.0f);
+    pc.camForward = glm::vec4(cameraFront, 0.0f);
+    pc.camRight   = glm::vec4(glm::normalize(glm::cross(cameraUp, cameraFront)), 0.0f);
+    pc.camUp      = glm::vec4(glm::normalize(glm::cross(cameraFront, glm::vec3(pc.camRight))), 0.0f);
+    pc.sphereCount        = (int)sceneSpheres.size();
+    pc.triangleCount      = (int)sceneTriangles.size();
+    pc.planeCount         = (int)scenePlanes.size();
+    pc.quadCount          = (int)sceneQuads.size();
+    pc.cubeCount          = (int)sceneCubes.size();
+    pc.lightCount         = (int)sceneLights.size();
+    pc.bvhCount           = (int)sceneBVH.size();
+    pc.maxDepth           = maxDepth;
+    pc.shadowRays         = shadowRays;
+    pc.primaryRaysPerPixel = primaryRaysPerPixel;
+    pc.focalDistance      = focalDistance;
+    pc.lensRadius         = lensRadius;
+    pc.fogColor           = fogColor;
+    pc.enableFog          = enableFog;
+    pc.skyBottomColor     = skyBottomColor;
+    pc.enableSkybox       = enableSkybox;
+    pc.skyTopColor        = skyTopColor;
+    pc.enableTextures     = enableTextures;
+
+    uint32_t dispatchX = swapchain.extent.width  / 16;
+    uint32_t dispatchY = swapchain.extent.height / 16;
+
+    VkDescriptorSet sets[] = { sceneDescSet, gbufDescSet };
+
+    // Pass 1: Primary Visibility
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+    // Barrier: G-buffer writes visible to composite reads
+    VkMemoryBarrier memBarrier{};
+    memBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &memBarrier, 0, nullptr, 0, nullptr);
+
+    // Pass 2: Composite Shading
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+    // Blit hdrImage (R16G16B16A16_SFLOAT) → swapchain (R8G8B8A8_UNORM)
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_GENERAL,   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    VkImageBlit blitRegion{};
+    blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blitRegion.srcOffsets[0]  = { 0, 0, 0 };
+    blitRegion.srcOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+    blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    blitRegion.dstOffsets[0]  = { 0, 0, 0 };
+    blitRegion.dstOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+
+    vkCmdBlitImage(cmd,
+        hdrImage.handle,              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &blitRegion, VK_FILTER_NEAREST);
+
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    vkEndCommandBuffer(cmd);
+}
+
+// ---- Cleanup ----
+
+void Renderer::cleanup() {
+    // Destroy VMA-backed buffers before the allocator goes down
+    materialBuffer = Buffer();
+    sphereBuffer   = Buffer();
+    triangleBuffer = Buffer();
+    lightBuffer    = Buffer();
+    planeBuffer    = Buffer();
+    quadBuffer     = Buffer();
+    cubeBuffer     = Buffer();
+    bvhBuffer      = Buffer();
+
+    vkDestroySampler(ctx.device, textureSampler, nullptr);
+    for (size_t i = 0; i < textureImages.size(); i++) {
+        vkDestroyImageView(ctx.device, textureImageViews[i], nullptr);
+        vmaDestroyImage(ctx.allocator, textureImages[i], textureImageAllocs[i]);
+    }
+
+    gbuffer.destroy(ctx);
+    hdrImage.destroy(ctx.allocator);
+
+    vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
+    vkDestroyPipelineLayout(ctx.device, twoPassPipelineLayout, nullptr);
+
+    vkDestroyDescriptorPool(ctx.device, descriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, sceneDescSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, gbufDescSetLayout, nullptr);
+
+    cmdManager.destroy(ctx);
+    swapchain.destroy(ctx);
+    ctx.shutdown();
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+}
+
+// ---- Utilities ----
+
+void Renderer::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
+                                     VkImageLayout oldLayout, VkImageLayout newLayout) {
+    VkImageMemoryBarrier barrier{};
+    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout           = oldLayout;
+    barrier.newLayout           = newLayout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image               = image;
+    barrier.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+    VkPipelineStageFlags srcStage, dstStage;
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_GENERAL && newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+        dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    }
+    else {
+        throw std::invalid_argument("Renderer: unsupported layout transition.");
+    }
+
+    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+vector<char> Renderer::readFile(const string& filename) {
+    ifstream file(filename, ios::ate | ios::binary);
+    if (!file.is_open())
+        throw runtime_error("Renderer: failed to open file: " + filename);
+
+    size_t fileSize = (size_t)file.tellg();
+    vector<char> buffer(fileSize);
+    file.seekg(0);
+    file.read(buffer.data(), fileSize);
+    return buffer;
+}
+
+VkShaderModule Renderer::createShaderModule(const vector<char>& code) {
+    VkShaderModuleCreateInfo ci{};
+    ci.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ci.codeSize = code.size();
+    ci.pCode    = reinterpret_cast<const uint32_t*>(code.data());
+
+    VkShaderModule mod;
+    if (vkCreateShaderModule(ctx.device, &ci, nullptr, &mod) != VK_SUCCESS)
+        throw runtime_error("Renderer: shader module creation failed.");
+    return mod;
+}

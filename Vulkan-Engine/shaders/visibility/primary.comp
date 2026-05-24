@@ -1,0 +1,124 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/push_constants.glsl"
+
+layout(set = 1, binding = 0, rgba32f) uniform writeonly image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform writeonly image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform writeonly image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform writeonly image2D gEmissive;
+layout(set = 1, binding = 4, r32f)    uniform writeonly image2D gLinearDepth;
+
+struct GPUPlane {
+    vec3 center; float p1;
+    vec3 normal; int  materialIndex;
+    float p2; float p3; float p4; float p5;
+};
+
+struct GPUQuad {
+    vec3 corner;       float p1;
+    vec3 edge1;        float p2;
+    vec3 edge2;        float p3;
+    vec3 normalVector; int   materialIndex;
+    float p4; float p5; float p6; float p7;
+};
+
+layout(std430, set = 0, binding = 5) readonly buffer PlaneBuffer { GPUPlane planes[]; };
+layout(std430, set = 0, binding = 6) readonly buffer QuadBuffer  { GPUQuad  quads[];  };
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(gPosition);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
+    uv.y = -uv.y;
+    uv.x *= float(size.x) / float(size.y);
+    uv *= tan(radians(60.0 * 0.5));
+
+    vec3 rayDir = normalize(cam.camRight.xyz * uv.x
+                          + cam.camUp.xyz    * uv.y
+                          + cam.camForward.xyz);
+
+    Ray ray;
+    ray.origin    = cam.camPos.xyz;
+    ray.direction = rayDir;
+    ray.tMin      = 0.001;
+    ray.tMax      = 1e6;
+
+    // Analytical intersection for planes and quads.
+    // Finding the nearest hit caps ray.tMax before the BVH call,
+    // which culls most BVH nodes for wall pixels and eliminates
+    // full-miss traversal across 80K+ triangles.
+    float analyticalT      = ray.tMax;
+    int   analyticalMat    = -1;
+    vec3  analyticalNormal = vec3(0.0);
+    vec2  analyticalUV     = vec2(0.0);
+
+    for (int i = 0; i < cam.planeCount; i++) {
+        float denom = dot(planes[i].normal, rayDir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(planes[i].center - ray.origin, planes[i].normal) / denom;
+        if (t > ray.tMin && t < analyticalT) {
+            analyticalT      = t;
+            analyticalMat    = planes[i].materialIndex;
+            analyticalNormal = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
+            analyticalUV     = vec2(0.0);
+        }
+    }
+
+    for (int i = 0; i < cam.quadCount; i++) {
+        float denom = dot(quads[i].normalVector, rayDir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(quads[i].corner - ray.origin, quads[i].normalVector) / denom;
+        if (t <= ray.tMin || t >= analyticalT) continue;
+
+        vec3  p    = ray.origin + rayDir * t - quads[i].corner;
+        float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+        float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+        float qu   = dot(p, quads[i].edge1) / e1l2;
+        float qv   = dot(p, quads[i].edge2) / e2l2;
+        if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+
+        analyticalT      = t;
+        analyticalMat    = quads[i].materialIndex;
+        analyticalNormal = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
+        analyticalUV     = vec2(qu, qv);
+    }
+
+    // BVH traversal capped to the nearest analytical hit.
+    ray.tMax = analyticalT;
+    HitInfo hit;
+    bool hasBVH = traverseBVH(ray, cam.bvhCount, hit);
+
+    if (hasBVH) {
+        GPUMaterial mat    = materials[hit.materialIndex];
+        vec3        color  = sampleAlbedo(mat, hit.uv);
+        imageStore(gPosition,    pixel, vec4(hit.position,  hit.t));
+        imageStore(gNormal,      pixel, vec4(hit.normal,    mat.roughness));
+        imageStore(gAlbedo,      pixel, vec4(color,         mat.metallic));
+        imageStore(gEmissive,    pixel, vec4(mat.emission,  float(hit.materialIndex)));
+        imageStore(gLinearDepth, pixel, vec4(hit.t, 0.0, 0.0, 0.0));
+    } else if (analyticalMat >= 0) {
+        GPUMaterial mat    = materials[analyticalMat];
+        vec3        color  = sampleAlbedo(mat, analyticalUV);
+        vec3        pos    = ray.origin + rayDir * analyticalT;
+        imageStore(gPosition,    pixel, vec4(pos,               analyticalT));
+        imageStore(gNormal,      pixel, vec4(analyticalNormal,  mat.roughness));
+        imageStore(gAlbedo,      pixel, vec4(color,             mat.metallic));
+        imageStore(gEmissive,    pixel, vec4(mat.emission,      float(analyticalMat)));
+        imageStore(gLinearDepth, pixel, vec4(analyticalT, 0.0, 0.0, 0.0));
+    } else {
+        vec3 skyColor = mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (rayDir.y + 1.0));
+        imageStore(gPosition,    pixel, vec4(0.0, 0.0, 0.0,  1e6));
+        imageStore(gNormal,      pixel, vec4(0.0, 1.0, 0.0,  0.0));
+        imageStore(gAlbedo,      pixel, vec4(0.0, 0.0, 0.0,  0.0));
+        imageStore(gEmissive,    pixel, vec4(skyColor,       -1.0));
+        imageStore(gLinearDepth, pixel, vec4(1e6,  0.0, 0.0, 0.0));
+    }
+}

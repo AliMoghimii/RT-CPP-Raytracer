@@ -72,6 +72,18 @@
     <Filter Include="Shader\Monolith">
       <UniqueIdentifier>{c1f21e6b-72af-47bb-afc0-31920cab2817}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Include\Resources">
+      <UniqueIdentifier>{8a364f07-3137-4370-9218-b4bbf74233e7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Resources">
+      <UniqueIdentifier>{318e236a-7814-47b5-bcba-67c7c879ec55}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source\Renderer">
+      <UniqueIdentifier>{32371501-61ef-4dd1-b6a8-d404bc41cad2}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Include\Renderer">
+      <UniqueIdentifier>{40f59cb0-f898-480f-90bc-e52d87f1f5d8}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">
@@ -98,6 +110,27 @@
     <ClCompile Include="source\scene\Primitive.cpp">
       <Filter>Source</Filter>
     </ClCompile>
+    <ClCompile Include="source\passes\GBuffer.cpp">
+      <Filter>Source\Passes</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\CommandManager.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\Swapchain.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\core\VulkanContext.cpp">
+      <Filter>Source\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="source\resources\Buffer.cpp">
+      <Filter>Source\Resources</Filter>
+    </ClCompile>
+    <ClCompile Include="source\resources\Image.cpp">
+      <Filter>Source\Resources</Filter>
+    </ClCompile>
+    <ClCompile Include="source\renderer\Renderer.cpp">
+      <Filter>Source\Renderer</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\passes\LegacyPass.hpp">
@@ -119,6 +152,27 @@
       <Filter>Include\Scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\Primitive.hpp" />
+    <ClInclude Include="include\passes\GBuffer.hpp">
+      <Filter>Include\Passes</Filter>
+    </ClInclude>
+    <ClInclude Include="include\resources\Buffer.hpp">
+      <Filter>Include\Resources</Filter>
+    </ClInclude>
+    <ClInclude Include="include\resources\Image.hpp">
+      <Filter>Include\Resources</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\CommandManager.hpp">
+      <Filter>Include\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\Swapchain.hpp">
+      <Filter>Include\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\core\VulkanContext.hpp">
+      <Filter>Include\Core</Filter>
+    </ClInclude>
+    <ClInclude Include="include\renderer\Renderer.hpp">
+      <Filter>Include\Renderer</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
@@ -148,6 +202,12 @@
     </None>
     <None Include="shaders\monolith\raytracer.comp">
       <Filter>Shader\Monolith</Filter>
+    </None>
+    <None Include="shaders\visibility\primary.comp">
+      <Filter>Shader\Visibility</Filter>
+    </None>
+    <None Include="shaders\shading\composite_temp.comp">
+      <Filter>Shader\Shading</Filter>
     </None>
   </ItemGroup>
 </Project>

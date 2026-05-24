@@ -87,14 +87,35 @@ private:
     VkPipeline legacyComputePipeline;
     VkPipelineLayout pipelineLayout;
 
+    // Two-pass G-buffer pipelines
+    VkPipeline primaryPassPipeline;
+    VkPipeline compositePassPipeline;
+    VkPipelineLayout twoPassPipelineLayout;
+
     bool useLegacyRenderer = false;
+    bool useTwoPassRenderer = true;
+
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;
     VkDescriptorSet descriptorSet;
 
+    // G-buffer descriptor set (set = 1 for pass images)
+    VkDescriptorSetLayout gbufDescSetLayout;
+    VkDescriptorSet gbufDescSet;
+
     VkImage computeImage;
     VkDeviceMemory computeImageMemory;
     VkImageView computeImageView;
+
+    // G-buffer images (written by primary pass, read by composite pass)
+    VkImage gbufPosition,  gbufNormal,  gbufAlbedo,  gbufEmissive,  gbufLinearDepth;
+    VkImageView gbufPositionV, gbufNormalV, gbufAlbedoV, gbufEmissiveV, gbufLinearDepthV;
+    VkDeviceMemory gbufPositionM, gbufNormalM, gbufAlbedoM, gbufEmissiveM, gbufLinearDepthM;
+
+    // HDR output image (written by composite pass, blitted to swapchain)
+    VkImage hdrImage;
+    VkImageView hdrImageView;
+    VkDeviceMemory hdrMemory;
 
     VkBuffer materialBuffer;
     VkDeviceMemory materialMemory;
@@ -178,9 +199,15 @@ private:
     void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
     void cleanup();
 
+    void createGBufferImages();
+    void createTwoPassPipelines();
+    void createGBufferDescriptorSet();
+
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    void createStorageImage(VkFormat format, VkImage& image, VkImageView& view, VkDeviceMemory& memory);
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
     static std::vector<char> readFile(const std::string& filename);
     VkShaderModule createShaderModule(const std::vector<char>& code);
+    VkPipeline createComputePipelineFromSpv(const std::string& path, VkPipelineLayout layout);
     void transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
 };

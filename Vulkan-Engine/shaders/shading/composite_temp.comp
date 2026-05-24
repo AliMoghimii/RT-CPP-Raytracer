@@ -1,0 +1,66 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/lighting.glsl"
+#include "../common/push_constants.glsl"
+
+layout(set = 1, binding = 0, rgba32f) uniform readonly  image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform readonly  image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform readonly  image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform readonly  image2D gEmissive;
+layout(set = 1, binding = 5, rgba16f) uniform writeonly image2D outHDR;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outHDR);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+    
+    vec4 posData = imageLoad(gPosition, pixel);
+    vec3 worldPos = posData.xyz;
+    float depth = posData.w;
+    
+    vec4 emissiveData = imageLoad(gEmissive, pixel);
+    if (emissiveData.a < 0.0) {
+        // Sky pixel
+        imageStore(outHDR, pixel, vec4(emissiveData.rgb, 1.0));
+        return;
+    }
+    
+    vec3 normal = imageLoad(gNormal, pixel).xyz;
+    vec4 albedoData = imageLoad(gAlbedo, pixel);
+    vec3 albedo = albedoData.rgb;
+    
+    vec3 viewDir = normalize(cam.camPos.xyz - worldPos);
+    vec3 color = emissiveData.rgb + albedo * 0.1; // ambient
+    
+    // Direct light loop (same as before)
+    for (int l = 0; l < cam.lightCount; l++) {
+        vec3 lightDir = normalize(lights[l].position - worldPos);
+        float lightDist = length(lights[l].position - worldPos);
+        
+        // Shadow ray
+        Ray shadowRay;
+        shadowRay.origin = worldPos + normal * 0.001;
+        shadowRay.direction = lightDir;
+        shadowRay.tMin = 0.001;
+        shadowRay.tMax = lightDist - 0.01;
+        
+        HitInfo shadowHit;
+        if (!traverseBVH(shadowRay, cam.bvhCount, shadowHit)) {
+            float NdotL = max(0.0, dot(normal, lightDir));
+            color += albedo * lights[l].color * NdotL;
+        }
+    }
+    
+    // Reinhard tonemapping + gamma correction so the 16F→UNORM blit
+    // doesn't saturate. This replaces the per-channel sqrt in the old monolith.
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0 / 2.2));
+
+    imageStore(outHDR, pixel, vec4(color, 1.0));
+}

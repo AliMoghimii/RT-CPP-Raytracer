@@ -143,18 +143,31 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="source\core\CommandManager.cpp" />
+    <ClCompile Include="source\core\Swapchain.cpp" />
     <ClCompile Include="source\core\VMA.cpp" />
+    <ClCompile Include="source\core\VulkanContext.cpp" />
+    <ClCompile Include="source\passes\GBuffer.cpp" />
     <ClCompile Include="source\passes\LegacyPass.cpp" />
-    <ClCompile Include="source\core\VulkanCore.cpp" />
     <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\renderer\Renderer.cpp" />
+    <ClCompile Include="source\resources\Buffer.cpp" />
+    <ClCompile Include="source\resources\Image.cpp" />
     <ClCompile Include="source\scene\ImageLoader.cpp" />
     <ClCompile Include="source\scene\ModelLoader.cpp" />
     <ClCompile Include="source\scene\Primitive.cpp" />
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="include\core\CommandManager.hpp" />
+    <ClInclude Include="include\core\Swapchain.hpp" />
+    <ClInclude Include="include\core\VulkanContext.hpp" />
     <ClInclude Include="include\core\VulkanCore.hpp" />
     <ClInclude Include="include\math\MathUtils.hpp" />
+    <ClInclude Include="include\passes\GBuffer.hpp" />
+    <ClInclude Include="include\renderer\Renderer.hpp" />
+    <ClInclude Include="include\resources\Buffer.hpp" />
+    <ClInclude Include="include\resources\Image.hpp" />
     <ClInclude Include="include\scene\GPUData.hpp" />
     <ClInclude Include="include\scene\ImageLoader.hpp" />
     <ClInclude Include="include\scene\ModelLoader.hpp" />
@@ -172,6 +185,8 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <None Include="shaders\common\ray.glsl" />
     <None Include="shaders\legacy\raytracer.comp" />
     <None Include="shaders\monolith\raytracer.comp" />
+    <None Include="shaders\shading\composite_temp.comp" />
+    <None Include="shaders\visibility\primary.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

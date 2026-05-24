@@ -35,6 +35,7 @@ void VulkanCore::initVulkan() {
     createSwapchain();
     createSwapchainImageViews();
     createComputeImage();
+    createGBufferImages();
 
     createTextureSampler();
     createTextureResources();
@@ -42,8 +43,10 @@ void VulkanCore::initVulkan() {
     createSceneBuffers();
     createDescriptorSetLayout();
     createComputePipeline();
+    createTwoPassPipelines();
     createDescriptorPool();
     createDescriptorSets();
+    createGBufferDescriptorSet();
     createCommandBuffers();
     createSyncObjects();
 }
@@ -345,6 +348,179 @@ void VulkanCore::createComputeImage() {
     vkFreeCommandBuffers(device, commandPool, 1, &cmd);
 }
 
+// Creates one device-local storage image + view, ready to transition.
+void VulkanCore::createStorageImage(VkFormat format, VkImage& image, VkImageView& view, VkDeviceMemory& memory) {
+    VkImageCreateInfo imageInfo{};
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    if (vkCreateImage(device, &imageInfo, nullptr, &image) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to create storage image.");
+
+    VkMemoryRequirements memReqs;
+    vkGetImageMemoryRequirements(device, image, &memReqs);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReqs.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    if (vkAllocateMemory(device, &allocInfo, nullptr, &memory) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to allocate storage image memory.");
+
+    vkBindImageMemory(device, image, memory, 0);
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+    if (vkCreateImageView(device, &viewInfo, nullptr, &view) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to create storage image view.");
+}
+
+void VulkanCore::createGBufferImages() {
+    createStorageImage(VK_FORMAT_R32G32B32A32_SFLOAT, gbufPosition,    gbufPositionV,    gbufPositionM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, gbufNormal,      gbufNormalV,      gbufNormalM);
+    createStorageImage(VK_FORMAT_R8G8B8A8_UNORM,      gbufAlbedo,      gbufAlbedoV,      gbufAlbedoM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, gbufEmissive,    gbufEmissiveV,    gbufEmissiveM);
+    createStorageImage(VK_FORMAT_R32_SFLOAT,           gbufLinearDepth, gbufLinearDepthV, gbufLinearDepthM);
+    createStorageImage(VK_FORMAT_R16G16B16A16_SFLOAT, hdrImage,        hdrImageView,     hdrMemory);
+
+    // Transition all 6 images to GENERAL in one command buffer submission
+    VkCommandBufferAllocateInfo allocInfoCmd{};
+    allocInfoCmd.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfoCmd.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfoCmd.commandPool = commandPool;
+    allocInfoCmd.commandBufferCount = 1;
+
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(device, &allocInfoCmd, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkImage toInit[] = { gbufPosition, gbufNormal, gbufAlbedo, gbufEmissive, gbufLinearDepth, hdrImage };
+    for (VkImage img : toInit)
+        transitionImageLayout(cmd, img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &cmd;
+    vkQueueSubmit(computeQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(computeQueue);
+    vkFreeCommandBuffers(device, commandPool, 1, &cmd);
+}
+
+VkPipeline VulkanCore::createComputePipelineFromSpv(const std::string& path, VkPipelineLayout layout) {
+    auto code = readFile(path);
+    VkShaderModule mod = createShaderModule(code);
+
+    VkPipelineShaderStageCreateInfo stageInfo{};
+    stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageInfo.module = mod;
+    stageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = layout;
+    pipelineInfo.stage = stageInfo;
+
+    VkPipeline pipeline;
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &pipeline) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to create compute pipeline from " + path);
+
+    vkDestroyShaderModule(device, mod, nullptr);
+    return pipeline;
+}
+
+void VulkanCore::createTwoPassPipelines() {
+    // set=1 layout: 6 storage images (positions 0-4 = G-buffer, 5 = HDR output)
+    vector<VkDescriptorSetLayoutBinding> imgBindings(6);
+    for (uint32_t i = 0; i < 6; i++) {
+        imgBindings[i].binding = i;
+        imgBindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        imgBindings[i].descriptorCount = 1;
+        imgBindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
+    VkDescriptorSetLayoutCreateInfo dlci{};
+    dlci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dlci.bindingCount = static_cast<uint32_t>(imgBindings.size());
+    dlci.pBindings = imgBindings.data();
+
+    if (vkCreateDescriptorSetLayout(device, &dlci, nullptr, &gbufDescSetLayout) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to create G-buffer descriptor set layout.");
+
+    // Pipeline layout: set=0 (existing scene layout) + set=1 (G-buffer images)
+    VkDescriptorSetLayout layouts[] = { descriptorSetLayout, gbufDescSetLayout };
+
+    VkPushConstantRange pushRange{};
+    pushRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(CameraPushConstants);
+
+    VkPipelineLayoutCreateInfo plci{};
+    plci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    plci.setLayoutCount = 2;
+    plci.pSetLayouts = layouts;
+    plci.pushConstantRangeCount = 1;
+    plci.pPushConstantRanges = &pushRange;
+
+    if (vkCreatePipelineLayout(device, &plci, nullptr, &twoPassPipelineLayout) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to create two-pass pipeline layout.");
+
+    primaryPassPipeline   = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv",        twoPassPipelineLayout);
+    compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv", twoPassPipelineLayout);
+}
+
+void VulkanCore::createGBufferDescriptorSet() {
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool = descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &gbufDescSetLayout;
+
+    if (vkAllocateDescriptorSets(device, &ai, &gbufDescSet) != VK_SUCCESS)
+        throw runtime_error("Vulkan: Failed to allocate G-buffer descriptor set.");
+
+    VkImageView views[6] = { gbufPositionV, gbufNormalV, gbufAlbedoV, gbufEmissiveV, gbufLinearDepthV, hdrImageView };
+    vector<VkWriteDescriptorSet> writes(6);
+    vector<VkDescriptorImageInfo> imgInfos(6);
+
+    for (uint32_t i = 0; i < 6; i++) {
+        imgInfos[i].imageView = views[i];
+        imgInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        imgInfos[i].sampler = VK_NULL_HANDLE;
+
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = gbufDescSet;
+        writes[i].dstBinding = i;
+        writes[i].dstArrayElement = 0;
+        writes[i].descriptorCount = 1;
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo = &imgInfos[i];
+    }
+
+    vkUpdateDescriptorSets(device, 6, writes.data(), 0, nullptr);
+}
+
 void VulkanCore::loadTextures(const std::vector<std::string>& paths) {
     pendingTexturePaths = paths;
 }
@@ -638,7 +814,7 @@ void VulkanCore::createComputePipeline() {
 void VulkanCore::createDescriptorPool() {
     vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 1;
+    poolSizes[0].descriptorCount = 7; // 1 monolith output + 6 G-buffer/HDR images
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     poolSizes[1].descriptorCount = 8;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -648,7 +824,7 @@ void VulkanCore::createDescriptorPool() {
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
-    poolInfo.maxSets = 1;
+    poolInfo.maxSets = 2; // set=0 (scene) + set=1 (G-buffer images)
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
         throw runtime_error("Vulkan: Failed to create pool.");
@@ -964,10 +1140,7 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    VkPipeline activePipeline = useLegacyRenderer ? legacyComputePipeline : computePipeline;
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, activePipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-
+    // Build push constants (shared by all paths)
     CameraPushConstants pc{};
     pc.camPos = glm::vec4(cameraPos, 0.0f);
     pc.camForward = glm::vec4(cameraFront, 0.0f);
@@ -985,36 +1158,87 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.primaryRaysPerPixel = primaryRaysPerPixel;
     pc.focalDistance = focalDistance;
     pc.lensRadius = lensRadius;
-
     pc.fogColor = fogColor;
     pc.enableFog = enableFog;
-
     pc.skyBottomColor = skyBottomColor;
     pc.enableSkybox = enableSkybox;
-
     pc.skyTopColor = skyTopColor;
     pc.enableTextures = enableTextures;
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+    uint32_t dispatchX = swapChainExtent.width  / 16;
+    uint32_t dispatchY = swapChainExtent.height / 16;
 
-    vkCmdDispatch(cmd, 1280 / 16, 720 / 16, 1);
+    if (useTwoPassRenderer) {
+        VkDescriptorSet sets[] = { descriptorSet, gbufDescSet };
 
-    transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        // --- Pass 1: Primary Visibility ---
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(cmd, twoPassPipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
 
-    VkImageCopy copyRegion{};
-    copyRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copyRegion.srcSubresource.layerCount = 1;
-    copyRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    copyRegion.dstSubresource.layerCount = 1;
-    copyRegion.extent.width = 1280;
-    copyRegion.extent.height = 720;
-    copyRegion.extent.depth = 1;
+        // --- Barrier: G-buffer writes visible to composite reads ---
+        VkMemoryBarrier memBarrier{};
+        memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &memBarrier, 0, nullptr, 0, nullptr);
 
-    vkCmdCopyImage(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+        // --- Pass 2: Composite Shading ---
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(cmd, twoPassPipelineLayout,
+                           VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
 
-    transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
-    transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        // --- Blit hdrImage (R16G16B16A16_SFLOAT) → swapchain (R8G8B8A8_UNORM) ---
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageBlit blitRegion{};
+        blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blitRegion.srcOffsets[0] = { 0, 0, 0 };
+        blitRegion.srcOffsets[1] = { (int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1 };
+        blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        blitRegion.dstOffsets[0] = { 0, 0, 0 };
+        blitRegion.dstOffsets[1] = { (int32_t)swapChainExtent.width, (int32_t)swapChainExtent.height, 1 };
+
+        vkCmdBlitImage(cmd,
+            hdrImage,                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            swapChainImages[imageIndex],    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &blitRegion, VK_FILTER_NEAREST);
+
+        transitionImageLayout(cmd, hdrImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    } else {
+        // --- Single-pipeline path (monolith or legacy) ---
+        VkPipeline activePipeline = useLegacyRenderer ? legacyComputePipeline : computePipeline;
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, activePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+
+        transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageCopy copyRegion{};
+        copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copyRegion.extent = { swapChainExtent.width, swapChainExtent.height, 1 };
+
+        vkCmdCopyImage(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+        transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+        transitionImageLayout(cmd, swapChainImages[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    }
 
     vkEndCommandBuffer(cmd);
 }
@@ -1197,6 +1421,18 @@ void VulkanCore::cleanup() {
 
     vkDestroyBuffer(device, bvhBuffer, nullptr);
     vkFreeMemory(device, bvhMemory, nullptr);
+
+    vkDestroyPipeline(device, primaryPassPipeline, nullptr);
+    vkDestroyPipeline(device, compositePassPipeline, nullptr);
+    vkDestroyPipelineLayout(device, twoPassPipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(device, gbufDescSetLayout, nullptr);
+
+    vkDestroyImageView(device, gbufPositionV,    nullptr); vkDestroyImage(device, gbufPosition,    nullptr); vkFreeMemory(device, gbufPositionM,    nullptr);
+    vkDestroyImageView(device, gbufNormalV,      nullptr); vkDestroyImage(device, gbufNormal,      nullptr); vkFreeMemory(device, gbufNormalM,      nullptr);
+    vkDestroyImageView(device, gbufAlbedoV,      nullptr); vkDestroyImage(device, gbufAlbedo,      nullptr); vkFreeMemory(device, gbufAlbedoM,      nullptr);
+    vkDestroyImageView(device, gbufEmissiveV,    nullptr); vkDestroyImage(device, gbufEmissive,    nullptr); vkFreeMemory(device, gbufEmissiveM,    nullptr);
+    vkDestroyImageView(device, gbufLinearDepthV, nullptr); vkDestroyImage(device, gbufLinearDepth, nullptr); vkFreeMemory(device, gbufLinearDepthM, nullptr);
+    vkDestroyImageView(device, hdrImageView,     nullptr); vkDestroyImage(device, hdrImage,        nullptr); vkFreeMemory(device, hdrMemory,        nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipeline(device, legacyComputePipeline, nullptr);

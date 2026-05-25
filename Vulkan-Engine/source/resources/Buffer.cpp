@@ -12,7 +12,8 @@ Buffer::Buffer(VmaAllocator allocator, size_t bufSize, VkBufferUsageFlags usage,
 
     VmaAllocationCreateInfo aci{};
     aci.usage = memUsage;
-    if (memUsage == VMA_MEMORY_USAGE_CPU_TO_GPU || memUsage == VMA_MEMORY_USAGE_CPU_ONLY)
+    if (memUsage == VMA_MEMORY_USAGE_CPU_TO_GPU || memUsage == VMA_MEMORY_USAGE_CPU_ONLY
+        || memUsage == VMA_MEMORY_USAGE_GPU_TO_CPU)
         aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
 
     VmaAllocationInfo info{};

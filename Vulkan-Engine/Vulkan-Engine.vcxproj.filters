@@ -101,9 +101,6 @@
     <ClCompile Include="source\core\VMA.cpp">
       <Filter>Source\Core</Filter>
     </ClCompile>
-    <ClCompile Include="source\core\VulkanCore.cpp">
-      <Filter>Source\Core</Filter>
-    </ClCompile>
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp">
       <Filter>Third-Party</Filter>
     </ClCompile>
@@ -130,6 +127,12 @@
     </ClCompile>
     <ClCompile Include="source\renderer\Renderer.cpp">
       <Filter>Source\Renderer</Filter>
+    </ClCompile>
+    <ClCompile Include="source\gi\CascadeHashMap.cpp">
+      <Filter>Source\GI</Filter>
+    </ClCompile>
+    <ClCompile Include="source\gi\CascadeStorage.cpp">
+      <Filter>Source\GI</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -173,6 +176,18 @@
     <ClInclude Include="include\renderer\Renderer.hpp">
       <Filter>Include\Renderer</Filter>
     </ClInclude>
+    <ClInclude Include="include\gi\CascadeConfig.hpp">
+      <Filter>Include\GI</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gi\CascadeHashMap.hpp">
+      <Filter>Include\GI</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gi\CascadeStorage.hpp">
+      <Filter>Include\GI</Filter>
+    </ClInclude>
+    <ClInclude Include="include\gi\RCPushConstants.hpp">
+      <Filter>Include\GI</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
@@ -208,6 +223,21 @@
     </None>
     <None Include="shaders\shading\composite_temp.comp">
       <Filter>Shader\Shading</Filter>
+    </None>
+    <None Include="shaders\common\cascade_layout.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
+    <None Include="shaders\rc\cascade_merge.comp">
+      <Filter>Shader\RC</Filter>
+    </None>
+    <None Include="shaders\rc\probe_alloc.comp">
+      <Filter>Shader\RC</Filter>
+    </None>
+    <None Include="shaders\rc\probe_trace.comp">
+      <Filter>Shader\RC</Filter>
+    </None>
+    <None Include="shaders\tonemap\tonemap.comp">
+      <Filter>Shader\Tonemap</Filter>
     </None>
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-# Sparse Radiance Cascades — Project Refactoring Guide
+﻿# Sparse Radiance Cascades — Project Refactoring Guide
 ## GameRepublic Student Showcase Build — v2
 
 > **Compiled for**: Jose Javier Serrano Solis & teammate  
@@ -50,26 +50,31 @@ When in doubt, this guide is opinionated. The dissertation guide explains *why* 
 8. Phase 3: Decouple Vulkan Initialization
 9. Phase 4: Add a Render Graph
 
-### Part C — Radiance Cascades Implementation (Showcase Scope)
-10. Showcase-Scope Decision: Dense Grid First
-11. Phase 5: Cascade Data Structures
-12. Phase 6: Cascade 0 Ray Tracing
-13. Phase 7: Multi-Cascade Hierarchy
-14. Phase 8: Cascade Merging
-15. Phase 9: Final Gather
-16. Phase 10: Tonemap & Composite
+### Part C — Radiance Cascades Implementation (Sparse, Showcase Build)
+10. Algorithm Theory: Why Radiance Cascades Work
+11. The GPU Hash Map
+12. Phase 5: Data Structures (CascadeConfig, CascadeHashMap, CascadeStorage, cascade_layout.glsl)
+13. Phase 6: Push Constants and Descriptor Architecture
+14. Phase 7: The Allocation Pass
+15. Phase 8: Cascade 0 Probe Trace
+16. Phase 9: Multi-Cascade Trace
+17. Phase 10: Cascade Merging
+18. Phase 11: Final Gather
+19. Phase 12: Tonemap
+20. Integration: Complete recordCommandBuffer Sequence
+21. Part C Completion Checklist
 
 ### Part D — Polish for Showcase
-17. ImGui Debug Interface (Showcase Edition)
-18. Demo Scene Authoring
-19. Performance Profiling
-20. Visual Sanity Checks
+22. ImGui Debug Interface (Showcase Edition)
+23. Demo Scene Authoring
+24. Performance Profiling
+25. Visual Sanity Checks
 
 ### Part E — Migration Path to Dissertation Build
-21. From Dense Grid to Sparse Hash Map
-22. Adding DDGI and SSGI Comparison Baselines
-23. Reference Path Tracer for RMSE
-24. Benchmark Infrastructure
+26. Per-Pixel Cascade Level Selection and Unbounded World Volume
+27. Adding DDGI and SSGI Comparison Baselines
+28. Reference Path Tracer for RMSE
+29. Benchmark Infrastructure
 
 ---
 
@@ -2516,7 +2521,7 @@ void Renderer::mainLoop() {
 
 VMA buffers (`Buffer` objects holding a `VmaAllocation`) must be destroyed **before** `vmaDestroyAllocator` is called inside `ctx.shutdown()`. If you let `Buffer` destructors run after the allocator goes away, VMA writes to freed memory.
 
-In `Renderer::cleanup()`, explicitly null all `Buffer` members before calling `ctx.shutdown()`:
+In `Renderer::cleanup()`, explicitly destroy all VMA-backed objects (buffers and images) before calling `ctx.shutdown()`. The complete teardown order is:
 
 ```cpp
 void Renderer::cleanup() {
@@ -2530,7 +2535,41 @@ void Renderer::cleanup() {
     cubeBuffer     = Buffer();
     bvhBuffer      = Buffer();
 
-    // ... destroy images, pipelines, descriptor sets ...
+    // RC cascade storage — buffers inside CascadeHashMap members are destroyed here.
+    // MUST come before ctx.shutdown() because rcStorage is a class member whose
+    // destructor fires *after* cleanup() returns (i.e., after the allocator is gone).
+    rcStorage.destroy();
+
+    vkDestroySampler(ctx.device, textureSampler, nullptr);
+    // ... destroy texture image views and images ...
+
+    gbuffer.destroy(ctx);
+    hdrImage.destroy(ctx.allocator);
+    ldrImage.destroy(ctx.allocator);   // don't forget ldrImage
+
+    // RC pipelines (VK_NULL_HANDLE is a safe no-op for all destroy calls)
+    vkDestroyPipeline(ctx.device, rcAllocPipeline,  nullptr);
+    vkDestroyPipeline(ctx.device, rcTracePipeline,  nullptr);
+    vkDestroyPipeline(ctx.device, rcMergePipeline,  nullptr);
+    vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, tonemapPipeline,  nullptr);
+    vkDestroyPipeline(ctx.device, primaryPassPipeline,   nullptr);
+    vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
+
+    // RC pipeline layouts
+    vkDestroyPipelineLayout(ctx.device, rcAllocPipelineLayout,   nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout,   nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout,   nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout,  nullptr);
+    vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout,   nullptr);
+    vkDestroyPipelineLayout(ctx.device, twoPassPipelineLayout,   nullptr);
+
+    vkDestroyDescriptorPool(ctx.device, descriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, sceneDescSetLayout,         nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, gbufDescSetLayout,          nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, rcHashDescSetLayout,        nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, rcParentHashDescSetLayout,  nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, tonemapDescSetLayout,       nullptr);
 
     cmdManager.destroy(ctx);
     swapchain.destroy(ctx);
@@ -2917,11 +2956,2025 @@ Commit as **"Part B complete: Renderer replaces VulkanCore, all Vulkan classes e
 
 ---
 
-# Part C — Radiance Cascades Implementation (Showcase Scope)
+# Part C — Radiance Cascades Implementation (Sparse, Showcase Build)
 
-## 10. Showcase-Scope Decision: Dense Grid First
+> **This version supersedes the original Part C dense-grid plan.** With expanded showcase scenes (multiple rooms, outdoor areas), sparse RC with a GPU hash map is implemented from the start. The algorithm is identical at the dissertation level; sparsity is not a dissertation-only upgrade — it is the correct architecture for anything beyond a single small room.
 
-The full Sparse RC (with GPU hash map, eviction, per-pixel level selection) is too complex to deliver for the showcase deadline. **For the showcase, simplify to a dense small cascade grid; defer sparse hash storage to the dissertation build.**
+---
+
+## 10. Algorithm Theory: Why Radiance Cascades Work
+
+Before writing any code, understand what the algorithm is actually computing. Every design decision — why there are 5 cascade levels, why octahedral resolution doubles, why merging goes top-down — falls out of the theory. Reading this section once carefully will prevent hours of debugging confusion later.
+
+### 10.1 The Core Problem: Spatial-Frequency Mismatch
+
+Traditional GI probe systems (DDGI, RTXGI) place probes at fixed positions and sample radiance arriving from **all** distances at once. This creates a fundamental conflict:
+
+- **Nearby geometry** (a wall 0.5 m away) contributes high-frequency radiance that changes rapidly with probe position — you need densely-spaced probes to capture it accurately.
+- **Distant geometry** (a sky or far wall 10 m away) contributes low-frequency radiance that barely changes between probe positions — a few coarsely-spaced probes would suffice.
+
+A uniform probe density must satisfy the most demanding requirement (nearby geometry), forcing dense placement everywhere — including empty space where coarse distant data would be fine.
+
+**Radiance Cascades solves this by stratifying light transport into concentric interval shells**, one per cascade level, each tuned to its frequency range. Near cascades are small and dense; far cascades are large and sparse.
+
+### 10.2 The Interval Structure
+
+Each cascade level k samples radiance from a specific distance interval:
+
+```
+Cascade 0: [0,      0.5 m]   — near field:  high spatial resolution, low directional resolution (4×4 = 16 dirs)
+Cascade 1: [0.5 m,  2 m]     — short range: ¼ probes,  ×4 directions (8×8 = 64 dirs)
+Cascade 2: [2 m,    8 m]     — medium:      ¹⁄₈ probes, ×4 directions (16×16 = 256 dirs)
+Cascade 3: [8 m,   32 m]     — long range:  ¹⁄₆₄ probes (32×32 = 1024 dirs)
+Cascade 4: [32 m, 128 m]     — far field / sky: minimal probes (64×64 = 4096 dirs)
+```
+
+The interval end formula with branching factor α = 2:
+
+```
+d_end(k) = spacing₀ × 2^(α × k) = 0.5 × 4^k
+```
+
+So: 0.5 m → 2 m → 8 m → 32 m → 128 m. The ratio between consecutive intervals is always 4 (= 2^α). This geometric growth ensures each cascade's interval is much longer than the previous cascade's probe spacing, giving enough angular coverage for correct merging.
+
+### 10.3 The Spatial-Directional Trade-off
+
+Cascade k probes are spaced `spacing₀ × 2^k` apart. Because they handle geometry at distance ~4^k × spacing₀, they need more directional resolution per probe to maintain angular quality — the angular footprint of each texel grows as the probe grid coarsens. The octahedral resolution therefore doubles each level:
+
+| Level | Grid (dense) | Probes | OctRes | Dirs/Probe | Total items |
+|---|---|---|---|---|---|
+| 0 | 64×32×64 | 131,072 | 4  | 16    | ~2.1 M |
+| 1 | 32×16×32 | 16,384  | 8  | 64    | ~1.0 M |
+| 2 | 16×8×16  | 2,048   | 16 | 256   | ~524 K |
+| 3 | 8×4×8    | 256     | 32 | 1,024 | ~262 K |
+| 4 | 4×2×4    | 32      | 64 | 4,096 | ~131 K |
+
+Each cascade level has roughly half the total work of the previous, so the 5-level hierarchy costs about 2× the cascade-0 work — not 5× the work.
+
+### 10.4 The Merge Operation: Volume Rendering Compositing
+
+After tracing each cascade independently, the intervals must be chained into a full [0, 128 m] estimate. This uses the **volume rendering compositing** equation — the same equation used in alpha blending and ray marching:
+
+```
+merged.radiance      = near.radiance + near.transmittance × far.radiance
+merged.transmittance = near.transmittance × far.transmittance
+```
+
+Where "near" is cascade k's own traced interval and "far" is the already-merged cascade k+1.
+
+**Why this is mathematically exact (not an approximation):**
+
+Consider a probe ray in direction D. Cascade 0 traces [0, 0.5 m]. Cascade 1 traces [0.5 m, 2 m].
+
+Case 1 — Surface at 1.2 m (in cascade 1's interval):
+- Cascade 0 result: `(L=0, T=1.0)` — no hit in [0, 0.5 m]
+- Cascade 1 result: `(L=emission, T=0.0)` — surface hit
+- Merged: `L = 0 + 1.0 × emission = emission`, `T = 1.0 × 0.0 = 0.0` ✓
+
+Case 2 — Surface at 0.3 m (in cascade 0's interval):
+- Cascade 0 result: `(L=emission, T=0.0)` — surface hit
+- Cascade 1 result: `(L=skyColor, T=1.0)` — miss
+- Merged: `L = emission + 0.0 × skyColor = emission`, `T = 0` ✓ (nearby surface correctly blocks sky)
+
+The merge must be applied **top-down** (highest cascade first, then working down to cascade 0) so that each level's parent data is already fully chained before it is used.
+
+### 10.5 Dense vs Sparse: What Changes Architecturally
+
+**Dense** allocates `gridX × gridY × gridZ` probes for every cascade level unconditionally. For cascade 0: 131,072 probes even if only 3,000 of them are ever near visible surfaces.
+
+**Sparse** only allocates probes that visible surfaces actually need:
+- Cascade 0: one probe per unique G-buffer cell occupied by a rendered pixel
+- Cascade k > 0: one probe per unique parent-cascade cell containing an active cascade k-1 probe
+
+This changes four things:
+
+1. **New pass**: A probe *allocation* pass must run before tracing, to determine the active probe set.
+2. **Hash map required**: Instead of `probeIndex = x + y*gX + z*gX*gY` (direct indexing), you must store `cellKey → slotIndex` in a hash table. Slot indices are densely packed (0, 1, 2, …); the hash map converts between the sparse key space and the dense slot space.
+3. **Trace dispatch changes**: Instead of `gridX × gridY × gridZ` threads, dispatch `maxActiveSlots` threads. Thread N reads `slotToKey[N]` to recover which cell it should trace from.
+4. **Merge and gather handle missing probes**: A trilinear neighbor might not be allocated. When a hash lookup returns "not found", skip that neighbor and normalize by the remaining weight.
+
+For a bounded room, cascade 0 typically has 3,000–10,000 active probes vs 131,072 dense. The probe budget (`maxActiveSlots`) is fixed regardless of how large the scene bounds are — this is the key property that makes sparse RC scale to large scenes.
+
+---
+
+## 11. The GPU Hash Map
+
+### 11.1 Why Open Addressing
+
+GPU hash maps must support concurrent atomic insertion from thousands of threads simultaneously. **Open addressing with linear probing** is the only GPU-viable design:
+
+- Chaining (linked lists) is a GPU disaster: pointer chasing destroys memory coherence, and concurrent linked-list insertion requires complex lock-free algorithms.
+- Open addressing stores everything in flat arrays with predictable access patterns and uses a single `atomicCompSwap` per insertion attempt.
+
+### 11.2 Data Structure (Five Buffers Per Level)
+
+```
+hashKeys[]    — uint[], size = tableSize.
+                Initialized to 0xFFFFFFFF (sentinel = empty slot).
+                hashKeys[h] contains the packed cell key of whatever probe was inserted at slot h.
+
+hashValues[]  — uint[], size = tableSize.
+                hashValues[h] is the slot index for the probe at hash bucket h.
+
+slotToKey[]   — uint[], size = maxActiveSlots.
+                Reverse map: slotToKey[slot] = cell key. Needed by the trace pass
+                to recover which cell to trace from, given only a slot index.
+
+nextSlot      — single uint (atomic counter).
+                Cleared to 0 each frame. After allocation: nextSlot = number of active probes.
+
+cascadeData[] — uvec2[], size = maxActiveSlots × octRes².
+                Stores packed FP16 (radiance.rgb, transmittance) per direction per slot.
+                Index: [slot × octRes² + directionIndex].
+```
+
+### 11.3 Key Packing
+
+Cascade 0 has at most 64×32×64 cells. Pack into 32 bits:
+
+```
+bits  0– 5: cell.x  (6 bits, values 0–63)
+bits  6–10: cell.y  (5 bits, values 0–31)
+bits 11–16: cell.z  (6 bits, values 0–63)
+bits 17–31: unused
+```
+
+Valid keys use at most 17 bits. `0xFFFFFFFF` is never a valid key (would require all bits set), so it is an unambiguous empty sentinel. For grids larger than 64×32×64, extend to two 32-bit uints (uvec2 key) — this is not needed for the showcase config.
+
+### 11.4 The SSBO Naming Convention
+
+The hash map functions (`probeInsert`, `probeLookup`) in `cascade_layout.glsl` reference SSBOs by name. **Every shader that includes `cascade_layout.glsl` MUST declare SSBOs with exactly these names:**
+
+| SSBO name | Buffer | Used by |
+|---|---|---|
+| `hashKeys[]` | current level's hash keys | alloc, lookup in trace/gather |
+| `hashValues[]` | current level's hash values | alloc, lookup |
+| `slotToKey[]` | current level's slot→key | alloc write, trace read |
+| `nextSlot` | current level's slot counter | alloc write, trace read |
+| `cascadeData[]` | current level's radiance data | trace write, merge R/W, gather read |
+| `parentHashKeys[]` | parent level's hash keys | merge only |
+| `parentHashValues[]` | parent level's hash values | merge only |
+| `parentCascadeData[]` | parent level's radiance data | merge only (read) |
+
+This is enforced by convention. If you see wrong indirect lighting or black regions, the first thing to check is that these names match exactly in the calling shader.
+
+### 11.5 Table Sizing
+
+Load factor ≤ 50%: `tableSize = maxActiveSlots × 2`.
+
+| Level | Max active slots | Hash table size | Data buffer size |
+|---|---|---|---|
+| 0 | 16,384 | 32,768 | 16,384 × 16 × 8 B = **2 MB** |
+| 1 | 8,192  | 16,384 | 8,192 × 64 × 8 B  = **4 MB** |
+| 2 | 4,096  | 8,192  | 4,096 × 256 × 8 B = **8 MB** |
+| 3 | 512    | 1,024  | 512 × 1024 × 8 B  = **4 MB** |
+| 4 | 64     | 128    | 64 × 4096 × 8 B   = **2 MB** |
+| **Total** | | | **~21 MB** + hash overhead ~1 MB |
+
+If you see flickering or missing indirect light in large scenes, increase `maxActiveSlots[0]` and `hashTableSizes[0]` proportionally.
+
+---
+
+## 12. Phase 5: Data Structures
+
+### 12.1 `include/gi/CascadeConfig.hpp`
+
+```cpp
+#pragma once
+#include <glm/glm.hpp>
+#include <algorithm>
+
+struct CascadeConfig {
+    int        numCascades     = 5;
+    int        branchingFactor = 2;       // α in the interval formula
+
+    glm::vec3  worldOrigin  = glm::vec3(-16.0f, -4.0f, -16.0f);
+    glm::ivec3 gridSize0    = glm::ivec3(64, 32, 64);
+    float      spacing0     = 0.5f;
+    int        octRes0      = 4;
+
+    glm::ivec3 gridSize(int level) const {
+        return glm::ivec3(
+            std::max(1, gridSize0.x >> level),
+            std::max(1, gridSize0.y >> level),
+            std::max(1, gridSize0.z >> level));
+    }
+    float spacing(int level) const { return spacing0 * float(1 << level); }
+    int   octRes(int level)  const { return octRes0  << level; }
+
+    float intervalStart(int level) const {
+        return (level == 0) ? 0.0f : intervalEnd(level - 1);
+    }
+    float intervalEnd(int level) const {
+        return spacing0 * float(1 << (branchingFactor * level));
+    }
+};
+```
+
+**Why these formulas:** `spacing(k) = spacing0 × 2^k` halves the probe count on each axis per level. `intervalEnd(k) = spacing0 × (2^α)^k = spacing0 × 4^k` gives geometric interval growth that matches the spatial coarsening. `octRes(k) = octRes0 × 2^k` doubles angular resolution to compensate for sparser probe placement.
+
+### 12.2 `include/gi/CascadeHashMap.hpp` + `source/gi/CascadeHashMap.cpp`
+
+```cpp
+// include/gi/CascadeHashMap.hpp
+#pragma once
+#include "resources/Buffer.hpp"
+#include "core/VulkanContext.hpp"
+
+struct CascadeHashMap {
+    Buffer   hashKeys;      // uint[tableSize]      — packed cell keys, 0xFFFFFFFF = empty
+    Buffer   hashValues;    // uint[tableSize]      — slot index for each key
+    Buffer   slotToKey;     // uint[maxActiveSlots] — reverse map: slot → key
+    Buffer   slotCounter;   // uint[1]              — atomic slot counter
+    Buffer   cascadeData;   // uvec2[maxActiveSlots × octRes²]
+
+    uint32_t tableSize;
+    uint32_t maxActiveSlots;
+    int      octRes;
+
+    void create(VulkanContext& ctx, uint32_t tableSize, uint32_t maxActiveSlots, int octRes);
+    void destroy();
+
+    size_t dataBufferSize() const {
+        // uvec2 = 2 × uint32 = 8 bytes per direction per slot
+        return size_t(maxActiveSlots) * size_t(octRes) * size_t(octRes) * sizeof(uint64_t);
+    }
+};
+```
+
+```cpp
+// source/gi/CascadeHashMap.cpp
+#include "gi/CascadeHashMap.hpp"
+
+void CascadeHashMap::create(VulkanContext& ctx,
+                            uint32_t tSize, uint32_t maxSlots, int res) {
+    tableSize      = tSize;
+    maxActiveSlots = maxSlots;
+    octRes         = res;
+
+    // TRANSFER_DST_BIT: required for vkCmdFillBuffer (clears hashKeys + slotCounter each frame).
+    // TRANSFER_SRC_BIT: required for vkCmdCopyBuffer when reading slotCounter back to CPU
+    //                   (debug readback in the 15.3 sanity check).
+    constexpr VkBufferUsageFlags flags =
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT
+        | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+    hashKeys    = Buffer(ctx.allocator, sizeof(uint32_t) * tableSize,    flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    hashValues  = Buffer(ctx.allocator, sizeof(uint32_t) * tableSize,    flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    slotToKey   = Buffer(ctx.allocator, sizeof(uint32_t) * maxSlots,     flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    slotCounter = Buffer(ctx.allocator, sizeof(uint32_t),                 flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    cascadeData = Buffer(ctx.allocator, dataBufferSize(),                 flags, VMA_MEMORY_USAGE_GPU_ONLY);
+}
+
+void CascadeHashMap::destroy() {
+    hashKeys    = Buffer();
+    hashValues  = Buffer();
+    slotToKey   = Buffer();
+    slotCounter = Buffer();
+    cascadeData = Buffer();
+}
+```
+
+> **Why `VK_BUFFER_USAGE_TRANSFER_DST_BIT`**: `vkCmdFillBuffer` requires this flag on the target buffer. Without it, clearing the hash keys at the start of each frame triggers a Vulkan validation error.
+
+> **Why `VMA_MEMORY_USAGE_GPU_ONLY`**: These buffers are never read by the CPU — only by compute shaders. GPU-only memory avoids CPU cache coherency overhead.
+
+### 12.3 `include/gi/CascadeStorage.hpp` + `source/gi/CascadeStorage.cpp`
+
+```cpp
+// include/gi/CascadeStorage.hpp
+#pragma once
+#include "gi/CascadeConfig.hpp"
+#include "gi/CascadeHashMap.hpp"
+#include <vector>
+
+class CascadeStorage {
+public:
+    CascadeConfig               config;
+    std::vector<CascadeHashMap> levels;          // one per cascade level
+    std::vector<uint32_t>       hashTableSizes;
+    std::vector<uint32_t>       maxActiveSlots;
+
+    void initialize(VulkanContext& ctx, const CascadeConfig& cfg);
+    void destroy();
+};
+```
+
+```cpp
+// source/gi/CascadeStorage.cpp
+#include "gi/CascadeStorage.hpp"
+#include <cstdio>
+
+// Probe budget per level. tableSize = maxSlots × 2 (50% load factor keeps collisions rare).
+static constexpr uint32_t kMaxSlots[] = { 16384, 8192, 4096, 512, 64 };
+
+void CascadeStorage::initialize(VulkanContext& ctx, const CascadeConfig& cfg) {
+    config = cfg;
+    int N  = cfg.numCascades;
+
+    levels.resize(N);
+    hashTableSizes.resize(N);
+    maxActiveSlots.resize(N);
+
+    for (int i = 0; i < N; i++) {
+        uint32_t maxSlots  = (i < 5) ? kMaxSlots[i] : 32u;
+        uint32_t tableSize = maxSlots * 2;
+        maxActiveSlots[i]  = maxSlots;
+        hashTableSizes[i]  = tableSize;
+        levels[i].create(ctx, tableSize, maxSlots, cfg.octRes(i));
+    }
+
+    // Print memory budget
+    size_t total = 0;
+    printf("RC memory budget:\n");
+    for (int i = 0; i < N; i++) {
+        auto&  lvl      = levels[i];
+        size_t dataB    = lvl.dataBufferSize();
+        size_t hashB    = (size_t)lvl.tableSize * 2 * sizeof(uint32_t);
+        size_t slotB    = (size_t)lvl.maxActiveSlots * sizeof(uint32_t);
+        size_t lvlTotal = dataB + hashB + slotB + sizeof(uint32_t);
+        printf("  Cascade %d: data=%.1f MB  hash+slot=%.0f KB\n",
+               i, dataB / 1e6f, (hashB + slotB) / 1e3f);
+        total += lvlTotal;
+    }
+    printf("  Grand total: %.1f MB\n\n", total / 1e6f);
+}
+
+void CascadeStorage::destroy() {
+    for (auto& lvl : levels) lvl.destroy();
+    levels.clear();
+}
+```
+
+### 12.4 `shaders/common/cascade_layout.glsl` (Complete)
+
+```glsl
+#ifndef CASCADE_LAYOUT_GLSL
+#define CASCADE_LAYOUT_GLSL
+
+// ============================================================
+// NAMING CONVENTION — enforced by convention, not the compiler.
+//
+// Every shader that #includes this file MUST declare SSBOs with
+// exactly the following names (the functions below reference them):
+//
+//   Current cascade:
+//     hashKeys[]       — uint[], size = tableSize
+//     hashValues[]     — uint[], size = tableSize
+//     slotToKey[]      — uint[], size = maxActiveSlots
+//     nextSlot         — uint   (single-element buffer)
+//     cascadeData[]    — uvec2[], size = maxActiveSlots * octRes * octRes
+//
+//   Parent cascade (cascade_merge.comp only):
+//     parentHashKeys[]     — uint[]
+//     parentHashValues[]   — uint[]
+//     parentCascadeData[]  — uvec2[]
+// ============================================================
+
+// --- Key encoding ---
+
+uint packCellKey(ivec3 cell) {
+    return (uint(cell.x) & 0x3Fu)
+         | ((uint(cell.y) & 0x1Fu) << 6)
+         | ((uint(cell.z) & 0x3Fu) << 11);
+}
+
+ivec3 unpackCellKey(uint key) {
+    return ivec3(
+        int(key        & 0x3Fu),
+        int((key >> 6)  & 0x1Fu),
+        int((key >> 11) & 0x3Fu));
+}
+
+// --- Spatial helpers ---
+
+vec3 probeWorldPos(ivec3 cell, vec3 worldOrigin, float spacing) {
+    return worldOrigin + (vec3(cell) + 0.5) * spacing;
+}
+
+// Returns the base index into cascadeData[] for a given slot and octRes.
+// Direction d is stored at [base + d].
+int probeStorageBase(uint slot, int octRes) {
+    return int(slot) * octRes * octRes;
+}
+
+// --- Radiance packing (uvec2, no uint64_t extension needed) ---
+
+// Packs (radiance.rgb, transmittance) as two pairs of FP16 values.
+// packHalf2x16 / unpackHalf2x16 are GLSL builtins — no extension needed.
+uvec2 packRadianceTransmittance(vec3 L, float T) {
+    return uvec2(packHalf2x16(L.xy), packHalf2x16(vec2(L.z, T)));
+}
+
+vec4 unpackRadianceTransmittance(uvec2 packed) {
+    vec2 xy = unpackHalf2x16(packed.x);
+    vec2 zw = unpackHalf2x16(packed.y);
+    return vec4(xy.x, xy.y, zw.x, zw.y); // rgb = radiance, a = transmittance
+}
+
+// --- Hash map: insert (writes to current cascade's hashKeys/hashValues/slotToKey/nextSlot) ---
+// Only compiled when the including shader defines RC_ALLOC_PASS before the #include.
+// Excluded from readonly passes (probe_trace.comp, cascade_gather.comp) to avoid
+// conflicting with their readonly buffer qualifiers on those SSBOs.
+#ifdef RC_ALLOC_PASS
+bool probeInsert(uint key, uint tableSize) {
+    uint h = (key * 2654435761u) % tableSize;
+    for (uint i = 0u; i < tableSize; i++) {
+        uint idx  = (h + i) % tableSize;
+        uint prev = atomicCompSwap(hashKeys[idx], 0xFFFFFFFFu, key);
+        if (prev == 0xFFFFFFFFu) {
+            uint slot       = atomicAdd(nextSlot, 1u);
+            hashValues[idx] = slot;
+            slotToKey[slot] = key;
+            return true;
+        }
+        if (prev == key) return false; // already inserted by another thread
+    }
+    return false; // table full — increase tableSize
+}
+#endif // RC_ALLOC_PASS
+
+// --- Hash map: lookup in current cascade ---
+// Returns the slot index, or 0xFFFFFFFFu if the probe is not active.
+uint probeLookup(uint key, uint tableSize) {
+    uint h = (key * 2654435761u) % tableSize;
+    for (uint i = 0u; i < tableSize; i++) {
+        uint idx = (h + i) % tableSize;
+        uint k   = hashKeys[idx];
+        if (k == key)          return hashValues[idx];
+        if (k == 0xFFFFFFFFu)  return 0xFFFFFFFFu; // empty slot -> key not in table
+    }
+    return 0xFFFFFFFFu;
+}
+
+// --- Hash map: lookup in parent cascade ---
+// Only compiled when the including shader defines RC_MERGE_PASS before the #include.
+// Requires parentHashKeys[] and parentHashValues[] to be declared in the shader.
+#ifdef RC_MERGE_PASS
+uint probeLookupInParent(uint key, uint tableSize) {
+    uint h = (key * 2654435761u) % tableSize;
+    for (uint i = 0u; i < tableSize; i++) {
+        uint idx = (h + i) % tableSize;
+        uint k   = parentHashKeys[idx];
+        if (k == key)          return parentHashValues[idx];
+        if (k == 0xFFFFFFFFu)  return 0xFFFFFFFFu;
+    }
+    return 0xFFFFFFFFu;
+}
+#endif // RC_MERGE_PASS
+
+#endif // CASCADE_LAYOUT_GLSL
+```
+
+> **Why `uvec2` instead of `uint64_t`**: 64-bit integers in GLSL require `GL_ARB_gpu_shader_int64` or `GL_EXT_shader_explicit_arithmetic_types_int64`. These extensions are not universally available and are not declared in this project. `uvec2` (two 32-bit uints) stores the identical 8 bytes. `packHalf2x16`/`unpackHalf2x16` operate on plain `uint` and need no extension.
+
+> **Why `atomicCompSwap` for insertion**: This is Vulkan's compare-and-swap atomic. It reads `hashKeys[idx]`, compares with the expected value (0xFFFFFFFF = empty), and only writes the new value if they match — in a single atomic GPU instruction. This makes concurrent insertion from thousands of threads correct without locks.
+
+> **`#define` convention for this file**: `probeInsert` and `probeLookupInParent` are gated behind preprocessor guards because they write to SSBOs that some shaders declare `readonly`. Including the write functions in a readonly-SSBO context produces a compile error. Each shader must declare its SSBO bindings **before** `#include`-ing this file, then optionally define one of these macros: `RC_ALLOC_PASS` (enables `probeInsert`, used in `probe_alloc.comp`) or `RC_MERGE_PASS` (enables `probeLookupInParent`, used in `cascade_merge.comp`). Shaders that need only read-only lookup (`probe_trace.comp`, `cascade_gather.comp`) define nothing.
+
+### 12.5 Wire `rcConfig` and `rcStorage` into `Renderer`
+
+`CascadeConfig` and `CascadeStorage` are defined above but `Renderer` does not know about them yet. Every function from section 13 onwards references `rcConfig` (for cascade counts and intervals) and `rcStorage` (for the actual GPU buffer handles). Add them now before touching anything in section 13.
+
+**Step A — Add includes to `Renderer.hpp`**
+
+After the last existing `#include` at the top of the file:
+
+```cpp
+    // --- existing includes, shown for context ---
+    #include "scene/GPUData.hpp"
+    // ADD THESE TWO:
+    #include "gi/CascadeConfig.hpp"
+    #include "gi/CascadeStorage.hpp"
+```
+
+**Step B — Add member variables to `Renderer.hpp`**
+
+Immediately after `Image ldrImage` in the private section:
+
+```cpp
+    // --- existing lines, shown for context ---
+    Image hdrImage;
+    Image ldrImage;   // R8G8B8A8_UNORM, written by tonemap.comp, blitted to swapchain
+    // ADD THESE:
+    CascadeConfig  rcConfig;   // default-initialised (numCascades=5, spacing0=0.5, etc.)
+    CascadeStorage rcStorage;  // populated by rcStorage.initialize(ctx, rcConfig) in initVulkan()
+```
+
+`rcConfig` is usable immediately from its inline defaults — no setup in `main.cpp` needed unless you want to override `numCascades`, `worldOrigin`, or `spacing0`. `rcStorage` is uninitialised until `rcStorage.initialize(ctx, rcConfig)` is called in `initVulkan()` (section 13.5 Step E).
+
+---
+
+## 13. Phase 6: Push Constants and Descriptor Architecture
+
+> **Why the original guide's push constant approach fails**: The original guide showed cascade push constants at `layout(offset = 256)` in the same block as camera data. `CameraPushConstants` is 160 bytes. Cascade data adds ~56 bytes → **312 bytes total**. The Vulkan spec guarantees only **128 bytes minimum**. NVIDIA typically supports 256, AMD 128. 312 bytes fails on AMD and exceeds NVIDIA's typical limit. The correct fix: RC passes use **completely separate pipeline layouts** with their own ≤ 64-byte push constant structs. No camera data is shared.
+
+### 13.1 Push Constant Structs
+
+Add to `include/gi/CascadeStorage.hpp` (or a dedicated `include/gi/RCPushConstants.hpp`):
+
+```cpp
+// All structs use ivec4/vec4 instead of ivec3/vec3.
+// Why: in GLSL std430 (used for push constants), vec3/ivec3 have base alignment = 16,
+// but glm::vec3 has alignment = 4. Using vec4/ivec4 makes C++ and GLSL agree — no padding mismatch.
+
+struct RCAllocPC {                        // 48 bytes — well under 128-byte minimum
+    glm::ivec4 gridSizeHashSize;          // xyz = gridSize, w = hashTableSize
+    glm::vec4  worldOriginSpacing;        // xyz = worldOrigin, w = spacing
+    int        allocMode;                 // 0 = from G-buffer, 1 = from parent slots
+    int        parentMaxSlots;
+    int        pad[2];
+};
+
+struct RCTracePC {                        // 48 bytes
+    glm::ivec4 gridSizeOctRes;            // xyz = gridSize (unused in trace — only w used), w = octRes
+    glm::vec4  worldOriginSpacing;        // xyz = worldOrigin, w = spacing
+    float      intervalStart;
+    float      intervalEnd;
+    int        bvhCount;
+    int        maxActiveSlots;
+};
+
+struct RCMergePC {                        // 64 bytes
+    glm::ivec4 currentGridOctRes;         // xyz = current gridSize, w = current octRes
+    glm::ivec4 parentGridOctRes;          // xyz = parent gridSize,  w = parent octRes
+    glm::vec4  worldOriginCurrentSpacing; // xyz = worldOrigin, w = current spacing
+    float      parentSpacing;
+    int        currentHashSize;
+    int        parentHashSize;
+    int        currentMaxSlots;
+};
+
+struct RCGatherPC {                       // 48 bytes
+    glm::vec4  worldOriginSpacing;        // xyz = worldOrigin, w = cascade-0 spacing
+    glm::ivec4 gridSizeOctRes;            // xyz = cascade-0 gridSize, w = cascade-0 octRes
+    int        hashSize;
+    int        bvhCount;
+    int        lightCount;
+    int        pad;
+};
+
+struct TonemapPC {                        // 16 bytes
+    float exposure;
+    int   pad[3];
+};
+```
+
+### 13.2 New Descriptor Set Layouts (add to `Renderer`)
+
+Three changes are needed: member variables in `Renderer.hpp`, a method declaration in `Renderer.hpp`, and the function body plus a call site in `Renderer.cpp`.
+
+---
+
+**Step A — Member variables in `Renderer.hpp`**
+
+Find the existing descriptor set layout block (near the top of the `private:` section) and add three lines immediately after `gbufDescSetLayout`:
+
+```cpp
+    // --- existing lines, shown for context ---
+    VkDescriptorSetLayout sceneDescSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout gbufDescSetLayout  = VK_NULL_HANDLE;
+    // --- ADD THESE THREE ---
+    VkDescriptorSetLayout rcHashDescSetLayout       = VK_NULL_HANDLE; // 6 SSBOs: hash keys/values/slotToKey/counter/data + parentCascadeData
+    VkDescriptorSetLayout rcParentHashDescSetLayout = VK_NULL_HANDLE; // 4 SSBOs: parent keys, values, slotToKey, counter (read-only)
+    VkDescriptorSetLayout tonemapDescSetLayout      = VK_NULL_HANDLE; // 2 storage images: inHDR, outLDR
+    // --- existing lines continue ---
+    VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+```
+
+---
+
+**Step B — Method declaration in `Renderer.hpp`**
+
+In the `private:` method list, add `createRCDescriptorSetLayouts()` alongside the existing layout creation methods:
+
+```cpp
+    // --- existing lines, shown for context ---
+    void createSceneDescriptorSetLayout();
+    void createGBufferDescriptorSetLayout();
+    void createRCDescriptorSetLayouts();    // ADD THIS LINE
+    void createPipelines();
+```
+
+---
+
+**Step C — Function body in `Renderer.cpp`**
+
+Place the function body immediately after the closing brace of `createGBufferDescriptorSetLayout()`, before the `// ---- Pipelines ----` comment:
+
+```cpp
+// --- existing function above, shown for context ---
+void Renderer::createGBufferDescriptorSetLayout() {
+    // ... (existing body, do not touch)
+}
+
+// ADD the new function here:
+void Renderer::createRCDescriptorSetLayouts() {
+
+    // RC hash set: 6 SSBOs — current level's full hash map (b0-b4) + parent cascade data (b5)
+    // b0 = hashKeys, b1 = hashValues, b2 = slotToKey, b3 = slotCounter, b4 = cascadeData, b5 = parentCascadeData
+    // b5 is only needed in merge; alloc/trace shaders simply don't declare it and the descriptor is a dummy.
+    {
+        VkDescriptorSetLayoutBinding binds[6] = {};
+        for (uint32_t i = 0; i < 6; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcHashDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcHashDescSetLayout creation failed.");
+    }
+
+    // Parent hash set: 4 SSBOs — parent level's keys, values, slotToKey, counter (all read-only)
+    // Used in: alloc (mode 1) reads parent slotToKey; merge reads parent keys+values for lookupInParent.
+    {
+        VkDescriptorSetLayoutBinding binds[4] = {};
+        for (uint32_t i = 0; i < 4; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcParentHashDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcParentHashDescSetLayout creation failed.");
+    }
+
+    // Tonemap set: 2 storage images — b0 = inHDR (read), b1 = outLDR (write)
+    {
+        VkDescriptorSetLayoutBinding binds[2] = {};
+        for (uint32_t i = 0; i < 2; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &tonemapDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: tonemapDescSetLayout creation failed.");
+    }
+}
+
+// --- existing comment below, shown for context ---
+// ---- Pipelines ----
+```
+
+---
+
+**Step D — Call site in `Renderer::initVulkan()`**
+
+Add the call immediately after `createGBufferDescriptorSetLayout()` and before `createPipelines()`:
+
+```cpp
+    // --- existing lines, shown for context ---
+    createSceneDescriptorSetLayout();
+    createGBufferDescriptorSetLayout();
+    createRCDescriptorSetLayouts();   // ADD THIS LINE
+    createPipelines();
+    createDescriptorPool();
+```
+
+### 13.3 New Pipeline Layouts
+
+Three changes: member variables in `Renderer.hpp`, method declaration in `Renderer.hpp`, function body + call site in `Renderer.cpp`.
+
+---
+
+**Step A — Member variables in `Renderer.hpp`**
+
+Add the five RC pipeline layout handles immediately after `compositePassPipeline`:
+
+```cpp
+    // --- existing lines, shown for context ---
+    VkPipelineLayout twoPassPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline       primaryPassPipeline   = VK_NULL_HANDLE;
+    VkPipeline       compositePassPipeline = VK_NULL_HANDLE;
+    // --- ADD THESE ---
+    VkPipelineLayout rcAllocPipelineLayout  = VK_NULL_HANDLE;
+    VkPipelineLayout rcTracePipelineLayout  = VK_NULL_HANDLE;
+    VkPipelineLayout rcMergePipelineLayout  = VK_NULL_HANDLE;
+    VkPipelineLayout rcGatherPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout tonemapPipelineLayout  = VK_NULL_HANDLE;
+    // --- existing continues ---
+    VkSampler textureSampler = VK_NULL_HANDLE;
+```
+
+---
+
+**Step B — Method declaration in `Renderer.hpp`**
+
+Add `createRCPipelineLayouts()` right below `createPipelines()` in the private method list:
+
+```cpp
+    // --- existing lines, shown for context ---
+    void createPipelines();
+    void createRCPipelineLayouts();   // ADD THIS LINE
+    void createDescriptorPool();
+```
+
+---
+
+**Step C — Function body in `Renderer.cpp`**
+
+Place the function immediately after `createComputePipelineFromSpv()` and before the `// ---- Descriptor Pool ----` comment:
+
+```cpp
+// --- existing function above, shown for context (do not touch) ---
+VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipelineLayout layout) {
+    // ... (existing body)
+}
+
+// ADD the new function here:
+void Renderer::createRCPipelineLayouts() {
+    auto makeLayout = [&](std::initializer_list<VkDescriptorSetLayout> setLayouts,
+                          uint32_t pcSize) -> VkPipelineLayout {
+        std::vector<VkDescriptorSetLayout> layouts(setLayouts);
+        VkPushConstantRange pcRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, pcSize };
+        VkPipelineLayoutCreateInfo ci{};
+        ci.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        ci.setLayoutCount         = (uint32_t)layouts.size();
+        ci.pSetLayouts            = layouts.data();
+        ci.pushConstantRangeCount = 1;
+        ci.pPushConstantRanges    = &pcRange;
+        VkPipelineLayout layout;
+        if (vkCreatePipelineLayout(ctx.device, &ci, nullptr, &layout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: RC pipeline layout creation failed.");
+        return layout;
+    };
+
+    // Alloc: set0=gbufDescSetLayout (G-buffer pixels for cascade-0),
+    //        set1=rcHashDescSetLayout (target level's hash map, write),
+    //        set2=rcParentHashDescSetLayout (parent level's map, read — for cascade k>0)
+    rcAllocPipelineLayout  = makeLayout(
+        { gbufDescSetLayout, rcHashDescSetLayout, rcParentHashDescSetLayout },
+        sizeof(RCAllocPC));
+
+    // Trace: set0=sceneDescSetLayout (BVH + materials + textures),
+    //        set1=rcHashDescSetLayout (reads slotToKey, writes cascadeData)
+    rcTracePipelineLayout  = makeLayout(
+        { sceneDescSetLayout, rcHashDescSetLayout },
+        sizeof(RCTracePC));
+
+    // Merge: set0=rcHashDescSetLayout (current level, read+write cascadeData),
+    //        set1=rcParentHashDescSetLayout (parent level, read-only)
+    rcMergePipelineLayout  = makeLayout(
+        { rcHashDescSetLayout, rcParentHashDescSetLayout },
+        sizeof(RCMergePC));
+
+    // Gather: set0=gbufDescSetLayout (G-buffer read + hdrImage write at b5),
+    //         set1=rcHashDescSetLayout (cascade-0 read)
+    rcGatherPipelineLayout = makeLayout(
+        { gbufDescSetLayout, rcHashDescSetLayout },
+        sizeof(RCGatherPC));
+
+    // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
+    tonemapPipelineLayout  = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
+}
+
+// --- existing comment below, shown for context ---
+// ---- Descriptor Pool ----
+```
+
+---
+
+**Step D — Call site in `Renderer::initVulkan()`**
+
+Add `createRCPipelineLayouts()` immediately after `createPipelines()`:
+
+```cpp
+    // --- existing lines, shown for context ---
+    createPipelines();
+    createRCPipelineLayouts();   // ADD THIS LINE
+    createDescriptorPool();
+```
+
+### 13.4 Descriptor Pool Expansion
+
+Replace the entire body of the existing `createDescriptorPool()` in `Renderer.cpp`. The function signature stays the same — only the counts change. No call-site change needed; it is already called in `initVulkan()`.
+
+**Why these numbers:**
+- `STORAGE_IMAGE 9` = 7 existing (1 hdrImage placeholder in sceneDescSet + 6 G-buffer+hdrImage in gbufDescSet) + 2 new (inHDR + outLDR in tonemapDescSet)
+- `STORAGE_BUFFER 58` = 8 existing scene SSBOs + `numCascades × 6` (rcHashDescSets, one set per level, 6 bindings each) + `numCascades × 4` (rcParentHashDescSets, 4 bindings each) = 8 + 30 + 20 at N=5
+- `maxSets 13` = 2 existing + N rcHashDescSets + N rcParentHashDescSets + 1 tonemapDescSet = 2 + 5 + 5 + 1 at N=5
+
+Using `rcConfig.numCascades` makes the pool size-correct regardless of whether you change N later.
+
+```cpp
+// In Renderer.cpp — replace the body of the existing createDescriptorPool():
+void Renderer::createDescriptorPool() {
+    int N = rcConfig.numCascades;  // typically 5
+
+    vector<VkDescriptorPoolSize> poolSizes(3);
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 9;                               // 7 existing + 2 tonemap
+    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = uint32_t(8 + N * 6 + N * 4);    // 58 when N=5
+    poolSizes[2].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[2].descriptorCount = 100;
+
+    VkDescriptorPoolCreateInfo pi{};
+    pi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.poolSizeCount = 3;
+    pi.pPoolSizes    = poolSizes.data();
+    pi.maxSets       = uint32_t(2 + N + N + 1);                     // 13 when N=5
+
+    if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
+        throw runtime_error("Renderer: descriptor pool creation failed.");
+}
+```
+
+**Prerequisite**: `rcConfig.numCascades` must be set before `createDescriptorPool()` is called. If you initialise `rcConfig` as a member with a default (`int numCascades = 5;`), it is already valid at the point `initVulkan()` runs — no extra call needed.
+
+### 13.5 Descriptor Set Instances
+
+Four changes: two groups of member variables in `Renderer.hpp`, a method declaration in `Renderer.hpp`, and the function body + call site in `Renderer.cpp`.
+
+---
+
+**Step A — Descriptor set handles in `Renderer.hpp`**
+
+Add three lines after `gbufDescSet`, before `rcHashDescSetLayout` (which you already added in 13.2):
+
+```cpp
+    // --- existing lines, shown for context ---
+    VkDescriptorSet sceneDescSet = VK_NULL_HANDLE;
+    VkDescriptorSet gbufDescSet  = VK_NULL_HANDLE;
+    // --- ADD THESE ---
+    std::vector<VkDescriptorSet> rcHashDescSets;       // numCascades instances, one per cascade level
+    std::vector<VkDescriptorSet> rcParentHashDescSets; // numCascades instances (used as "set 1" in alloc k>0 and merge)
+    VkDescriptorSet              tonemapDescSet = VK_NULL_HANDLE;
+    // --- existing continues (already added in 13.2) ---
+    VkDescriptorSetLayout rcHashDescSetLayout       = VK_NULL_HANDLE;
+```
+
+---
+
+**Step B — `ldrImage` member in `Renderer.hpp`**
+
+Add `ldrImage` immediately after `hdrImage` in the private member list:
+
+```cpp
+    // --- existing lines, shown for context ---
+    GBuffer gbuffer;
+    Image   hdrImage;
+    Image   ldrImage;   // ADD THIS — R8G8B8A8_UNORM, written by tonemap.comp, blitted to swapchain
+```
+
+---
+
+**Step C — Method declaration in `Renderer.hpp`**
+
+Add `createRCDescriptorSets()` alongside the existing descriptor set creation methods:
+
+```cpp
+    // --- existing lines, shown for context ---
+    void createSceneDescriptorSet();
+    void createGBufferDescriptorSet();
+    void createRCDescriptorSets();   // ADD THIS LINE
+```
+
+---
+
+**Step D — Function body in `Renderer.cpp`**
+
+Place the function immediately after `createGBufferDescriptorSet()` and before the `// ---- Main Loop ----` comment:
+
+```cpp
+// --- existing function above, shown for context (do not touch) ---
+void Renderer::createGBufferDescriptorSet() {
+    // ... (existing body)
+}
+
+// ADD the new function here:
+void Renderer::createRCDescriptorSets() {
+    int N = rcConfig.numCascades;
+
+    // --- rcHashDescSets[i]: 6 SSBOs for level i's own hash map ---
+    // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData
+    // b5=parentCascadeData — during alloc/trace, point at the next level's data as a dummy;
+    //                        during merge, the merge shader reads it as the parent's radiance.
+    rcHashDescSets.resize(N);
+    for (int i = 0; i < N; i++) {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &rcHashDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &rcHashDescSets[i]) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcHashDescSets allocation failed.");
+
+        auto& lvl = rcStorage.levels[i];
+        VkBuffer parentDataHandle = (i + 1 < N)
+            ? rcStorage.levels[i + 1].cascadeData.handle
+            : lvl.cascadeData.handle; // last level: self-reference dummy
+
+        VkDescriptorBufferInfo infos[6] = {
+            { lvl.hashKeys.handle,    0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle,  0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle,   0, VK_WHOLE_SIZE },
+            { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
+            { lvl.cascadeData.handle, 0, VK_WHOLE_SIZE },
+            { parentDataHandle,       0, VK_WHOLE_SIZE },
+        };
+        VkWriteDescriptorSet writes[6] = {};
+        for (uint32_t b = 0; b < 6; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                rcHashDescSets[i], b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 6, writes, 0, nullptr);
+    }
+
+    // --- rcParentHashDescSets[i]: 4 SSBOs pointing at level i's keys/values/slotToKey/counter ---
+    // Bound as "set 2" during alloc of cascade k (pass rcParentHashDescSets[k-1]).
+    // Bound as "set 1" during merge of cascade k  (pass rcParentHashDescSets[k+1]).
+    rcParentHashDescSets.resize(N);
+    for (int i = 0; i < N; i++) {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &rcParentHashDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &rcParentHashDescSets[i]) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcParentHashDescSets allocation failed.");
+
+        auto& lvl = rcStorage.levels[i];
+        VkDescriptorBufferInfo infos[4] = {
+            { lvl.hashKeys.handle,    0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle,  0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle,   0, VK_WHOLE_SIZE },
+            { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
+        };
+        VkWriteDescriptorSet writes[4] = {};
+        for (uint32_t b = 0; b < 4; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                rcParentHashDescSets[i], b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 4, writes, 0, nullptr);
+    }
+
+    // --- tonemapDescSet: b0=inHDR (hdrImage, read), b1=outLDR (ldrImage, write) ---
+    {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &tonemapDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &tonemapDescSet) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: tonemapDescSet allocation failed.");
+
+        VkDescriptorImageInfo imgInfos[2] = {
+            { VK_NULL_HANDLE, hdrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+            { VK_NULL_HANDLE, ldrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+        };
+        VkWriteDescriptorSet writes[2] = {};
+        for (uint32_t b = 0; b < 2; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                tonemapDescSet, b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfos[b], nullptr, nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 2, writes, 0, nullptr);
+    }
+}
+
+// --- existing comment below, shown for context ---
+// ---- Main Loop ----
+```
+
+---
+
+**Step E — Call site in `Renderer::initVulkan()`**
+
+Three additions are needed: create `ldrImage` alongside `hdrImage`, transition it to `GENERAL` layout, and call `createRCDescriptorSets()` at the end. Also add `rcStorage.initialize()` before the descriptor layouts (requires `CascadeStorage` from section 12).
+
+```cpp
+    // --- existing lines, shown for context ---
+    // SAMPLED_BIT allows hdrImage to serve as fallback in the texture descriptor array
+    hdrImage = Image(ctx.allocator, swapchain.extent.width, swapchain.extent.height,
+                     VK_FORMAT_R16G16B16A16_SFLOAT,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+    // ADD THIS — ldrImage is the tonemap output, blitted to the swapchain each frame:
+    ldrImage = Image(ctx.allocator, swapchain.extent.width, swapchain.extent.height,
+                     VK_FORMAT_R8G8B8A8_UNORM,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+
+    VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+    gbuffer.transitionForWrite(cmd);
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, ldrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL); // ADD THIS
+    cmdManager.submitOneTime(ctx, cmd);
+
+    createTextureSampler();
+    createTextureResources();
+    createSceneBuffers();
+    rcStorage.initialize(ctx, rcConfig);     // ADD THIS — must come before createDescriptorPool (pool size depends on numCascades)
+    createSceneDescriptorSetLayout();
+    createGBufferDescriptorSetLayout();
+    createRCDescriptorSetLayouts();          // (added in 13.2)
+    createPipelines();
+    createRCPipelineLayouts();               // (added in 13.3)
+    createDescriptorPool();
+    createSceneDescriptorSet();
+    createGBufferDescriptorSet();
+    createRCDescriptorSets();               // ADD THIS
+```
+
+---
+
+## 14. Phase 7: The Allocation Pass
+
+### 14.1 Why Allocation Must Run First, and in Level Order
+
+The trace pass needs `slotToKey[N]` to know which cell thread N should trace. But `slotToKey` is only populated by the allocation pass. Similarly, cascade 1's allocation reads cascade 0's `slotToKey` to enumerate cascade 0's active probes. This creates a strict ordering:
+
+```
+clear all hash tables
+→ primary visibility (fills G-buffer)
+→ allocate cascade 0 (from G-buffer)   ← barrier
+→ allocate cascade 1 (from cascade 0)  ← barrier
+→ allocate cascade 2 (from cascade 1)  ← barrier
+→ ...
+→ trace all cascades
+→ merge (top-down)
+→ gather
+→ tonemap
+```
+
+Each allocation level must complete (with a pipeline barrier) before the next level reads from it.
+
+### 14.2 `shaders/rc/probe_alloc.comp`
+
+```glsl
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// One 16x16 workgroup covers a 16x16 tile of pixels (for cascade-0 G-buffer mode)
+// and a flat slice of parent slots (for cascade k>0 parent mode).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// G-buffer - only accessed when allocMode == 0 (cascade 0 from screen pixels)
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D gPosition;
+layout(set = 0, binding = 4, r32f)    uniform readonly image2D gLinearDepth;
+
+// Current cascade hash map (set 1) - names MUST match cascade_layout.glsl convention
+layout(std430, set = 1, binding = 0) buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) buffer SC  { uint nextSlot; };
+// bindings 4 and 5 not used in alloc
+
+// Parent cascade (set 2 = rcParentHashDescSets[k-1]) - only used when allocMode == 1
+layout(std430, set = 2, binding = 0) readonly buffer PHK  { uint parentHashKeys[]; };
+layout(std430, set = 2, binding = 1) readonly buffer PHV  { uint parentHashValues[]; };
+layout(std430, set = 2, binding = 2) readonly buffer PSTK { uint parentSlotToKey[]; };
+layout(std430, set = 2, binding = 3) readonly buffer PSC  { uint parentNextSlot; };
+
+// RC_ALLOC_PASS: enables probeInsert() in cascade_layout.glsl (writes to the SSBOs above).
+// MUST come after the SSBO declarations so the functions can reference those names.
+#define RC_ALLOC_PASS
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform AllocPC {
+    ivec4 gridSizeHashSize;     // xyz = gridSize of this cascade, w = hashTableSize
+    vec4  worldOriginSpacing;   // xyz = worldOrigin, w = spacing of this cascade
+    int   allocMode;            // 0 = G-buffer pixels -> cascade 0 cells
+                                // 1 = parent slots    -> this cascade's cells
+    int   pad[3];
+} pc;
+
+void main()
+{
+    ivec3 cell;
+
+    if (pc.allocMode == 0)
+    {
+        // --- Cascade 0: one thread per G-buffer pixel ---
+        ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+        ivec2 sz    = imageSize(gPosition);
+        if (pixel.x >= sz.x || pixel.y >= sz.y) return;
+
+        // Sky pixels have no surface - no probe needed
+        if (imageLoad(gLinearDepth, pixel).r >= 1e5) return;
+
+        vec3 worldPos = imageLoad(gPosition, pixel).xyz;
+        // Which cascade-0 cell contains this world position?
+        cell = ivec3(floor((worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w));
+    }
+    else
+    {
+        // --- Cascade k>0: one thread per parent slot ---
+        uint parentSlot = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x);
+        if (parentSlot >= parentNextSlot) return;
+
+        uint  parentKey  = parentSlotToKey[parentSlot];
+        ivec3 parentCell = unpackCellKey(parentKey);
+        // This cascade's cells are 2x larger - each parent cell maps to one cell here.
+        cell = parentCell / 2;
+    }
+
+    // Bounds check
+    if (any(lessThan(cell, ivec3(0))) ||
+        any(greaterThanEqual(cell, pc.gridSizeHashSize.xyz))) return;
+
+    uint key = packCellKey(cell);
+    probeInsert(key, uint(pc.gridSizeHashSize.w));
+    // probeInsert atomically claims a slot and writes slotToKey[slot] = key
+}
+```
+
+> **SSBO declaration order matters**: `cascade_layout.glsl` must be `#include`d **after** all SSBO `layout(...)` declarations in the shader, not before. The functions in that file reference the SSBO member names (`hashKeys`, `hashValues`, etc.) by convention — those names must already be in scope when glslc parses the function bodies.
+
+> **About the SSBO alias names (HK, HV, etc.)**: The buffer block names (`HK`, `HV`, …) are internal to GLSL and must be unique within the shader. The *member variable* names (`hashKeys`, `hashValues`, …) must match what `cascade_layout.glsl` references. The block name is arbitrary — the member name is what matters.
+
+### 14.3 Frame Clearing
+
+**Step A** — Open `source/renderer/Renderer.cpp`. Inside `recordCommandBuffer`, immediately after `vkBeginCommandBuffer(cmd, &bi)` and before `CameraPushConstants pc{}`, add the `emitComputeBarrier` helper lambda — every RC dispatch will call it:
+
+```cpp
+    vkBeginCommandBuffer(cmd, &bi);   // ← already exists
+
+    // Reusable SSBO read-write barrier between compute passes.
+    auto emitComputeBarrier = [](VkCommandBuffer c) {
+        VkMemoryBarrier b{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(c,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 1, &b, 0, nullptr, 0, nullptr);
+    };
+
+    CameraPushConstants pc{};         // ← already exists, nothing changes here or below
+```
+
+**Step B** — Directly after the `emitComputeBarrier` lambda, still before `CameraPushConstants pc{}`, insert the clear loop:
+
+```cpp
+    // auto emitComputeBarrier = ...   // ← just added above
+
+    // Clear hash keys (sentinel 0xFFFFFFFF = empty) and slot counters (0) for all levels.
+    // This runs each frame so each frame recomputes active probes from scratch.
+    for (int i = 0; i < rcConfig.numCascades; i++) {
+        auto& lvl = rcStorage.levels[i];
+        vkCmdFillBuffer(cmd, lvl.hashKeys.handle,    0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, lvl.slotCounter.handle, 0, sizeof(uint32_t), 0);
+        // hashValues and slotToKey don't need clearing: only read after a valid insert wrote them.
+    }
+
+    // Barrier: fill writes visible to shaders before allocation dispatches start.
+    VkMemoryBarrier clearBarrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    clearBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    clearBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &clearBarrier, 0, nullptr, 0, nullptr);
+
+    CameraPushConstants pc{};         // ← already exists, immediately after this block
+```
+
+> **Temporal note**: Because the hash table is cleared every frame, cascade data from the previous frame is discarded. This is correct for a first implementation — no temporal artifacts, but also no temporal smoothing. If you later add temporal reprojection (dissertation scope), you would instead age-out stale probes rather than clearing, which requires aging bits in the key encoding.
+
+### 14.4 Alloc Dispatch (in `recordCommandBuffer`)
+
+**Step A** — The RC pipeline `VkPipeline` handles are not yet in `Renderer.hpp` — only the layouts are. Add them immediately after `compositePassPipeline`, before the `rcAllocPipelineLayout` line:
+
+```cpp
+    VkPipeline primaryPassPipeline   = VK_NULL_HANDLE;   // ← already exists
+    VkPipeline compositePassPipeline = VK_NULL_HANDLE;   // ← already exists
+
+    // ADD: one VkPipeline per RC pass (rcMergePipeline / rcGatherPipeline added in sections 16-17)
+    VkPipeline rcAllocPipeline  = VK_NULL_HANDLE;
+    VkPipeline rcTracePipeline  = VK_NULL_HANDLE;
+    VkPipeline rcMergePipeline  = VK_NULL_HANDLE;
+    VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
+    VkPipeline tonemapPipeline  = VK_NULL_HANDLE;
+
+    VkPipelineLayout rcAllocPipelineLayout = VK_NULL_HANDLE;  // ← already exists
+```
+
+**Step B** — Create the alloc and trace pipelines at the bottom of `createRCPipelineLayouts()` in `Renderer.cpp`, after all layouts are built:
+
+```cpp
+    tonemapPipelineLayout = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
+    // ← last existing line in createRCPipelineLayouts()
+
+    // ADD: compile the two shaders we have so far (.spv must exist — run compile_shaders.bat first)
+    rcAllocPipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_alloc.comp.spv",  rcAllocPipelineLayout);
+    rcTracePipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_trace.comp.spv",  rcTracePipelineLayout);
+}
+```
+
+**Step C** — In `recordCommandBuffer`, add the alloc loop immediately after the existing G-buffer barrier (after Pass 1), before `// Pass 2: Composite Shading`. Levels must run strictly in order (0 → 1 → 2 → …) because each level reads the previous level's `slotToKey`:
+
+```cpp
+    // Barrier: G-buffer writes visible to composite reads   ← already exists
+    vkCmdPipelineBarrier(cmd,                               // ← already exists (memBarrier above)
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &memBarrier, 0, nullptr, 0, nullptr);
+
+    // ADD: alloc dispatch — levels 0, 1, 2, ... strictly in order
+    for (int level = 0; level < rcConfig.numCascades; level++) {
+        RCAllocPC allocPC{};
+        glm::ivec3 gs = rcConfig.gridSize(level);
+        allocPC.gridSizeHashSize   = glm::ivec4(gs, (int)rcStorage.hashTableSize[level]);
+        allocPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+        allocPC.allocMode          = (level == 0) ? 0 : 1;
+        allocPC.parentMaxSlots     = (level == 0) ? 0 : (int)rcStorage.maxActiveSlots[level - 1];
+
+        VkDescriptorSet allocSets[3] = {
+            gbufDescSet,
+            rcHashDescSets[level],
+            (level == 0) ? rcParentHashDescSets[0]         // cascade 0: no parent — layout-compatible dummy (allocMode=0 never reads set 2)
+                         : rcParentHashDescSets[level - 1]
+        };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                rcAllocPipelineLayout, 0, 3, allocSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcAllocPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(RCAllocPC), &allocPC);
+
+        if (level == 0) {
+            // One thread per G-buffer pixel (workgroup = 16x16 = 256 threads)
+            vkCmdDispatch(cmd,
+                (swapchain.extent.width  + 15) / 16,
+                (swapchain.extent.height + 15) / 16, 1);
+        } else {
+            // One thread per parent slot — 1D dispatch, 256 threads per workgroup
+            uint32_t parentSlots = rcStorage.maxActiveSlots[level - 1];
+            vkCmdDispatch(cmd, (parentSlots + 255) / 256, 1, 1);
+        }
+        emitComputeBarrier(cmd);  // level k's slotToKey must be ready before level k+1 reads it
+    }
+
+    // Pass 2: Composite Shading   ← already exists, nothing changes here or below
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+```
+
+> **Why cascade 0 binds `rcParentHashDescSets[0]` as the dummy for set 2**: `rcAllocPipelineLayout` always declares three descriptor sets — the driver validates that set 2's layout matches `rcParentHashDescSetLayout` (4 SSBOs) even if the shader never reads it. `rcHashDescSets[0]` has a 6-SSBO layout, so binding it as set 2 triggers VUID-vkCmdBindDescriptorSets-pDescriptorSets-00358. `rcParentHashDescSets[0]` has the correct 4-SSBO layout and won't be read since cascade 0 uses `allocMode=0` (the G-buffer path, which never touches set 2).
+
+---
+
+## 15. Phase 8: Cascade 0 Probe Trace
+
+### 15.1 `shaders/rc/probe_trace.comp`
+
+> **Include ordering rule**: `cascade_layout.glsl` must be included **after** all SSBO declarations. glslc enforces declaration-before-use for SSBO names referenced inside the header's function bodies (`hashKeys`, `hashValues`, `slotToKey`, `nextSlot`, `cascadeData`). If you include it before the declarations, glslc will emit "undeclared identifier" errors for every SSBO reference. No `#define` is needed here — this shader only uses the readonly functions (`probeLookup`, `unpackCellKey`, `probeWorldPos`, `probeStorageBase`, `packRadianceTransmittance`). The write-gated `probeInsert` is excluded because `RC_ALLOC_PASS` is not defined; the parent-lookup `probeLookupInParent` is excluded because `RC_MERGE_PASS` is not defined.
+
+```glsl
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 64) in;  // 1D dispatch: one thread per active slot
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/octahedral.glsl"
+
+// Current cascade hash map and data at set 1
+// Names MUST match cascade_layout.glsl convention
+layout(std430, set = 1, binding = 0) readonly buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) readonly buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) readonly buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) readonly buffer SC  { uint nextSlot; };
+layout(std430, set = 1, binding = 4)          buffer CD  { uvec2 cascadeData[]; };
+// binding 5 (parentCascadeData) not used in trace
+
+// Include AFTER SSBO declarations so its functions can reference the names above
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform TracePC {
+    ivec4 gridSizeOctRes;       // xyz unused in trace, w = octRes
+    vec4  worldOriginSpacing;   // xyz = worldOrigin, w = spacing
+    float intervalStart;
+    float intervalEnd;
+    int   bvhCount;
+    int   maxActiveSlots;
+} pc;
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+
+    // nextSlot is the number of probes actually inserted this frame.
+    // maxActiveSlots is the hard budget (tableSize / 2).
+    if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
+
+    // Recover cell position from slot → key → cell → world position
+    uint  key      = slotToKey[slot];
+    ivec3 cell     = unpackCellKey(key);
+    vec3  worldPos = probeWorldPos(cell, pc.worldOriginSpacing.xyz, pc.worldOriginSpacing.w);
+
+    int octRes      = pc.gridSizeOctRes.w;
+    int storageBase = probeStorageBase(slot, octRes);
+
+    // Trace one ray per octahedral direction
+    for (int dy = 0; dy < octRes; dy++) {
+        for (int dx = 0; dx < octRes; dx++) {
+            vec2 uv  = octIndexToUV(ivec2(dx, dy), octRes);
+            vec3 dir = octDecode(uv);
+
+            Ray ray;
+            ray.origin    = worldPos;
+            ray.direction = dir;
+            ray.tMin      = pc.intervalStart + 0.001; // small offset avoids self-intersection at shared boundaries
+            ray.tMax      = pc.intervalEnd;
+
+            vec3  radiance      = vec3(0.0);
+            float transmittance = 1.0; // 1 = ray escaped interval with nothing hit
+
+            HitInfo hit;
+            if (traverseBVH(ray, pc.bvhCount, hit)) {
+                GPUMaterial mat = materials[hit.materialIndex];
+                radiance        = mat.emission;  // only emission contributes from hit surfaces
+                transmittance   = 0.0;           // opaque surface blocks everything beyond it
+            }
+
+            int idx = storageBase + dy * octRes + dx;
+            cascadeData[idx] = packRadianceTransmittance(radiance, transmittance);
+        }
+    }
+}
+```
+
+> **Why only emission, not full shading?** Each cascade probe traces rays that *start* at the probe position. What a ray finds at `pc.intervalStart` is not the probe itself — it's whatever surface happens to be in that direction at that distance. The emission of that surface is the direct contribution; indirect bounces (a surface lit by another cascade) are added during the merge pass. Direct specular, PBR, soft shadows are NOT computed per-probe — they are computed per-pixel in the final gather pass for the surface visible in the G-buffer. This clean separation is intentional: probes capture propagation of light across the scene; pixel-space shading applies the BRDF at the visible surface.
+
+### 15.2 Dispatch (in `recordCommandBuffer`)
+
+This loop goes immediately after the alloc loop from **section 14.4**, before `// Pass 2: Composite Shading`:
+
+```cpp
+    // ← alloc loop ends here (last emitComputeBarrier from section 14.4 is directly above)
+
+    // ADD: trace dispatch — one per cascade level, all levels in one sweep
+    for (int level = 0; level < rcConfig.numCascades; level++) {
+        RCTracePC tracePC{};
+        tracePC.gridSizeOctRes     = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
+        tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+        tracePC.intervalStart      = rcConfig.intervalStart(level);
+        tracePC.intervalEnd        = rcConfig.intervalEnd(level);
+        tracePC.bvhCount           = (int)sceneBVH.size();
+        tracePC.maxActiveSlots     = (int)rcStorage.maxActiveSlots[level];
+
+        VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                rcTracePipelineLayout, 0, 2, traceSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                           0, sizeof(RCTracePC), &tracePC);
+        vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);  // trace writes visible to next level or to merge
+    }
+
+    // Pass 2: Composite Shading   ← already exists, nothing changes here or below
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
+```
+
+### 15.3 Visual Sanity Check for Cascade 0
+
+This is a **temporary one-shot debug check** — not permanent code. The goal is to verify that the alloc shader actually ran and wrote a sane probe count before you invest time writing the merge and gather passes.
+
+The mechanic: after the first frame has fully executed on the GPU, copy `slotCounter` (which is `VMA_MEMORY_USAGE_GPU_ONLY` and therefore not CPU-readable) into a temporary CPU-readable staging buffer, then print the value.
+
+> **`Buffer.cpp` prerequisite**: The readback buffer uses `VMA_MEMORY_USAGE_GPU_TO_CPU`. The `Buffer` constructor must auto-map this memory type so `readback.mapped` is non-null. Check that `Buffer.cpp` includes `VMA_MEMORY_USAGE_GPU_TO_CPU` in the auto-map condition:
+> ```cpp
+> if (memUsage == VMA_MEMORY_USAGE_CPU_TO_GPU || memUsage == VMA_MEMORY_USAGE_CPU_ONLY
+>     || memUsage == VMA_MEMORY_USAGE_GPU_TO_CPU)
+>     aci.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
+> ```
+> Without this, `readback.mapped` is null and the dereference on the next line crashes with an access violation at address `0x0000000000000000`.
+
+**Step A** — Add a one-shot flag and the readback block inside `mainLoop()` in `Renderer.cpp`, immediately after `drawFrame()`:
+
+```cpp
+void Renderer::mainLoop() {
+    lastFrame = (float)glfwGetTime();
+    float fpsTimer   = 0.0f;
+    int   frameCount = 0;
+    bool  rcChecked  = false;   // ADD: one-shot flag
+    cout << "Renderer: Rendering started.\n";
+    while (!glfwWindowShouldClose(window)) {
+        // ... existing fps timer, glfwPollEvents, processInput, updateDynamicData ...
+        drawFrame();
+
+        // ADD: RC sanity check — runs once after the first frame, remove when OK
+        if (!rcChecked) {
+            rcChecked = true;
+            vkDeviceWaitIdle(ctx.device);   // GPU must have finished the alloc pass
+
+            // 4-byte CPU-readable staging buffer
+            Buffer readback(ctx.allocator, sizeof(uint32_t),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_TO_CPU);
+
+            VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+            VkBufferCopy region{ 0, 0, sizeof(uint32_t) };
+            vkCmdCopyBuffer(cmd,
+                rcStorage.levels[0].slotCounter.handle,
+                readback.handle, 1, &region);
+            cmdManager.submitOneTime(ctx, cmd);
+
+            uint32_t count = *reinterpret_cast<uint32_t*>(readback.mapped);
+            printf("[RC] cascade-0 nextSlot = %u  (budget = %u)\n",
+                   count, rcStorage.maxActiveSlots[0]);
+            if (count == 0)
+                printf("  ERROR: alloc did not run — check rcAllocPipeline is not VK_NULL_HANDLE,\n"
+                       "         probe_alloc.comp.spv exists, and the clear barrier is TRANSFER->COMPUTE\n");
+            else if (count >= rcStorage.maxActiveSlots[0])
+                printf("  WARNING: at budget cap — increase kMaxSlots[0] in CascadeStorage.cpp\n");
+            else
+                printf("  OK\n");
+
+            readback = Buffer();   // destroy immediately
+        }
+        // REMOVE the entire if (!rcChecked) block once the count reads OK
+    }
+    vkDeviceWaitIdle(ctx.device);
+}
+```
+
+**Step B** — Expected output for a room-scale scene:
+
+| `nextSlot` | Meaning |
+|---|---|
+| `0` | Alloc shader did not run. Check: `rcAllocPipeline != VK_NULL_HANDLE`, `.spv` file exists, clear barrier uses `TRANSFER_BIT → COMPUTE_BIT` |
+| `1 – 16383` | Correct. Active cascade-0 probes for this scene. |
+| `16384` | At hard budget (`kMaxSlots[0]` in `CascadeStorage.cpp`). Safe to ignore until gather shows clipping artifacts — increase the constant if needed. |
+
+Once you see a non-zero value in the `1 – 16383` range, delete the entire `if (!rcChecked)` block and proceed to section 16.
+
+---
+
+## 16. Phase 9: Multi-Cascade Trace
+
+The trace shader is identical for all levels — only the push constants change. The dispatch loop in Phase 8 already covers all levels. Verify each level independently by adding a one-time debug readback of `nextSlot` for each level:
+
+Expected active probe counts for a room-scale scene:
+- Cascade 0: 3,000 – 10,000
+- Cascade 1: 1,000 – 3,000 (each cascade 1 cell is 2× larger, so fewer unique cells)
+- Cascade 2: 200 – 600
+- Cascade 3: 20 – 80
+- Cascade 4: 5 – 30
+
+If cascade k has more active probes than cascade k-1, something is wrong with the allocation (cascade k>0 cannot have more unique cells than cascade k-1 since each cascade k-1 probe maps to exactly one cascade k cell via integer division).
+
+---
+
+## 17. Phase 10: Cascade Merging
+
+### 17.1 `shaders/rc/cascade_merge.comp`
+
+```glsl
+#version 460
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 64) in;
+
+#include "../common/octahedral.glsl"
+#include "../common/cascade_layout.glsl"
+
+// Current cascade — read/write (set 0 = rcHashDescSets[currentLevel])
+layout(std430, set = 0, binding = 0) readonly buffer HK    { uint hashKeys[]; };
+layout(std430, set = 0, binding = 1) readonly buffer HV    { uint hashValues[]; };
+layout(std430, set = 0, binding = 2) readonly buffer STK   { uint slotToKey[]; };
+layout(std430, set = 0, binding = 3) readonly buffer SC    { uint nextSlot; };
+layout(std430, set = 0, binding = 4) buffer         CD    { uvec2 cascadeData[]; };
+layout(std430, set = 0, binding = 5) readonly buffer PCD  { uvec2 parentCascadeData[]; };
+
+// Parent cascade hash (read-only) — set 1 = rcParentHashDescSets[parentLevel]
+layout(std430, set = 1, binding = 0) readonly buffer PHK  { uint parentHashKeys[]; };
+layout(std430, set = 1, binding = 1) readonly buffer PHV  { uint parentHashValues[]; };
+
+layout(push_constant) uniform MergePC {
+    ivec4 currentGridOctRes;           // xyz = current gridSize, w = current octRes
+    ivec4 parentGridOctRes;            // xyz = parent gridSize,  w = parent octRes
+    vec4  worldOriginCurrentSpacing;   // xyz = worldOrigin, w = current spacing
+    float parentSpacing;
+    int   currentHashSize;
+    int   parentHashSize;
+    int   currentMaxSlots;
+} pc;
+
+// Bilinear angular filter: 4-tap filter within this single probe's octahedral map.
+// This smooths directional transitions at coarse octahedral resolutions (cascade 0 = 4×4).
+// NOTE: this is NOT the "full bilinear fix" (which corrects parallax between parent probes
+// and requires 8× near-interval storage in cascade_trace). This is the cheap always-on
+// angular filter. The full bilinear fix is deferred to dissertation scope.
+vec4 sampleParentProbe(uint parentSlot, vec3 direction) {
+    int  pOctRes = pc.parentGridOctRes.w;
+    vec2 uv      = octEncode(direction);
+    vec2 idx     = uv * float(pOctRes) - 0.5;
+    ivec2 i0     = ivec2(floor(idx));
+    vec2  f      = idx - vec2(i0);
+
+    vec4 acc = vec4(0.0);
+    for (int dy = 0; dy <= 1; dy++) {
+        for (int dx = 0; dx <= 1; dx++) {
+            ivec2 si  = clamp(i0 + ivec2(dx, dy), ivec2(0), ivec2(pOctRes - 1));
+            float wx  = (dx == 0) ? (1.0 - f.x) : f.x;
+            float wy  = (dy == 0) ? (1.0 - f.y) : f.y;
+            int   sIdx = probeStorageBase(parentSlot, pOctRes) + si.y * pOctRes + si.x;
+            acc += unpackRadianceTransmittance(parentCascadeData[sIdx]) * (wx * wy);
+        }
+    }
+    return acc;
+}
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+    if (slot >= nextSlot || slot >= uint(pc.currentMaxSlots)) return;
+
+    uint  key      = slotToKey[slot];
+    ivec3 cell     = unpackCellKey(key);
+    vec3  worldPos = probeWorldPos(cell,
+                                   pc.worldOriginCurrentSpacing.xyz,
+                                   pc.worldOriginCurrentSpacing.w);
+
+    int cOctRes     = pc.currentGridOctRes.w;
+    int storageBase = probeStorageBase(slot, cOctRes);
+
+    // Find the 8 parent probes surrounding this probe's position in the parent grid.
+    // Parent probes are 2× sparser — we need trilinear interpolation in space.
+    vec3  pSpace  = (worldPos - pc.worldOriginCurrentSpacing.xyz) / pc.parentSpacing - 0.5;
+    ivec3 pBase   = ivec3(floor(pSpace));
+    vec3  fParent = pSpace - vec3(pBase);
+
+    for (int dy = 0; dy < cOctRes; dy++) {
+        for (int dx = 0; dx < cOctRes; dx++) {
+            vec2 uv  = octIndexToUV(ivec2(dx, dy), cOctRes);
+            vec3 dir = octDecode(uv);
+
+            // Trilinear gather: find 8 surrounding parent probes, weight by position
+            vec4  parentAccum = vec4(0.0);
+            float weightSum   = 0.0;
+
+            for (int pz = 0; pz <= 1; pz++) {
+                for (int py = 0; py <= 1; py++) {
+                    for (int px = 0; px <= 1; px++) {
+                        ivec3 pCell = pBase + ivec3(px, py, pz);
+                        if (any(lessThan(pCell, ivec3(0))) ||
+                            any(greaterThanEqual(pCell, pc.parentGridOctRes.xyz))) continue;
+
+                        uint pKey  = packCellKey(pCell);
+                        uint pSlot = probeLookupInParent(pKey, uint(pc.parentHashSize));
+                        if (pSlot == 0xFFFFFFFFu) continue; // parent probe not allocated
+
+                        float wx = (px == 0) ? (1.0 - fParent.x) : fParent.x;
+                        float wy = (py == 0) ? (1.0 - fParent.y) : fParent.y;
+                        float wz = (pz == 0) ? (1.0 - fParent.z) : fParent.z;
+                        float w  = wx * wy * wz;
+
+                        parentAccum += sampleParentProbe(pSlot, dir) * w;
+                        weightSum   += w;
+                    }
+                }
+            }
+
+            // Normalize (handles missing parent neighbors at volume boundaries)
+            if (weightSum > 0.001) parentAccum /= weightSum;
+            // If no parent probes found: parentAccum stays (0,0,0,1) — correct for a boundary region
+            // (transmittance=1 means "nothing found beyond me"; radiance=0 is safe to add)
+
+            // Load this cascade's own traced interval for this direction
+            int  myIdx      = storageBase + dy * cOctRes + dx;
+            vec4 myInterval = unpackRadianceTransmittance(cascadeData[myIdx]);
+
+            // Merge: my near interval + parent's far interval attenuated by my transmittance.
+            // This is volume rendering compositing:
+            //   merged.L = near.L + near.T × far.L
+            //   merged.T = near.T × far.T
+            vec4 merged = vec4(
+                myInterval.rgb + myInterval.a * parentAccum.rgb,
+                myInterval.a   * parentAccum.a
+            );
+
+            cascadeData[myIdx] = packRadianceTransmittance(merged.rgb, merged.a);
+        }
+    }
+}
+```
+
+### 17.2 Merge Dispatch (top-down order)
+
+```cpp
+// Cascade N-1 (index 4) has no parent — its traced data is already final. Skip.
+// Merge cascades N-2 down to 0. Each level reads its parent's (already-merged) data.
+for (int level = rcConfig.numCascades - 2; level >= 0; level--) {
+    int parent = level + 1;
+
+    RCMergePC mergePC{};
+    mergePC.currentGridOctRes         = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
+    mergePC.parentGridOctRes          = glm::ivec4(rcConfig.gridSize(parent), rcConfig.octRes(parent));
+    mergePC.worldOriginCurrentSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+    mergePC.parentSpacing             = rcConfig.spacing(parent);
+    mergePC.currentHashSize           = (int)rcStorage.hashTableSizes[level];
+    mergePC.parentHashSize            = (int)rcStorage.hashTableSizes[parent];
+    mergePC.currentMaxSlots           = (int)rcStorage.maxActiveSlots[level];
+
+    // set 0 = current level's full hash map (rcHashDescSets[level])
+    // set 1 = parent level's hash map for key lookup (rcParentHashDescSets[parent])
+    VkDescriptorSet mergeSets[] = { rcHashDescSets[level], rcParentHashDescSets[parent] };
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcMergePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                            rcMergePipelineLayout, 0, 2, mergeSets, 0, nullptr);
+    vkCmdPushConstants(cmd, rcMergePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                       0, sizeof(RCMergePC), &mergePC);
+    vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+    emitComputeBarrier(cmd);
+}
+```
+
+> **Why top-down merge order is mandatory**: When merging cascade 1, you read cascade 2 as the parent. But cascade 2's data must itself have been merged with cascade 3 already, otherwise it only covers the [2m, 8m] interval. If you merge bottom-up (0 before 1 before 2), cascade 0 would read cascade 1's unmerged data — the far-field contribution would be completely missing. Top-down (highest index first) ensures every parent is fully merged before it is used.
+
+---
+
+## 18. Phase 11: Final Gather
+
+### 18.1 Add `sampleAlbedo` to `shaders/common/material.glsl`
+
+This function is called by both `probe_trace.comp` (for hit albedo at traced surfaces) and `final_gather.comp` (to read material color for the surface visible in the G-buffer). Add it to `material.glsl` just before the closing `#endif`:
+
+```glsl
+// Returns the base color for a material, sampling from texture if available.
+// Called whenever a shader needs the diffuse albedo at a surface.
+vec3 sampleAlbedo(GPUMaterial mat, vec2 uv) {
+    if (mat.useTexture != 0 && mat.albedoIndex >= 0)
+        return texture(textures[nonuniformEXT(mat.albedoIndex)], uv).rgb;
+    return mat.color;
+}
+```
+
+### 18.2 `shaders/shading/final_gather.comp`
+
+This shader **replaces** `composite_temp.comp`. It reads cascade 0's merged data and integrates indirect light, then adds direct lighting. When this works, delete `composite_temp` and its pipeline.
+
+```glsl
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/lighting.glsl"
+#include "../common/octahedral.glsl"
+#include "../common/cascade_layout.glsl"
+
+// G-buffer (set 0 = gbufDescSet — same layout as in primary.comp and composite_temp.comp)
+layout(set = 0, binding = 0, rgba32f) uniform readonly  image2D gPosition;
+layout(set = 0, binding = 1, rgba16f) uniform readonly  image2D gNormal;
+layout(set = 0, binding = 2, rgba8)   uniform readonly  image2D gAlbedo;
+layout(set = 0, binding = 3, rgba16f) uniform readonly  image2D gEmissive;
+layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D outHDR;
+
+// Cascade 0 hash + data (set 1 = rcHashDescSets[0])
+layout(std430, set = 1, binding = 0) readonly buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) readonly buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) readonly buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) readonly buffer SC  { uint nextSlot; };
+layout(std430, set = 1, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
+
+layout(push_constant) uniform GatherPC {
+    vec4  worldOriginSpacing; // xyz = worldOrigin, w = cascade-0 spacing
+    ivec4 gridSizeOctRes;     // xyz = cascade-0 gridSize, w = cascade-0 octRes
+    int   hashSize;
+    int   bvhCount;
+    int   lightCount;
+    int   pad;
+} pc;
+
+// Integrate all directions in cascade 0's probe against the surface normal.
+// Returns the diffuse irradiance arriving at the probe position from that hemisphere.
+vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
+    int octRes      = pc.gridSizeOctRes.w;
+    int storageBase = probeStorageBase(slot, octRes);
+    int dirCount    = octRes * octRes;
+    vec3 irradiance = vec3(0.0);
+
+    for (int d = 0; d < dirCount; d++) {
+        int  dx  = d % octRes;
+        int  dy  = d / octRes;
+        vec2 uv  = octIndexToUV(ivec2(dx, dy), octRes);
+        vec3 dir = octDecode(uv);
+
+        float NdotL = max(0.0, dot(dir, normal));
+        if (NdotL < 0.001) continue;
+
+        vec4 interval = unpackRadianceTransmittance(cascadeData[storageBase + d]);
+        irradiance += interval.rgb * NdotL;
+    }
+
+    // Monte Carlo normalization: hemisphere solid angle (2π) divided by sample count.
+    // This converts the sum of weighted radiance samples into irradiance.
+    return irradiance * (2.0 * 3.14159265 / float(dirCount));
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(outHDR);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec4 emissiveData = imageLoad(gEmissive, pixel);
+
+    // Sky pixels are flagged with negative alpha in gEmissive (set by primary.comp)
+    if (emissiveData.a < 0.0) {
+        imageStore(outHDR, pixel, vec4(emissiveData.rgb, 1.0));
+        return;
+    }
+
+    vec3 worldPos = imageLoad(gPosition, pixel).xyz;
+    vec3 normal   = normalize(imageLoad(gNormal, pixel).xyz);
+    vec3 albedo   = imageLoad(gAlbedo, pixel).rgb;
+
+    // --- Indirect light: trilinear interpolation over 8 surrounding cascade-0 probes ---
+    vec3  cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
+    ivec3 base         = ivec3(floor(cascadeSpace));
+    vec3  f            = cascadeSpace - vec3(base);
+
+    vec3  indirect  = vec3(0.0);
+    float weightSum = 0.0;
+
+    for (int pz = 0; pz <= 1; pz++) {
+        for (int py = 0; py <= 1; py++) {
+            for (int px = 0; px <= 1; px++) {
+                ivec3 probe = base + ivec3(px, py, pz);
+                if (any(lessThan(probe, ivec3(0))) ||
+                    any(greaterThanEqual(probe, pc.gridSizeOctRes.xyz))) continue;
+
+                uint pKey  = packCellKey(probe);
+                uint pSlot = probeLookup(pKey, uint(pc.hashSize));
+                if (pSlot == 0xFFFFFFFFu) continue; // probe not active this frame
+
+                float wx = (px == 0) ? (1.0 - f.x) : f.x;
+                float wy = (py == 0) ? (1.0 - f.y) : f.y;
+                float wz = (pz == 0) ? (1.0 - f.z) : f.z;
+                float w  = wx * wy * wz;
+
+                indirect  += sampleProbeIrradiance(pSlot, normal) * w;
+                weightSum += w;
+            }
+        }
+    }
+
+    if (weightSum > 0.001) indirect /= weightSum;
+    else                   indirect  = vec3(0.05); // fallback ambient for pixels outside cascade volume
+
+    // --- Direct lighting: emissive + Lambertian per light with BVH shadow ---
+    vec3 directLight = emissiveData.rgb;
+
+    for (int l = 0; l < pc.lightCount; l++) {
+        vec3  toLight   = lights[l].position - worldPos;
+        vec3  lightDir  = normalize(toLight);
+        float lightDist = length(toLight);
+
+        Ray shadowRay;
+        shadowRay.origin    = worldPos + normal * 0.001;
+        shadowRay.direction = lightDir;
+        shadowRay.tMin      = 0.001;
+        shadowRay.tMax      = lightDist - 0.01;
+
+        HitInfo shadowHit;
+        if (!traverseBVH(shadowRay, pc.bvhCount, shadowHit)) {
+            float NdotL = max(0.0, dot(normal, lightDir));
+            float atten = 1.0 / (1.0 + lightDist * lightDist);
+            directLight += albedo * lights[l].color * NdotL * atten;
+        }
+    }
+
+    // Final color: direct + indirect diffuse GI (albedo × irradiance from cascades)
+    vec3 color = directLight + albedo * indirect;
+
+    imageStore(outHDR, pixel, vec4(color, 1.0));
+}
+```
+
+---
+
+## 19. Phase 12: Tonemap
+
+### 19.1 `shaders/tonemap/tonemap.comp`
+
+```glsl
+#version 460
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly  image2D inHDR;
+layout(set = 0, binding = 1, rgba8)   uniform writeonly image2D outLDR;
+
+layout(push_constant) uniform TonemapPC {
+    float exposure;
+    int   pad[3];
+} pc;
+
+// ACES Film tone mapping (Narkowicz 2015 approximation).
+// Better than Reinhard: preserves shadow detail (toe), correct midtones, compressed but not white highlights.
+vec3 ACESFilm(vec3 x) {
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(outLDR);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec3 hdr = imageLoad(inHDR, pixel).rgb * pc.exposure;
+    vec3 ldr = ACESFilm(hdr);
+    ldr = pow(ldr, vec3(1.0 / 2.2)); // linear → sRGB gamma
+
+    imageStore(outLDR, pixel, vec4(ldr, 1.0));
+}
+```
+
+This pass reads `hdrImage` (SFLOAT, written by final gather) and writes to `ldrImage` (UNORM, then blitted to swapchain). Add `ldrImage` to `Renderer` alongside `hdrImage`:
+
+```cpp
+ldrImage = Image(ctx.allocator, swapchain.extent.width, swapchain.extent.height,
+                 VK_FORMAT_R8G8B8A8_UNORM,
+                 VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                 VMA_MEMORY_USAGE_GPU_ONLY);
+```
+
+Transition `ldrImage` to `GENERAL` in the one-time command buffer alongside the other images, then blit `ldrImage → swapchain` (both `R8G8B8A8_UNORM`, so `vkCmdCopyImage` works without format conversion).
+
+---
+
+## 20. Integration: Complete `recordCommandBuffer` Sequence
+
+```cpp
+void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    vkBeginCommandBuffer(cmd, &bi);
+
+    int N = rcConfig.numCascades;
+    uint32_t dX = swapchain.extent.width / 16, dY = swapchain.extent.height / 16;
+
+    // === 1. Clear hash tables (transfer stage) ===
+    for (int i = 0; i < N; i++) {
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].hashKeys.handle,    0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].slotCounter.handle, 0, sizeof(uint32_t), 0);
+    }
+    emitTransferToComputeBarrier(cmd);
+
+    // === 2. Primary visibility (fills G-buffer) ===
+    CameraPushConstants camPC = buildCameraPC();
+    VkDescriptorSet primarSets[] = { sceneDescSet, gbufDescSet };
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, primarSets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(camPC), &camPC);
+    vkCmdDispatch(cmd, dX, dY, 1);
+    emitComputeBarrier(cmd);
+
+    // === 3. Probe allocation: cascade 0 from G-buffer ===
+    {
+        RCAllocPC apc{};
+        apc.gridSizeHashSize   = glm::ivec4(rcConfig.gridSize(0), rcStorage.hashTableSizes[0]);
+        apc.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin,  rcConfig.spacing(0));
+        apc.allocMode          = 0;
+        // set 0 = gbufDescSet (G-buffer access), set 1 = rcHashDescSets[0] (target hash map)
+        // set 2 = rcParentHashDescSets[0] (dummy, not accessed in allocMode==0; bind a valid set anyway)
+        VkDescriptorSet asets[] = { gbufDescSet, rcHashDescSets[0], rcParentHashDescSets[0] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipelineLayout, 0, 3, asets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcAllocPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(apc), &apc);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);
+    }
+
+    // === 4. Probe allocation: cascades 1-4 from parent ===
+    for (int i = 1; i < N; i++) {
+        RCAllocPC apc{};
+        apc.gridSizeHashSize   = glm::ivec4(rcConfig.gridSize(i), rcStorage.hashTableSizes[i]);
+        apc.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin,  rcConfig.spacing(i));
+        apc.allocMode          = 1;
+        // set 0 = gbufDescSet (images not accessed in mode 1, but layout requires valid set)
+        // set 1 = rcHashDescSets[i] (target: level i's hash map)
+        // set 2 = rcParentHashDescSets[i-1] (source: level i-1's slotToKey + counter)
+        VkDescriptorSet asets[] = { gbufDescSet, rcHashDescSets[i], rcParentHashDescSets[i - 1] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipelineLayout, 0, 3, asets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcAllocPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(apc), &apc);
+        uint32_t parentGroups = (rcStorage.maxActiveSlots[i - 1] + 255) / 256;
+        vkCmdDispatch(cmd, parentGroups, 1, 1);
+        emitComputeBarrier(cmd);
+    }
+
+    // === 5. Probe trace: all cascades ===
+    for (int i = 0; i < N; i++) {
+        RCTracePC tpc{};
+        tpc.gridSizeOctRes     = glm::ivec4(rcConfig.gridSize(i), rcConfig.octRes(i));
+        tpc.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(i));
+        tpc.intervalStart      = rcConfig.intervalStart(i);
+        tpc.intervalEnd        = rcConfig.intervalEnd(i);
+        tpc.bvhCount           = (int)sceneBVH.size();
+        tpc.maxActiveSlots     = (int)rcStorage.maxActiveSlots[i];
+
+        VkDescriptorSet tsets[] = { sceneDescSet, rcHashDescSets[i] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipelineLayout, 0, 2, tsets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
+        vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[i] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);
+    }
+
+    // === 6. Cascade merge: top-down ===
+    for (int i = N - 2; i >= 0; i--) {
+        int parent = i + 1;
+        RCMergePC mpc{};
+        mpc.currentGridOctRes         = glm::ivec4(rcConfig.gridSize(i), rcConfig.octRes(i));
+        mpc.parentGridOctRes          = glm::ivec4(rcConfig.gridSize(parent), rcConfig.octRes(parent));
+        mpc.worldOriginCurrentSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(i));
+        mpc.parentSpacing             = rcConfig.spacing(parent);
+        mpc.currentHashSize           = (int)rcStorage.hashTableSizes[i];
+        mpc.parentHashSize            = (int)rcStorage.hashTableSizes[parent];
+        mpc.currentMaxSlots           = (int)rcStorage.maxActiveSlots[i];
+
+        VkDescriptorSet msets[] = { rcHashDescSets[i], rcParentHashDescSets[parent] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcMergePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcMergePipelineLayout, 0, 2, msets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcMergePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(mpc), &mpc);
+        vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[i] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);
+    }
+
+    // === 7. Final gather (replaces composite_temp) ===
+    {
+        RCGatherPC gpc{};
+        gpc.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
+        gpc.gridSizeOctRes     = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
+        gpc.hashSize           = (int)rcStorage.hashTableSizes[0];
+        gpc.bvhCount           = (int)sceneBVH.size();
+        gpc.lightCount         = (int)sceneLights.size();
+
+        VkDescriptorSet gsets[] = { gbufDescSet, rcHashDescSets[0] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcGatherPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcGatherPipelineLayout, 0, 2, gsets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcGatherPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(gpc), &gpc);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);
+    }
+
+    // === 8. Tonemap (hdrImage → ldrImage) ===
+    {
+        TonemapPC tpc{ 1.0f, {0, 0, 0} };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipelineLayout, 0, 1, &tonemapDescSet, 0, nullptr);
+        vkCmdPushConstants(cmd, tonemapPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(tpc), &tpc);
+        vkCmdDispatch(cmd, dX, dY, 1);
+    }
+
+    // === 9. Blit ldrImage → swapchain ===
+    transitionImageLayout(cmd, ldrImage.handle, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    VkImageCopy copyRegion{};
+    copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copyRegion.extent         = { swapchain.extent.width, swapchain.extent.height, 1 };
+    vkCmdCopyImage(cmd,
+        ldrImage.handle,              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copyRegion);
+
+    transitionImageLayout(cmd, ldrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+    vkEndCommandBuffer(cmd);
+}
+
+// Add these two barrier helpers to Renderer:
+
+void Renderer::emitComputeBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier b{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &b, 0, nullptr, 0, nullptr);
+}
+
+void Renderer::emitTransferToComputeBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier b{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &b, 0, nullptr, 0, nullptr);
+}
+```
+
+---
+
+## 21. Part C Completion Checklist
+
+Before moving to Part D, verify all of the following:
+
+- [ ] `compile_shaders.bat` compiles all five RC shaders without errors: `probe_alloc.comp`, `probe_trace.comp`, `cascade_merge.comp`, `final_gather.comp`, `tonemap.comp`
+- [ ] Startup memory budget print matches the table in Phase 5: grand total ≤ 25 MB
+- [ ] `nextSlot` readback for cascade 0 is non-zero and within `[100, maxActiveSlots]`
+- [ ] `nextSlot` for each level is ≤ `nextSlot` of the previous level (cascade k cannot have more probes than cascade k-1)
+- [ ] FPS is ≥ 60 at 1280×720 with all 5 cascade levels enabled
+- [ ] Moving an emissive object updates indirect light every frame with no lag or temporal ghosting
+- [ ] Moving the camera to the boundary of the cascade volume (`worldOrigin ± gridSize × spacing`) triggers the sky ambient fallback gracefully — no NaN, no crash
+- [ ] No Vulkan validation errors, especially: no VUID about `TRANSFER_DST_BIT` missing on cascade buffers, no push constant range overflow errors
+- [ ] Toggling the cascade `numCascades` down to 1 (cascade 0 only, no merge) still runs and shows near-field indirect light only — useful for debugging
+- [ ] `composite_temp.comp` and its pipeline are deleted from the project
+
+Commit as **"Part C complete: Sparse Radiance Cascades with GPU hash map, 5-level hierarchy, noiseless indirect diffuse GI"**.
+
+---
 
 ### Showcase RC Scope
 
@@ -2930,11 +4983,12 @@ The full Sparse RC (with GPU hash map, eviction, per-pixel level selection) is t
 - ✅ Top-down cascade merging
 - ✅ Indirect diffuse lighting visible in scenes
 - ✅ ImGui debug interface
-- ⚠️ Dense 3D probe grid (fixed-extent box around camera, e.g. 64×32×64 cells)
-- ⚠️ No per-pixel cascade level selection
-- ⚠️ No hash map (later)
+- ✅ Sparse GPU hash map (5 buffers per cascade level, open-addressing with atomicCompSwap)
+- ⚠️ Fixed bounded world volume (probes allocated within worldOrigin ± gridSize × spacing)
+- ⚠️ No per-pixel cascade level selection (fixed 5-level hierarchy, all levels same probe budget)
 - ❌ Specular GI
 - ❌ Min-max probes
+- ❌ Full bilinear fix (defer to dissertation — requires 8× cascade_trace storage for parallax-correct near-intervals)
 - ❌ Bilinear-3D upscaler (defer to dissertation)
 
 ### Why This Works for the Showcase
@@ -2945,549 +4999,14 @@ The visual quality difference between dense-bounded RC and full sparse RC is sma
 
 ### Document the Simplification
 
-In your dissertation, this becomes "Showcase build: dense bounded volume; Dissertation build: GPU hash map with screen-bound sparsity." Two builds, two papers' worth of contributions.
+In your dissertation, this becomes "Showcase build: sparse hash map in a fixed bounded world volume, no per-pixel cascade level selection; Dissertation build: screen-bound per-pixel probe allocation, unbounded world, full bilinear fix." Two builds, two papers' worth of contributions.
 
-## 11. Phase 5: Cascade Data Structures
-
-### CPU-Side Configuration
-
-```cpp
-// gi/SparseRC/CascadeConfig.hpp
-struct CascadeConfig {
-    int numCascades = 5;
-    int branchingFactor = 2; // α
-    
-    // Cascade 0 parameters
-    glm::vec3 worldOrigin = glm::vec3(-16, -4, -16);  // bottom corner of volume
-    glm::ivec3 gridSize0 = glm::ivec3(64, 32, 64);    // probes in cascade 0
-    float spacing0 = 0.5f;                            // world space probe spacing
-    int octRes0 = 4;                                  // 4×4 octahedral map = 16 directions
-    
-    // Derived for each cascade level
-    glm::ivec3 gridSize(int level) const {
-        // halve each axis per level (in 3D, 1/8 probes per level)
-        return glm::ivec3(
-            std::max(1, gridSize0.x >> level),
-            std::max(1, gridSize0.y >> level),
-            std::max(1, gridSize0.z >> level)
-        );
-    }
-    
-    float spacing(int level) const {
-        return spacing0 * float(1 << level);
-    }
-    
-    int octRes(int level) const {
-        // double octahedral resolution per level (4× directions)
-        return octRes0 << level;
-    }
-    
-    float intervalStart(int level) const {
-        return (level == 0) ? 0.0f : intervalEnd(level - 1);
-    }
-    
-    float intervalEnd(int level) const {
-        return spacing0 * float(1 << (branchingFactor * level));
-    }
-};
-```
-
-### GPU-Side Storage
-
-For each cascade level, one `Buffer` holding the octahedral radiance + transmittance:
-
-```cpp
-// gi/SparseRC/CascadeStorage.hpp
-class CascadeStorage {
-public:
-    std::vector<Buffer> cascadeBuffers;  // one per cascade level
-    CascadeConfig config;
-    
-    void initialize(VulkanContext& ctx, const CascadeConfig& cfg);
-    
-    size_t getBufferSize(int level) const {
-        glm::ivec3 g = config.gridSize(level);
-        int probeCount = g.x * g.y * g.z;
-        int dirCount = config.octRes(level) * config.octRes(level);
-        return size_t(probeCount) * dirCount * sizeof(uint64_t); // FP16 RGBA = 8 bytes
-    }
-};
-
-void CascadeStorage::initialize(VulkanContext& ctx, const CascadeConfig& cfg) {
-    config = cfg;
-    cascadeBuffers.clear();
-    cascadeBuffers.reserve(cfg.numCascades);
-    
-    for (int i = 0; i < cfg.numCascades; i++) {
-        size_t size = getBufferSize(i);
-        cascadeBuffers.emplace_back(
-            ctx.allocator, size,
-            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY
-        );
-    }
-}
-```
-
-For the showcase config (64×32×64 base, α=2, 5 levels):
-
-| Level | Grid Size | Probes | OctRes | Dirs/Probe | Bytes/Probe | Total Size |
-|---|---|---|---|---|---|---|
-| 0 | 64×32×64 | 131072 | 4 | 16 | 128 | 16 MB |
-| 1 | 32×16×32 | 16384 | 8 | 64 | 512 | 8 MB |
-| 2 | 16×8×16 | 2048 | 16 | 256 | 2048 | 4 MB |
-| 3 | 8×4×8 | 256 | 32 | 1024 | 8192 | 2 MB |
-| 4 | 4×2×4 | 32 | 64 | 4096 | 32768 | 1 MB |
-| **Total** | | | | | | **~31 MB** |
-
-Memory budget is healthy.
-
-### Indexing Math in GLSL
-
-```glsl
-// shaders/common/cascade_layout.glsl
-#ifndef CASCADE_LAYOUT_GLSL
-#define CASCADE_LAYOUT_GLSL
-
-// Per-cascade push constants:
-// pc.cascadeLevel
-// pc.gridSize (ivec3)
-// pc.worldOrigin (vec3)
-// pc.spacing (float)
-// pc.octRes (int)
-
-ivec3 probeFromIndex(int probeIndex, ivec3 gridSize) {
-    return ivec3(
-        probeIndex % gridSize.x,
-        (probeIndex / gridSize.x) % gridSize.y,
-        probeIndex / (gridSize.x * gridSize.y)
-    );
-}
-
-int probeToIndex(ivec3 probe, ivec3 gridSize) {
-    return probe.x + probe.y * gridSize.x + probe.z * gridSize.x * gridSize.y;
-}
-
-vec3 probeWorldPos(ivec3 probe, vec3 worldOrigin, float spacing) {
-    return worldOrigin + (vec3(probe) + 0.5) * spacing;
-}
-
-int probeStorageOffset(ivec3 probe, ivec3 gridSize, int octRes) {
-    int probeIdx = probeToIndex(probe, gridSize);
-    return probeIdx * octRes * octRes;
-}
-
-#endif
-```
-
-## 12. Phase 6: Cascade 0 Ray Tracing
-
-Start by tracing only cascade 0 (with a single hardcoded level). Get this working visually before adding higher cascades.
-
-### `shaders/rc/probe_trace.comp`
-
-```glsl
-#version 460
-#extension GL_GOOGLE_include_directive : require
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-#include "../common/ray.glsl"
-#include "../common/bvh.glsl"
-#include "../common/material.glsl"
-#include "../common/octahedral.glsl"
-#include "../common/cascade_layout.glsl"
-#include "../common/push_constants.glsl"
-
-layout(push_constant) uniform CascadePC {
-    layout(offset = 256) // after the camera push constants
-    int cascadeLevel;
-    int octRes;
-    ivec3 gridSize;
-    vec3 worldOrigin;
-    float spacing;
-    float intervalStart;
-    float intervalEnd;
-} pc;
-
-layout(set = 0, binding = 10, std430) buffer CascadeBuffer {
-    uint64_t cascadeData[];  // packed FP16 RGBA per direction per probe
-};
-
-uint64_t packRadianceTransmittance(vec3 L, float T) {
-    // Pack as 4xFP16
-    uvec2 packed = uvec2(
-        packHalf2x16(L.xy),
-        packHalf2x16(vec2(L.z, T))
-    );
-    return uint64_t(packed.y) << 32 | uint64_t(packed.x);
-}
-
-void main() {
-    ivec3 probe = ivec3(gl_GlobalInvocationID.xyz);
-    if (any(greaterThanEqual(probe, pc.gridSize))) return;
-    
-    vec3 worldPos = probeWorldPos(probe, pc.worldOrigin, pc.spacing);
-    int storageBase = probeStorageOffset(probe, pc.gridSize, pc.octRes);
-    
-    // Loop over all directions for this probe
-    for (int dy = 0; dy < pc.octRes; dy++) {
-        for (int dx = 0; dx < pc.octRes; dx++) {
-            vec2 uv = octIndexToUV(ivec2(dx, dy), pc.octRes);
-            vec3 dir = octDecode(uv);
-            
-            Ray ray;
-            ray.origin = worldPos;
-            ray.direction = dir;
-            ray.tMin = pc.intervalStart;
-            ray.tMax = pc.intervalEnd;
-            
-            vec3 radiance = vec3(0.0);
-            float transmittance = 1.0;
-            
-            HitInfo hit;
-            if (traverseBVH(ray, cam.bvhCount, hit)) {
-                GPUMaterial mat = materials[hit.materialIndex];
-                vec3 emissive = mat.emission;
-                vec3 albedo = sampleAlbedo(mat, hit.uv);
-                
-                radiance = emissive;
-                transmittance = 0.0; // surface is opaque
-            }
-            
-            int storageIdx = storageBase + dy * pc.octRes + dx;
-            cascadeData[storageIdx] = packRadianceTransmittance(radiance, transmittance);
-        }
-    }
-}
-```
-
-Dispatch:
-
-```cpp
-// passes/ProbeTracePass.cpp
-void ProbeTracePass::execute(VkCommandBuffer cmd, const Scene& scene, 
-                              CascadeStorage& cascades, int level) 
-{
-    auto& cfg = cascades.config;
-    glm::ivec3 grid = cfg.gridSize(level);
-    
-    CascadePC pc{};
-    pc.cascadeLevel = level;
-    pc.octRes = cfg.octRes(level);
-    pc.gridSize = grid;
-    pc.worldOrigin = cfg.worldOrigin;
-    pc.spacing = cfg.spacing(level);
-    pc.intervalStart = cfg.intervalStart(level);
-    pc.intervalEnd = cfg.intervalEnd(level);
-    
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &descriptorSet, 0, nullptr);
-    vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_COMPUTE_BIT, 256, sizeof(pc), &pc);
-    
-    uint32_t groupX = (grid.x + 7) / 8;
-    uint32_t groupY = (grid.y + 7) / 8;
-    uint32_t groupZ = grid.z; // one Z slice at a time, since z is part of probe index
-    
-    vkCmdDispatch(cmd, groupX, groupY, groupZ);
-}
-```
-
-### Visual Sanity Check
-
-After implementing this, write a quick **debug shader** that visualizes cascade 0:
-
-```glsl
-// shaders/debug/visualize_cascade.comp
-// Read cascade 0 at the camera's position, render the octahedral map as a 2D image
-```
-
-You should see octahedral maps with emissive surfaces showing as bright spots in the directions they exist. This proves the trace pass is working before you add merging.
-
-## 13. Phase 7: Multi-Cascade Hierarchy
-
-Once cascade 0 works, extend to all cascade levels. The dispatch loop is straightforward — call `ProbeTracePass::execute()` once per level. Each level has different intervals and grid sizes, but the shader is identical.
-
-Verify each cascade visually:
-- Cascade 0: short rays, near-field
-- Cascade 4: long rays, far-field
-
-In your debug shader, allow toggling which cascade level to visualize.
-
-## 14. Phase 8: Cascade Merging
-
-### `shaders/rc/cascade_merge.comp`
-
-```glsl
-#version 460
-#extension GL_GOOGLE_include_directive : require
-layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
-
-#include "../common/octahedral.glsl"
-#include "../common/cascade_layout.glsl"
-
-layout(push_constant) uniform MergePC {
-    int currentLevel;
-    int parentLevel;
-    int currentOctRes;
-    int parentOctRes;
-    ivec3 currentGridSize;
-    ivec3 parentGridSize;
-    vec3 worldOrigin;
-    float currentSpacing;
-    float parentSpacing;
-} pc;
-
-layout(set = 0, binding = 10, std430) buffer CurrentCascade {
-    uint64_t currentData[];
-};
-layout(set = 0, binding = 11, std430) readonly buffer ParentCascade {
-    uint64_t parentData[];
-};
-
-vec4 unpackRadianceTransmittance(uint64_t packed) {
-    uint hi = uint(packed >> 32);
-    uint lo = uint(packed & 0xFFFFFFFFul);
-    vec2 xy = unpackHalf2x16(lo);
-    vec2 zw = unpackHalf2x16(hi);
-    return vec4(xy.x, xy.y, zw.x, zw.y);
-}
-
-uint64_t packRadianceTransmittance(vec3 L, float T) {
-    // ... same as in probe_trace
-}
-
-vec4 mergeIntervals(vec4 near, vec4 far) {
-    // near = (Lr, Lg, Lb, transmittance)
-    // far  = (Lr, Lg, Lb, transmittance)
-    return vec4(
-        near.rgb + near.a * far.rgb,
-        near.a * far.a
-    );
-}
-
-vec4 sampleParentOctahedral(int parentProbeIdx, vec3 direction) {
-    vec2 uv = octEncode(direction);
-    vec2 idx = uv * float(pc.parentOctRes) - 0.5;
-    ivec2 i0 = ivec2(floor(idx));
-    vec2 f = idx - vec2(i0);
-    
-    // Bilinear in direction space
-    vec4 acc = vec4(0);
-    for (int dy = 0; dy <= 1; dy++) {
-        for (int dx = 0; dx <= 1; dx++) {
-            ivec2 sampleIdx = clamp(i0 + ivec2(dx, dy), ivec2(0), ivec2(pc.parentOctRes - 1));
-            float wx = dx == 0 ? (1.0 - f.x) : f.x;
-            float wy = dy == 0 ? (1.0 - f.y) : f.y;
-            int storageIdx = parentProbeIdx * pc.parentOctRes * pc.parentOctRes 
-                           + sampleIdx.y * pc.parentOctRes + sampleIdx.x;
-            acc += unpackRadianceTransmittance(parentData[storageIdx]) * (wx * wy);
-        }
-    }
-    return acc;
-}
-
-void main() {
-    ivec3 probe = ivec3(gl_GlobalInvocationID.xyz);
-    if (any(greaterThanEqual(probe, pc.currentGridSize))) return;
-    
-    vec3 worldPos = probeWorldPos(probe, pc.worldOrigin, pc.currentSpacing);
-    int currentStorageBase = probeStorageOffset(probe, pc.currentGridSize, pc.currentOctRes);
-    
-    // Find the 8 parent probes (trilinear in space)
-    vec3 parentSpace = (worldPos - pc.worldOrigin) / pc.parentSpacing - 0.5;
-    ivec3 parentBase = ivec3(floor(parentSpace));
-    vec3 fParent = parentSpace - vec3(parentBase);
-    
-    // For each of my directions, merge with the appropriate parent samples
-    for (int dy = 0; dy < pc.currentOctRes; dy++) {
-        for (int dx = 0; dx < pc.currentOctRes; dx++) {
-            vec2 uv = octIndexToUV(ivec2(dx, dy), pc.currentOctRes);
-            vec3 dir = octDecode(uv);
-            
-            // Trilinear sample of parent in space
-            vec4 parentMerged = vec4(0);
-            float weightSum = 0;
-            for (int pz = 0; pz <= 1; pz++) {
-                for (int py = 0; py <= 1; py++) {
-                    for (int px = 0; px <= 1; px++) {
-                        ivec3 pProbe = parentBase + ivec3(px, py, pz);
-                        if (any(lessThan(pProbe, ivec3(0))) || 
-                            any(greaterThanEqual(pProbe, pc.parentGridSize))) continue;
-                        
-                        float wx = px == 0 ? (1.0 - fParent.x) : fParent.x;
-                        float wy = py == 0 ? (1.0 - fParent.y) : fParent.y;
-                        float wz = pz == 0 ? (1.0 - fParent.z) : fParent.z;
-                        float w = wx * wy * wz;
-                        
-                        int parentProbeIdx = probeToIndex(pProbe, pc.parentGridSize);
-                        vec4 sampled = sampleParentOctahedral(parentProbeIdx, dir);
-                        parentMerged += sampled * w;
-                        weightSum += w;
-                    }
-                }
-            }
-            if (weightSum > 0) parentMerged /= weightSum;
-            
-            // Load my current interval
-            int storageIdx = currentStorageBase + dy * pc.currentOctRes + dx;
-            vec4 myInterval = unpackRadianceTransmittance(currentData[storageIdx]);
-            
-            // Merge: my near interval + parent's far interval, attenuated by my transmittance
-            vec4 merged = mergeIntervals(myInterval, parentMerged);
-            
-            currentData[storageIdx] = packRadianceTransmittance(merged.rgb, merged.a);
-        }
-    }
-}
-```
-
-Dispatch in top-down order: cascade N-1 has no parent, then merge N-2 with N-1, then N-3 with N-2, etc.
-
-## 15. Phase 9: Final Gather
-
-### `shaders/shading/final_gather.comp`
-
-```glsl
-#version 460
-#extension GL_GOOGLE_include_directive : require
-layout(local_size_x = 16, local_size_y = 16) in;
-
-#include "../common/octahedral.glsl"
-#include "../common/cascade_layout.glsl"
-
-layout(set = 0, binding = 0, rgba32f) uniform readonly image2D gPosition;
-layout(set = 0, binding = 1, rgba16f) uniform readonly image2D gNormal;
-layout(set = 0, binding = 2, rgba8)   uniform readonly image2D gAlbedo;
-layout(set = 0, binding = 3, rgba16f) uniform readonly image2D gEmissive;
-layout(set = 0, binding = 10, std430) readonly buffer Cascade0 { uint64_t cascade0Data[]; };
-layout(set = 0, binding = 5, rgba16f) uniform writeonly image2D outHDR;
-
-layout(push_constant) uniform PC {
-    vec3 cascadeWorldOrigin;
-    float cascade0Spacing;
-    ivec3 cascade0GridSize;
-    int cascade0OctRes;
-} pc;
-
-vec3 sampleProbeIrradiance(ivec3 probe, vec3 normal) {
-    int storageBase = probeStorageOffset(probe, pc.cascade0GridSize, pc.cascade0OctRes);
-    int dirCount = pc.cascade0OctRes * pc.cascade0OctRes;
-    
-    vec3 irradiance = vec3(0);
-    for (int d = 0; d < dirCount; d++) {
-        int dx = d % pc.cascade0OctRes;
-        int dy = d / pc.cascade0OctRes;
-        vec2 uv = octIndexToUV(ivec2(dx, dy), pc.cascade0OctRes);
-        vec3 dir = octDecode(uv);
-        float NdotL = max(0.0, dot(dir, normal));
-        if (NdotL == 0) continue;
-        
-        vec4 interval = unpackRadianceTransmittance(cascade0Data[storageBase + d]);
-        irradiance += interval.rgb * NdotL;
-    }
-    return irradiance * (2.0 * 3.14159265 / float(dirCount));
-}
-
-void main() {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(outHDR);
-    if (pixel.x >= size.x || pixel.y >= size.y) return;
-    
-    vec4 emissive = imageLoad(gEmissive, pixel);
-    if (emissive.a < 0.0) {
-        // Sky
-        imageStore(outHDR, pixel, vec4(emissive.rgb, 1.0));
-        return;
-    }
-    
-    vec4 posData = imageLoad(gPosition, pixel);
-    vec3 worldPos = posData.xyz;
-    vec3 normal = imageLoad(gNormal, pixel).xyz;
-    vec3 albedo = imageLoad(gAlbedo, pixel).rgb;
-    
-    // Trilinear sample of cascade 0
-    vec3 cascadeSpace = (worldPos - pc.cascadeWorldOrigin) / pc.cascade0Spacing - 0.5;
-    ivec3 base = ivec3(floor(cascadeSpace));
-    vec3 f = cascadeSpace - vec3(base);
-    
-    vec3 indirect = vec3(0);
-    float weightSum = 0;
-    for (int pz = 0; pz <= 1; pz++) {
-        for (int py = 0; py <= 1; py++) {
-            for (int px = 0; px <= 1; px++) {
-                ivec3 probe = base + ivec3(px, py, pz);
-                if (any(lessThan(probe, ivec3(0))) || any(greaterThanEqual(probe, pc.cascade0GridSize))) continue;
-                
-                float wx = px == 0 ? (1.0 - f.x) : f.x;
-                float wy = py == 0 ? (1.0 - f.y) : f.y;
-                float wz = pz == 0 ? (1.0 - f.z) : f.z;
-                float w = wx * wy * wz;
-                
-                indirect += sampleProbeIrradiance(probe, normal) * w;
-                weightSum += w;
-            }
-        }
-    }
-    if (weightSum > 0) indirect /= weightSum;
-    
-    vec3 color = emissive.rgb + albedo * indirect;
-    
-    // TODO: add direct light loop (from composite_temp.comp)
-    
-    imageStore(outHDR, pixel, vec4(color, 1.0));
-}
-```
-
-After this, you should see **noiseless indirect light** in your scenes. Move emissive objects around — color bleeding should follow instantly with no temporal lag.
-
-## 16. Phase 10: Tonemap & Composite
-
-### `shaders/tonemap/tonemap.comp`
-
-```glsl
-#version 460
-layout(local_size_x = 16, local_size_y = 16) in;
-
-layout(set = 0, binding = 0, rgba16f) uniform readonly  image2D inHDR;
-layout(set = 0, binding = 1, rgba8)   uniform writeonly image2D outLDR;
-
-// ACES tonemap (Narkowicz approximation)
-vec3 ACESFilm(vec3 x) {
-    float a = 2.51;
-    float b = 0.03;
-    float c = 2.43;
-    float d = 0.59;
-    float e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
-}
-
-void main() {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size = imageSize(outLDR);
-    if (pixel.x >= size.x || pixel.y >= size.y) return;
-    
-    vec3 hdr = imageLoad(inHDR, pixel).rgb;
-    
-    // Exposure (push constant if you want it controllable)
-    hdr *= 1.0;
-    
-    // Tonemap
-    vec3 ldr = ACESFilm(hdr);
-    
-    // Gamma correction (linear → sRGB)
-    ldr = pow(ldr, vec3(1.0 / 2.2));
-    
-    imageStore(outLDR, pixel, vec4(ldr, 1.0));
-}
-```
-
-Dispatch into the swapchain image. Done.
 
 ---
 
 # Part D — Polish for Showcase
 
-## 17. ImGui Debug Interface (Showcase Edition)
+## 22. ImGui Debug Interface (Showcase Edition)
 
 Add the debug panels that will impress at the showcase. Visitors will *see* the system working.
 
@@ -3544,7 +5063,7 @@ void DebugUI::draw(Renderer& renderer) {
 
 At the showcase, switching between "Direct only" and "Final" with one toggle is the most impactful demo. Visitors immediately see what RC adds.
 
-## 18. Demo Scene Authoring
+## 23. Demo Scene Authoring
 
 Build 2–3 strong demo scenes:
 
@@ -3588,7 +5107,7 @@ Save these as JSON files that your scene loader can parse:
 
 A JSON-driven scene loader (using nlohmann/json) takes ~150 lines of C++ and pays for itself many times over during demo prep.
 
-## 19. Performance Profiling
+## 24. Performance Profiling
 
 For the showcase, you need to *see* the frame time live. Add a frame time graph in ImGui:
 
@@ -3604,7 +5123,7 @@ ImGui::PlotLines("Frame Time (ms)", frameData.data(), frameData.size(),
 
 Goal for showcase: stable 60 FPS (16ms) on a mid-range GPU at 1080p with all demo scenes. If you can hit this, your dissertation introduction can claim "real-time" credibly.
 
-## 20. Visual Sanity Checks
+## 25. Visual Sanity Checks
 
 Before showing the project to anyone, run through this checklist:
 
@@ -3625,15 +5144,18 @@ If any of these fail, debug before the showcase.
 
 After the showcase, fork the project (or use a feature branch) for the dissertation version. The dissertation version is the showcase version *plus* these additions:
 
-## 21. From Dense Grid to Sparse Hash Map
+## 26. Per-Pixel Cascade Level Selection and Unbounded World Volume
 
-Replace `CascadeStorage` (which uses one Buffer per level with dense indexing) with a `HashMap` class implementing the algorithm in dissertation guide Part V Section 26.
+The showcase build (Part C) already implements the full GPU hash map — `CascadeStorage` uses five buffers per level with open-addressing insertion. What the showcase does **not** have is Sannikov's screen-bound probe allocation strategy: choosing each probe's cascade level so that its world-space footprint projects to approximately constant screen area. This section adds that.
 
-**The shaders barely change** — only the function `probeStorageOffset()` is replaced with `lookupProbe()` returning a slot index.
+**What changes:**
+- `probe_alloc.comp` gains a mode 2: per-pixel level selection based on `linearDepth` from the G-buffer and the camera's projection matrix. Each pixel computes `level = floor(log2(pixelWorldRadius / spacing0))` and inserts only into that level.
+- Remove `worldOrigin` / `gridSize` bounds — the hash map naturally handles arbitrary world positions as long as the key space is large enough (17-bit keys cover a 64×32×64 grid; extend to 20-bit for larger worlds).
+- `CascadeConfig` gets a `perPixelLevelSelection` bool that switches the allocation mode.
 
-Add a new allocation pass that runs before the trace passes.
+**Dissertation study guide reference**: Part V Sections 25 and 27.
 
-## 22. Adding DDGI and SSGI Comparison Baselines
+## 27. Adding DDGI and SSGI Comparison Baselines
 
 Implement the `GIStrategy` interface (dissertation guide Section 45). Add `DDGIRenderer` and `SSGIRenderer` as alternative implementations. Add a ComboBox in ImGui to switch between them at runtime.
 
@@ -3641,11 +5163,11 @@ DDGI implementation: ~2 weeks. The Majercik 2019 paper is your spec.
 
 SSGI implementation: ~3–5 days. Standard screen-space stochastic raymarcher with temporal accumulation.
 
-## 23. Reference Path Tracer for RMSE
+## 28. Reference Path Tracer for RMSE
 
 Add another `GIStrategy` implementation that runs full Monte Carlo path tracing for N samples per pixel (N = 1000+). Run it once per scene offline, save the HDR output as ground truth. Compute RMSE in your real-time renderer against this stored image.
 
-## 24. Benchmark Infrastructure
+## 29. Benchmark Infrastructure
 
 Add a "benchmark mode" flag to `main.cpp` that:
 1. Disables ImGui rendering

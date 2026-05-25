@@ -1,5 +1,6 @@
 #include "renderer/Renderer.hpp"
 #include "scene/ImageLoader.hpp"
+#include "gi/RCPushConstants.hpp"
 
 #include <stdexcept>
 #include <vector>
@@ -27,13 +28,13 @@ void Renderer::loadScene(
     const vector<GPUCube>&     cbs,  const vector<GPUBVHNode>&  bvh)
 {
     sceneMaterials = mats;
-    sceneSpheres   = sphs;
+    sceneSpheres = sphs;
     sceneTriangles = tris;
-    sceneLights    = lghts;
-    scenePlanes    = plns;
-    sceneQuads     = quds;
-    sceneCubes     = cbs;
-    sceneBVH       = bvh;
+    sceneLights = lghts;
+    scenePlanes = plns;
+    sceneQuads = quds;
+    sceneCubes = cbs;
+    sceneBVH = bvh;
 }
 
 void Renderer::loadTextures(const vector<string>& paths) {
@@ -63,6 +64,12 @@ void Renderer::initVulkan() {
                      VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                      VMA_MEMORY_USAGE_GPU_ONLY);
 
+    // ldrImage is the tonemap output, blitted to the swapchain each frame:
+    ldrImage = Image(ctx.allocator, swapchain.extent.width, swapchain.extent.height,
+        VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+
     VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
     gbuffer.transitionForWrite(cmd);
     transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
@@ -71,12 +78,16 @@ void Renderer::initVulkan() {
     createTextureSampler();
     createTextureResources();
     createSceneBuffers();
+    rcStorage.initialize(ctx, rcConfig);
     createSceneDescriptorSetLayout();
     createGBufferDescriptorSetLayout();
+    createRCDescriptorSetLayouts();
     createPipelines();
+    createRCPipelineLayouts();
     createDescriptorPool();
     createSceneDescriptorSet();
     createGBufferDescriptorSet();
+    createRCDescriptorSets();
 }
 
 // ---- Scene Buffers ----
@@ -87,26 +98,26 @@ void Renderer::createSceneBuffers() {
     };
 
     materialBuffer = make(sizeof(GPUMaterial) * max((size_t)1, sceneMaterials.size()));
-    sphereBuffer   = make(sizeof(GPUSphere)   * max((size_t)1, sceneSpheres.size()));
+    sphereBuffer = make(sizeof(GPUSphere)   * max((size_t)1, sceneSpheres.size()));
     triangleBuffer = make(sizeof(GPUTriangle) * max((size_t)1, sceneTriangles.size()));
-    lightBuffer    = make(sizeof(GPULight)    * max((size_t)1, sceneLights.size()));
-    planeBuffer    = make(sizeof(GPUPlane)    * max((size_t)1, scenePlanes.size()));
-    quadBuffer     = make(sizeof(GPUQuad)     * max((size_t)1, sceneQuads.size()));
-    cubeBuffer     = make(sizeof(GPUCube)     * max((size_t)1, sceneCubes.size()));
-    bvhBuffer      = make(sizeof(GPUBVHNode)  * max((size_t)1, sceneBVH.size()));
+    lightBuffer = make(sizeof(GPULight)    * max((size_t)1, sceneLights.size()));
+    planeBuffer = make(sizeof(GPUPlane)    * max((size_t)1, scenePlanes.size()));
+    quadBuffer = make(sizeof(GPUQuad)     * max((size_t)1, sceneQuads.size()));
+    cubeBuffer = make(sizeof(GPUCube)     * max((size_t)1, sceneCubes.size()));
+    bvhBuffer = make(sizeof(GPUBVHNode)  * max((size_t)1, sceneBVH.size()));
 
     uploadSceneData();
 }
 
 void Renderer::uploadSceneData() {
     if (!sceneMaterials.empty()) memcpy(materialBuffer.mapped, sceneMaterials.data(), sizeof(GPUMaterial) * sceneMaterials.size());
-    if (!sceneSpheres.empty())   memcpy(sphereBuffer.mapped,   sceneSpheres.data(),   sizeof(GPUSphere)   * sceneSpheres.size());
-    if (!sceneTriangles.empty()) memcpy(triangleBuffer.mapped,  sceneTriangles.data(), sizeof(GPUTriangle) * sceneTriangles.size());
-    if (!sceneLights.empty())    memcpy(lightBuffer.mapped,     sceneLights.data(),    sizeof(GPULight)    * sceneLights.size());
-    if (!scenePlanes.empty())    memcpy(planeBuffer.mapped,     scenePlanes.data(),    sizeof(GPUPlane)    * scenePlanes.size());
-    if (!sceneQuads.empty())     memcpy(quadBuffer.mapped,      sceneQuads.data(),     sizeof(GPUQuad)     * sceneQuads.size());
-    if (!sceneCubes.empty())     memcpy(cubeBuffer.mapped,      sceneCubes.data(),     sizeof(GPUCube)     * sceneCubes.size());
-    if (!sceneBVH.empty())       memcpy(bvhBuffer.mapped,       sceneBVH.data(),       sizeof(GPUBVHNode)  * sceneBVH.size());
+    if (!sceneSpheres.empty()) memcpy(sphereBuffer.mapped, sceneSpheres.data(), sizeof(GPUSphere) * sceneSpheres.size());
+    if (!sceneTriangles.empty()) memcpy(triangleBuffer.mapped, sceneTriangles.data(), sizeof(GPUTriangle) * sceneTriangles.size());
+    if (!sceneLights.empty()) memcpy(lightBuffer.mapped, sceneLights.data(), sizeof(GPULight) * sceneLights.size());
+    if (!scenePlanes.empty()) memcpy(planeBuffer.mapped, scenePlanes.data(), sizeof(GPUPlane) * scenePlanes.size());
+    if (!sceneQuads.empty()) memcpy(quadBuffer.mapped, sceneQuads.data(), sizeof(GPUQuad) * sceneQuads.size());
+    if (!sceneCubes.empty()) memcpy(cubeBuffer.mapped, sceneCubes.data(), sizeof(GPUCube) * sceneCubes.size());
+    if (!sceneBVH.empty()) memcpy(bvhBuffer.mapped, sceneBVH.data(), sizeof(GPUBVHNode) * sceneBVH.size());
 }
 
 // ---- Textures ----
@@ -238,6 +249,48 @@ void Renderer::createGBufferDescriptorSetLayout() {
         throw runtime_error("Renderer: G-buffer descriptor set layout creation failed.");
 }
 
+void Renderer::createRCDescriptorSetLayouts() {
+
+    // RC hash set: 6 SSBOs - current level's full hash map (b0-b4) + parent cascade data (b5)
+    // b0 = hashKeys, b1 = hashValues, b2 = slotToKey, b3 = slotCounter, b4 = cascadeData, b5 = parentCascadeData
+    // b5 is only needed in merge; alloc/trace shaders simply don't declare it and the descriptor is a dummy.
+    {
+        VkDescriptorSetLayoutBinding binds[6] = {};
+        for (uint32_t i = 0; i < 6; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcHashDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcHashDescSetLayout creation failed.");
+    }
+
+    // Parent hash set: 4 SSBOs - parent level's keys, values, slotToKey, counter (all read-only)
+    // Used in: alloc (mode 1) reads parent slotToKey; merge reads parent keys+values for lookupInParent.
+    {
+        VkDescriptorSetLayoutBinding binds[4] = {};
+        for (uint32_t i = 0; i < 4; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 4, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcParentHashDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcParentHashDescSetLayout creation failed.");
+    }
+
+    // Tonemap set: 2 storage images - b0 = inHDR (read), b1 = outLDR (write)
+    {
+        VkDescriptorSetLayoutBinding binds[2] = {};
+        for (uint32_t i = 0; i < 2; i++) {
+            binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        }
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 2, binds };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &tonemapDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: tonemapDescSetLayout creation failed.");
+    }
+}
+
 // ---- Pipelines ----
 
 void Renderer::createPipelines() {
@@ -258,8 +311,59 @@ void Renderer::createPipelines() {
     if (vkCreatePipelineLayout(ctx.device, &plci, nullptr, &twoPassPipelineLayout) != VK_SUCCESS)
         throw runtime_error("Renderer: pipeline layout creation failed.");
 
-    primaryPassPipeline   = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv",      twoPassPipelineLayout);
-    compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv",  twoPassPipelineLayout);
+    primaryPassPipeline = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv", twoPassPipelineLayout);
+    compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv", twoPassPipelineLayout);
+}
+
+void Renderer::createRCPipelineLayouts() {
+    auto makeLayout = [&](std::initializer_list<VkDescriptorSetLayout> setLayouts,
+        uint32_t pcSize) -> VkPipelineLayout {
+            std::vector<VkDescriptorSetLayout> layouts(setLayouts);
+            VkPushConstantRange pcRange{ VK_SHADER_STAGE_COMPUTE_BIT, 0, pcSize };
+            VkPipelineLayoutCreateInfo ci{};
+            ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+            ci.setLayoutCount = (uint32_t)layouts.size();
+            ci.pSetLayouts = layouts.data();
+            ci.pushConstantRangeCount = 1;
+            ci.pPushConstantRanges = &pcRange;
+            VkPipelineLayout layout;
+            if (vkCreatePipelineLayout(ctx.device, &ci, nullptr, &layout) != VK_SUCCESS)
+                throw std::runtime_error("Renderer: RC pipeline layout creation failed.");
+            return layout;
+        };
+
+    // Alloc: set0=gbufDescSetLayout (G-buffer pixels for cascade-0),
+    //        set1=rcHashDescSetLayout (target level's hash map, write),
+    //        set2=rcParentHashDescSetLayout (parent level's map, read — for cascade k>0)
+    rcAllocPipelineLayout = makeLayout(
+        { gbufDescSetLayout, rcHashDescSetLayout, rcParentHashDescSetLayout },
+        sizeof(RCAllocPC));
+
+    // Trace: set0=sceneDescSetLayout (BVH + materials + textures),
+    //        set1=rcHashDescSetLayout (reads slotToKey, writes cascadeData)
+    rcTracePipelineLayout = makeLayout(
+        { sceneDescSetLayout, rcHashDescSetLayout },
+        sizeof(RCTracePC));
+
+    // Merge: set0=rcHashDescSetLayout (current level, read+write cascadeData),
+    //        set1=rcParentHashDescSetLayout (parent level, read-only)
+    rcMergePipelineLayout = makeLayout(
+        { rcHashDescSetLayout, rcParentHashDescSetLayout },
+        sizeof(RCMergePC));
+
+    // Gather: set0=gbufDescSetLayout (G-buffer read + hdrImage write at b5),
+    //         set1=rcHashDescSetLayout (cascade-0 read)
+    rcGatherPipelineLayout = makeLayout(
+        { gbufDescSetLayout, rcHashDescSetLayout },
+        sizeof(RCGatherPC));
+
+    // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
+    tonemapPipelineLayout = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
+
+    rcAllocPipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_alloc.comp.spv", rcAllocPipelineLayout);
+    rcTracePipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_trace.comp.spv", rcTracePipelineLayout);
 }
 
 VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipelineLayout layout) {
@@ -288,19 +392,21 @@ VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipeline
 // ---- Descriptor Pool ----
 
 void Renderer::createDescriptorPool() {
+    int N = rcConfig.numCascades;  // typically 5
+
     vector<VkDescriptorPoolSize> poolSizes(3);
-    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 7; // 1 placeholder (set=0 b0) + 6 gbuffer+hdr (set=1)
-    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = 8;
-    poolSizes[2].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    poolSizes[0].descriptorCount = 9;                               // 7 existing + 2 tonemap
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = uint32_t(8 + N * 6 + N * 4);     // 58 when N=5
+    poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 100;
 
     VkDescriptorPoolCreateInfo pi{};
     pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
-    pi.maxSets = 2;
+	pi.maxSets = uint32_t(2 + N + N + 1);                           // 13 when N=5
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
         throw runtime_error("Renderer: descriptor pool creation failed.");
@@ -324,14 +430,22 @@ void Renderer::createSceneDescriptorSet() {
     placeholderInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
     // bindings 1-8: scene SSBOs
-    Buffer* bufs[] = { &materialBuffer, &sphereBuffer, &triangleBuffer, &lightBuffer,
-                       &planeBuffer,    &quadBuffer,   &cubeBuffer,     &bvhBuffer };
+    Buffer* bufs[] = {
+    	&materialBuffer,
+    	&sphereBuffer,
+    	&triangleBuffer,
+    	&lightBuffer,
+        &planeBuffer,
+        &quadBuffer,
+        &cubeBuffer,
+        &bvhBuffer
+    };
 
     vector<VkDescriptorBufferInfo> bufInfos(8);
     for (int i = 0; i < 8; i++) {
         bufInfos[i].buffer = bufs[i]->handle;
         bufInfos[i].offset = 0;
-        bufInfos[i].range  = VK_WHOLE_SIZE;
+        bufInfos[i].range = VK_WHOLE_SIZE;
     }
 
     // binding 9: texture sampler array — fill unused slots with hdrImage (in GENERAL layout)
@@ -339,38 +453,38 @@ void Renderer::createSceneDescriptorSet() {
     for (int i = 0; i < 100; i++) {
         texInfos[i].sampler = textureSampler;
         if (i < (int)textureImageViews.size()) {
-            texInfos[i].imageView   = textureImageViews[i];
+            texInfos[i].imageView = textureImageViews[i];
             texInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         } else {
-            texInfos[i].imageView   = hdrImage.view;
+            texInfos[i].imageView = hdrImage.view;
             texInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
         }
     }
 
     vector<VkWriteDescriptorSet> writes(10);
 
-    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet          = sceneDescSet;
-    writes[0].dstBinding      = 0;
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = sceneDescSet;
+    writes[0].dstBinding = 0;
     writes[0].descriptorCount = 1;
-    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[0].pImageInfo      = &placeholderInfo;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    writes[0].pImageInfo = &placeholderInfo;
 
     for (int i = 0; i < 8; i++) {
-        writes[i + 1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i + 1].dstSet          = sceneDescSet;
-        writes[i + 1].dstBinding      = (uint32_t)(i + 1);
+        writes[i + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i + 1].dstSet = sceneDescSet;
+        writes[i + 1].dstBinding = (uint32_t)(i + 1);
         writes[i + 1].descriptorCount = 1;
-        writes[i + 1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        writes[i + 1].pBufferInfo     = &bufInfos[i];
+        writes[i + 1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[i + 1].pBufferInfo = &bufInfos[i];
     }
 
-    writes[9].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[9].dstSet          = sceneDescSet;
-    writes[9].dstBinding      = 9;
+    writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[9].dstSet = sceneDescSet;
+    writes[9].dstBinding = 9;
     writes[9].descriptorCount = 100;
-    writes[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    writes[9].pImageInfo      = texInfos.data();
+    writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[9].pImageInfo = texInfos.data();
 
     vkUpdateDescriptorSets(ctx.device, 10, writes.data(), 0, nullptr);
 }
@@ -394,19 +508,102 @@ void Renderer::createGBufferDescriptorSet() {
     vector<VkWriteDescriptorSet>  writes(6);
 
     for (uint32_t i = 0; i < 6; i++) {
-        imgInfos[i].imageView   = views[i];
+        imgInfos[i].imageView = views[i];
         imgInfos[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        imgInfos[i].sampler     = VK_NULL_HANDLE;
+        imgInfos[i].sampler = VK_NULL_HANDLE;
 
-        writes[i].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[i].dstSet          = gbufDescSet;
-        writes[i].dstBinding      = i;
+        writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[i].dstSet = gbufDescSet;
+        writes[i].dstBinding = i;
         writes[i].descriptorCount = 1;
-        writes[i].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        writes[i].pImageInfo      = &imgInfos[i];
+        writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[i].pImageInfo = &imgInfos[i];
     }
 
     vkUpdateDescriptorSets(ctx.device, 6, writes.data(), 0, nullptr);
+}
+
+void Renderer::createRCDescriptorSets() {
+    int N = rcConfig.numCascades;
+
+    // --- rcHashDescSets[i]: 6 SSBOs for level i's own hash map ---
+    // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData
+    // b5=parentCascadeData - during alloc/trace, point at the next level's data as a dummy;
+    //                        during merge, the merge shader reads it as the parent's radiance.
+    rcHashDescSets.resize(N);
+    for (int i = 0; i < N; i++) {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &rcHashDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &rcHashDescSets[i]) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcHashDescSets allocation failed.");
+
+        auto& lvl = rcStorage.levels[i];
+        VkBuffer parentDataHandle = (i + 1 < N)
+            ? rcStorage.levels[i + 1].cascadeData.handle
+            : lvl.cascadeData.handle; // last level: self-reference dummy
+
+        VkDescriptorBufferInfo infos[6] = {
+            { lvl.hashKeys.handle, 0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle, 0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle, 0, VK_WHOLE_SIZE },
+            { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
+            { lvl.cascadeData.handle, 0, VK_WHOLE_SIZE },
+            { parentDataHandle, 0, VK_WHOLE_SIZE },
+        };
+        VkWriteDescriptorSet writes[6] = {};
+        for (uint32_t b = 0; b < 6; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                rcHashDescSets[i], b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 6, writes, 0, nullptr);
+    }
+
+    // --- rcParentHashDescSets[i]: 4 SSBOs pointing at level i's keys/values/slotToKey/counter ---
+    // Bound as "set 2" during alloc of cascade k (pass rcParentHashDescSets[k-1]).
+    // Bound as "set 1" during merge of cascade k  (pass rcParentHashDescSets[k+1]).
+    rcParentHashDescSets.resize(N);
+    for (int i = 0; i < N; i++) {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &rcParentHashDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &rcParentHashDescSets[i]) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcParentHashDescSets allocation failed.");
+
+        auto& lvl = rcStorage.levels[i];
+        VkDescriptorBufferInfo infos[4] = {
+            { lvl.hashKeys.handle, 0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle, 0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle, 0, VK_WHOLE_SIZE },
+            { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
+        };
+        VkWriteDescriptorSet writes[4] = {};
+        for (uint32_t b = 0; b < 4; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                rcParentHashDescSets[i], b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 4, writes, 0, nullptr);
+    }
+
+    // --- tonemapDescSet: b0=inHDR (hdrImage, read), b1=outLDR (ldrImage, write) ---
+    {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &tonemapDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &tonemapDescSet) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: tonemapDescSet allocation failed.");
+
+        VkDescriptorImageInfo imgInfos[2] = {
+            { VK_NULL_HANDLE, hdrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+            { VK_NULL_HANDLE, ldrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+        };
+        VkWriteDescriptorSet writes[2] = {};
+        for (uint32_t b = 0; b < 2; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                tonemapDescSet, b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfos[b], nullptr, nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 2, writes, 0, nullptr);
+    }
 }
 
 // ---- Main Loop ----
@@ -415,6 +612,7 @@ void Renderer::mainLoop() {
     lastFrame = (float)glfwGetTime();
     float fpsTimer  = 0.0f;
     int   frameCount = 0;
+    bool  rcChecked = false;   // ← ADD: one-shot flag
     cout << "Renderer: Rendering started.\n";
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
@@ -434,6 +632,35 @@ void Renderer::mainLoop() {
         processInput();
         updateDynamicData();
         drawFrame();
+
+        if (!rcChecked) {
+            rcChecked = true;
+            vkDeviceWaitIdle(ctx.device);   // GPU must have finished the alloc pass
+
+            // 4-byte CPU-readable staging buffer
+            Buffer readback(ctx.allocator, sizeof(uint32_t),
+                VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_TO_CPU);
+
+            // Copy slotCounter → readback
+            VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+            VkBufferCopy region{ 0, 0, sizeof(uint32_t) };
+            vkCmdCopyBuffer(cmd,
+                rcStorage.levels[0].slotCounter.handle,
+                readback.handle, 1, &region);
+            cmdManager.submitOneTime(ctx, cmd);
+
+            uint32_t count = *reinterpret_cast<uint32_t*>(readback.mapped);
+            printf("[RC] cascade-0 nextSlot = %u  (budget = %u)\n",
+                count, rcStorage.maxActiveSlots[0]);
+            if (count == 0)
+                printf("  ERROR: alloc did not run — check clear barrier or shader compile\n");
+            else if (count >= rcStorage.maxActiveSlots[0])
+                printf("  WARNING: at budget cap — increase kMaxSlots[0] in CascadeStorage.cpp\n");
+            else
+                printf("  OK\n");
+
+            readback = Buffer();   // destroy immediately — temp debug only
+        }
     }
     vkDeviceWaitIdle(ctx.device);
 }
@@ -442,10 +669,10 @@ void Renderer::processInput() {
     float cameraSpeed = 3.5f * deltaTime;
     float rotSpeed    = 90.0f * deltaTime;
 
-    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS)        cameraPos += cameraSpeed * cameraUp;
+    if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) cameraPos += cameraSpeed * cameraUp;
     if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) cameraPos -= cameraSpeed * cameraUp;
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)            yaw += rotSpeed;
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)            yaw -= rotSpeed;
+    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) yaw += rotSpeed;
+    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) yaw -= rotSpeed;
 
     glm::vec3 right     = glm::normalize(glm::cross(cameraUp, cameraFront));
     glm::vec3 flatFront = glm::normalize(glm::vec3(cameraFront.x, 0.0f, cameraFront.z));
@@ -489,29 +716,29 @@ void Renderer::drawFrame() {
     vkResetCommandBuffer(cmdManager.buffer, 0);
     recordCommandBuffer(cmdManager.buffer, imageIndex);
 
-    VkSemaphore waitSems[]   = { cmdManager.imageAvailableSemaphore };
+    VkSemaphore waitSems[] = { cmdManager.imageAvailableSemaphore };
     VkSemaphore signalSems[] = { cmdManager.renderFinishedSemaphores[imageIndex] };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT };
 
     VkSubmitInfo si{};
-    si.sType                = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    si.waitSemaphoreCount   = 1;
-    si.pWaitSemaphores      = waitSems;
-    si.pWaitDstStageMask    = waitStages;
-    si.commandBufferCount   = 1;
-    si.pCommandBuffers      = &cmdManager.buffer;
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.waitSemaphoreCount = 1;
+    si.pWaitSemaphores = waitSems;
+    si.pWaitDstStageMask = waitStages;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmdManager.buffer;
     si.signalSemaphoreCount = 1;
-    si.pSignalSemaphores    = signalSems;
+    si.pSignalSemaphores = signalSems;
 
     vkQueueSubmit(ctx.computeQueue, 1, &si, cmdManager.inFlightFence);
 
     VkPresentInfoKHR pi{};
-    pi.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     pi.waitSemaphoreCount = 1;
-    pi.pWaitSemaphores    = signalSems;
-    pi.swapchainCount     = 1;
-    pi.pSwapchains        = &swapchain.handle;
-    pi.pImageIndices      = &imageIndex;
+    pi.pWaitSemaphores = signalSems;
+    pi.swapchainCount = 1;
+    pi.pSwapchains = &swapchain.handle;
+    pi.pImageIndices = &imageIndex;
 
     vkQueuePresentKHR(ctx.computeQueue, &pi);
 }
@@ -521,31 +748,76 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &bi);
 
-    CameraPushConstants pc{};
-    pc.camPos     = glm::vec4(cameraPos, 0.0f);
-    pc.camForward = glm::vec4(cameraFront, 0.0f);
-    pc.camRight   = glm::vec4(glm::normalize(glm::cross(cameraUp, cameraFront)), 0.0f);
-    pc.camUp      = glm::vec4(glm::normalize(glm::cross(cameraFront, glm::vec3(pc.camRight))), 0.0f);
-    pc.sphereCount        = (int)sceneSpheres.size();
-    pc.triangleCount      = (int)sceneTriangles.size();
-    pc.planeCount         = (int)scenePlanes.size();
-    pc.quadCount          = (int)sceneQuads.size();
-    pc.cubeCount          = (int)sceneCubes.size();
-    pc.lightCount         = (int)sceneLights.size();
-    pc.bvhCount           = (int)sceneBVH.size();
-    pc.maxDepth           = maxDepth;
-    pc.shadowRays         = shadowRays;
-    pc.primaryRaysPerPixel = primaryRaysPerPixel;
-    pc.focalDistance      = focalDistance;
-    pc.lensRadius         = lensRadius;
-    pc.fogColor           = fogColor;
-    pc.enableFog          = enableFog;
-    pc.skyBottomColor     = skyBottomColor;
-    pc.enableSkybox       = enableSkybox;
-    pc.skyTopColor        = skyTopColor;
-    pc.enableTextures     = enableTextures;
+    // Reusable SSBO read-write barrier between compute passes.
+    auto emitComputeBarrier = [](VkCommandBuffer c) {
+        VkMemoryBarrier b{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(
+            c,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0,
+            1,
+            &b,
+            0,
+            nullptr,
+            0,
+            nullptr
+        );
+    };
 
-    uint32_t dispatchX = swapchain.extent.width  / 16;
+    // Clear hash keys (sentinel 0xFFFFFFFF = empty) and slot counters (0) for all levels.
+	// This runs each frame so each frame recomputes active probes from scratch.
+    for (int i = 0; i < rcConfig.numCascades; i++) {
+        auto& lvl = rcStorage.levels[i];
+        vkCmdFillBuffer(cmd, lvl.hashKeys.handle, 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, lvl.slotCounter.handle, 0, sizeof(uint32_t), 0);
+        // hashValues and slotToKey don't need clearing: only read after a valid insert wrote them.
+    }
+
+    // Barrier: fill writes visible to shaders before allocation dispatches start.
+    VkMemoryBarrier clearBarrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    clearBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    clearBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(
+        cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0,
+        1,
+        &clearBarrier,
+        0,
+        nullptr,
+        0,
+        nullptr
+    );
+
+    CameraPushConstants pc{};
+    pc.camPos = glm::vec4(cameraPos, 0.0f);
+    pc.camForward = glm::vec4(cameraFront, 0.0f);
+    pc.camRight = glm::vec4(glm::normalize(glm::cross(cameraUp, cameraFront)), 0.0f);
+    pc.camUp = glm::vec4(glm::normalize(glm::cross(cameraFront, glm::vec3(pc.camRight))), 0.0f);
+    pc.sphereCount = (int)sceneSpheres.size();
+    pc.triangleCount = (int)sceneTriangles.size();
+    pc.planeCount = (int)scenePlanes.size();
+    pc.quadCount = (int)sceneQuads.size();
+    pc.cubeCount = (int)sceneCubes.size();
+    pc.lightCount = (int)sceneLights.size();
+    pc.bvhCount = (int)sceneBVH.size();
+    pc.maxDepth = maxDepth;
+    pc.shadowRays = shadowRays;
+    pc.primaryRaysPerPixel = primaryRaysPerPixel;
+    pc.focalDistance = focalDistance;
+    pc.lensRadius = lensRadius;
+    pc.fogColor = fogColor;
+    pc.enableFog = enableFog;
+    pc.skyBottomColor = skyBottomColor;
+    pc.enableSkybox = enableSkybox;
+    pc.skyTopColor = skyTopColor;
+    pc.enableTextures = enableTextures;
+
+    uint32_t dispatchX = swapchain.extent.width / 16;
     uint32_t dispatchY = swapchain.extent.height / 16;
 
     VkDescriptorSet sets[] = { sceneDescSet, gbufDescSet };
@@ -558,12 +830,66 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 
     // Barrier: G-buffer writes visible to composite reads
     VkMemoryBarrier memBarrier{};
-    memBarrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
     memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0, 1, &memBarrier, 0, nullptr, 0, nullptr);
+
+    // alloc dispatch — levels 0, 1, 2, ... strictly in order
+    for (int level = 0; level < rcConfig.numCascades; level++) {
+        RCAllocPC allocPC{};
+        glm::ivec3 gs = rcConfig.gridSize(level);
+        allocPC.gridSizeHashSize = glm::ivec4(gs, (int)rcStorage.hashTableSize[level]);
+        allocPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+        allocPC.allocMode = (level == 0) ? 0 : 1;
+        allocPC.parentMaxSlots = (level == 0) ? 0 : (int)rcStorage.maxActiveSlots[level - 1];
+
+        VkDescriptorSet allocSets[3] = {
+            gbufDescSet,
+            rcHashDescSets[level],
+            (level == 0) ? rcParentHashDescSets[0]         // cascade 0: no parent — layout-compatible dummy (allocMode=0 never reads set 2)
+                         : rcParentHashDescSets[level - 1]
+        };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcAllocPipelineLayout, 0, 3, allocSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcAllocPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCAllocPC), &allocPC);
+
+        if (level == 0) {
+            // One thread per G-buffer pixel (workgroup = 16x16 = 256 threads)
+            vkCmdDispatch(cmd,
+                (swapchain.extent.width + 15) / 16,
+                (swapchain.extent.height + 15) / 16, 1);
+        }
+        else {
+            // One thread per parent slot — 1D dispatch, 256 threads per workgroup
+            uint32_t parentSlots = rcStorage.maxActiveSlots[level - 1];
+            vkCmdDispatch(cmd, (parentSlots + 255) / 256, 1, 1);
+        }
+        emitComputeBarrier(cmd);  // level k's slotToKey must be ready before level k+1 reads it
+    }
+
+    for (int level = 0; level < rcConfig.numCascades; level++) {
+        RCTracePC tracePC{};
+        tracePC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
+        tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+        tracePC.intervalStart = rcConfig.intervalStart(level);
+        tracePC.intervalEnd = rcConfig.intervalEnd(level);
+        tracePC.bvhCount = (int)sceneBVH.size();
+        tracePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];
+
+        VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcTracePipelineLayout, 0, 2, traceSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCTracePC), &tracePC);
+        vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);  // trace writes visible to next level or to merge
+    }
 
     // Pass 2: Composite Shading
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
@@ -577,16 +903,21 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 
     VkImageBlit blitRegion{};
     blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blitRegion.srcOffsets[0]  = { 0, 0, 0 };
-    blitRegion.srcOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+    blitRegion.srcOffsets[0] = { 0, 0, 0 };
+    blitRegion.srcOffsets[1] = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
     blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blitRegion.dstOffsets[0]  = { 0, 0, 0 };
-    blitRegion.dstOffsets[1]  = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+    blitRegion.dstOffsets[0] = { 0, 0, 0 };
+    blitRegion.dstOffsets[1] = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
 
     vkCmdBlitImage(cmd,
-        hdrImage.handle,              VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1, &blitRegion, VK_FILTER_NEAREST);
+        hdrImage.handle,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapchain.images[imageIndex],
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,
+        &blitRegion,
+        VK_FILTER_NEAREST
+    );
 
     transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
     transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
@@ -599,13 +930,16 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 void Renderer::cleanup() {
     // Destroy VMA-backed buffers before the allocator goes down
     materialBuffer = Buffer();
-    sphereBuffer   = Buffer();
+    sphereBuffer = Buffer();
     triangleBuffer = Buffer();
-    lightBuffer    = Buffer();
-    planeBuffer    = Buffer();
-    quadBuffer     = Buffer();
-    cubeBuffer     = Buffer();
-    bvhBuffer      = Buffer();
+    lightBuffer = Buffer();
+    planeBuffer = Buffer();
+    quadBuffer = Buffer();
+    cubeBuffer = Buffer();
+    bvhBuffer = Buffer();
+
+    // RC cascade storage (must come before ctx.shutdown destroys the VMA allocator)
+    rcStorage.destroy();
 
     vkDestroySampler(ctx.device, textureSampler, nullptr);
     for (size_t i = 0; i < textureImages.size(); i++) {
@@ -615,14 +949,29 @@ void Renderer::cleanup() {
 
     gbuffer.destroy(ctx);
     hdrImage.destroy(ctx.allocator);
+    ldrImage.destroy(ctx.allocator);
 
+    vkDestroyPipeline(ctx.device, rcAllocPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
     vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);
     vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
+
+    vkDestroyPipelineLayout(ctx.device, rcAllocPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, twoPassPipelineLayout, nullptr);
 
     vkDestroyDescriptorPool(ctx.device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, sceneDescSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, gbufDescSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, rcHashDescSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, rcParentHashDescSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, tonemapDescSetLayout, nullptr);
 
     cmdManager.destroy(ctx);
     swapchain.destroy(ctx);
@@ -637,13 +986,13 @@ void Renderer::cleanup() {
 void Renderer::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
                                      VkImageLayout oldLayout, VkImageLayout newLayout) {
     VkImageMemoryBarrier barrier{};
-    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout           = oldLayout;
-    barrier.newLayout           = newLayout;
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
     barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image               = image;
-    barrier.subresourceRange    = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    barrier.image = image;
+    barrier.subresourceRange= { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
 
     VkPipelineStageFlags srcStage, dstStage;
 
@@ -704,9 +1053,9 @@ vector<char> Renderer::readFile(const string& filename) {
 
 VkShaderModule Renderer::createShaderModule(const vector<char>& code) {
     VkShaderModuleCreateInfo ci{};
-    ci.sType    = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    ci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
     ci.codeSize = code.size();
-    ci.pCode    = reinterpret_cast<const uint32_t*>(code.data());
+    ci.pCode = reinterpret_cast<const uint32_t*>(code.data());
 
     VkShaderModule mod;
     if (vkCreateShaderModule(ctx.device, &ci, nullptr, &mod) != VK_SUCCESS)

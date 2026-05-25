@@ -147,6 +147,8 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClCompile Include="source\core\Swapchain.cpp" />
     <ClCompile Include="source\core\VMA.cpp" />
     <ClCompile Include="source\core\VulkanContext.cpp" />
+    <ClCompile Include="source\gi\CascadeHashMap.cpp" />
+    <ClCompile Include="source\gi\CascadeStorage.cpp" />
     <ClCompile Include="source\passes\GBuffer.cpp" />
     <ClCompile Include="source\passes\LegacyPass.cpp" />
     <ClCompile Include="source\main.cpp" />
@@ -163,6 +165,10 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\core\Swapchain.hpp" />
     <ClInclude Include="include\core\VulkanContext.hpp" />
     <ClInclude Include="include\core\VulkanCore.hpp" />
+    <ClInclude Include="include\gi\CascadeConfig.hpp" />
+    <ClInclude Include="include\gi\CascadeHashMap.hpp" />
+    <ClInclude Include="include\gi\CascadeStorage.hpp" />
+    <ClInclude Include="include\gi\RCPushConstants.hpp" />
     <ClInclude Include="include\math\MathUtils.hpp" />
     <ClInclude Include="include\passes\GBuffer.hpp" />
     <ClInclude Include="include\renderer\Renderer.hpp" />
@@ -177,6 +183,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
   <ItemGroup>
     <None Include="compile_shaders.bat" />
     <None Include="shaders\common\bvh.glsl" />
+    <None Include="shaders\common\cascade_layout.glsl" />
     <None Include="shaders\common\lighting.glsl" />
     <None Include="shaders\common\material.glsl" />
     <None Include="shaders\common\octahedral.glsl" />
@@ -185,7 +192,11 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <None Include="shaders\common\ray.glsl" />
     <None Include="shaders\legacy\raytracer.comp" />
     <None Include="shaders\monolith\raytracer.comp" />
+    <None Include="shaders\rc\cascade_merge.comp" />
+    <None Include="shaders\rc\probe_alloc.comp" />
+    <None Include="shaders\rc\probe_trace.comp" />
     <None Include="shaders\shading\composite_temp.comp" />
+    <None Include="shaders\tonemap\tonemap.comp" />
     <None Include="shaders\visibility\primary.comp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

@@ -1,0 +1,74 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 64) in;  // 1D dispatch: one thread per active slot
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/octahedral.glsl"
+
+// Current cascade hash map and data at set 1
+// Names MUST match cascade_layout.glsl convention
+layout(std430, set = 1, binding = 0) readonly buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) readonly buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) readonly buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) readonly buffer SC  { uint nextSlot; };
+layout(std430, set = 1, binding = 4)          buffer CD  { uvec2 cascadeData[]; };
+// binding 5 (parentCascadeData) not used in trace
+
+// Include AFTER SSBO declarations so its functions can reference the names above
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform TracePC {
+    ivec4 gridSizeOctRes;       // xyz unused in trace, w = octRes
+    vec4  worldOriginSpacing;   // xyz = worldOrigin, w = spacing
+    float intervalStart;
+    float intervalEnd;
+    int   bvhCount;
+    int   maxActiveSlots;
+} pc;
+
+void main()
+{
+    uint slot = gl_GlobalInvocationID.x;
+
+    // nextSlot is the number of probes actually inserted this frame.
+    // maxActiveSlots is the hard budget (tableSize / 2).
+    if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
+
+    // Recover cell position from slot -> key -> cell -> world position
+    uint  key      = slotToKey[slot];
+    ivec3 cell     = unpackCellKey(key);
+    vec3  worldPos = probeWorldPos(cell, pc.worldOriginSpacing.xyz, pc.worldOriginSpacing.w);
+
+    int octRes      = pc.gridSizeOctRes.w;
+    int storageBase = probeStorageBase(slot, octRes);
+
+    // Trace one ray per octahedral direction
+    for (int dy = 0; dy < octRes; dy++) {
+        for (int dx = 0; dx < octRes; dx++) {
+            vec2 uv  = octIndexToUV(ivec2(dx, dy), octRes);
+            vec3 dir = octDecode(uv);
+
+            Ray ray;
+            ray.origin    = worldPos;
+            ray.direction = dir;
+            ray.tMin      = pc.intervalStart + 0.001; // small offset avoids self-intersection at shared boundaries
+            ray.tMax      = pc.intervalEnd;
+
+            vec3  radiance      = vec3(0.0);
+            float transmittance = 1.0; // 1 = ray escaped interval with nothing hit
+
+            HitInfo hit;
+            if (traverseBVH(ray, pc.bvhCount, hit)) {
+                GPUMaterial mat = materials[hit.materialIndex];
+                radiance        = mat.emission;  // only emission contributes from hit surfaces
+                transmittance   = 0.0;           // opaque surface blocks everything beyond it
+            }
+
+            int idx = storageBase + dy * octRes + dx;
+            cascadeData[idx] = packRadianceTransmittance(radiance, transmittance);
+        }
+    }
+}

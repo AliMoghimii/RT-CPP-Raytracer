@@ -770,9 +770,19 @@ The most visible artifact in basic RC is **ringing**: visible rings around small
 
 When merging cascade $i$ with cascade $i+1$, you interpolate bilinearly from the 4 nearest probes of cascade $i+1$. But each of those 4 probes saw the light source from a *different angle* (parallax), so they have *different occlusion patterns* for that direction. Naive interpolation can fail to occlude one contribution while occluding the others, producing a spurious extra source — visible as a faint ring.
 
-### The Bilinear Fix
+### Important: Two Separate Techniques Share the Word "Bilinear"
 
-Instead of merging the cascade-$i$ interval with the interpolated cascade-$i+1$ value, trace **4 separate cascade-$i$ rays** to the 4 starting points of the cascade-$i+1$ rays, merge each one independently with its corresponding cascade-$i+1$ ray, then average the 4 results with the usual bilinear weights.
+Before going further, clarify which technique you mean — they have very different costs:
+
+**Technique A — Bilinear angular filter** (always enabled, cheap): when sampling a single parent probe's octahedral map for direction $d$, do a 4-tap bilinear filter across the 4 nearest directional texels instead of nearest-neighbour. This smooths angular transitions at the coarse 4×4 octahedral resolution used by cascade 0 and is essentially free. The `sampleParentProbe` function in `cascade_merge.comp` implements this already.
+
+**Technique B — The full bilinear fix** (parallax correction, expensive): the technique described in the rest of this section. It addresses ringing caused by the fact that nearby parent probes occlude the same light source differently from their different spatial positions. It requires re-tracing or pre-storing multiple near-intervals per probe. Do not confuse it with the angular filter above.
+
+### The Full Bilinear Fix
+
+Instead of merging the cascade-$i$ interval with the interpolated cascade-$i+1$ value, trace **separate cascade-$i$ rays** toward each surrounding parent probe's starting position, merge each one independently with its corresponding cascade-$i+1$ ray, then average the results with trilinear weights.
+
+In 2D (4 surrounding parent probes):
 
 ```glsl
 vec4 merged = vec4(0);
@@ -784,10 +794,18 @@ for (int p = 0; p < 4; p++) {
 }
 ```
 
-**Cost**: 4× more rays in lower cascades.  
+In **3D**, there are **8 surrounding parent probes** (trilinear corners), so the loop runs 8 times — and each of those 8 near-intervals must be either re-traced or pre-stored. The canonical cost in 3D is therefore **8× the cascade_trace storage and dispatch budget**, not the 4× figure quoted for the 2D case.
+
+**Cost**: 8× cascade_trace storage and dispatch (3D); 4× in 2D.  
 **Benefit**: Eliminates ringing; also fixes "light leaking" when occluders are smaller than the probe spacing.
 
-For the showcase: skip the bilinear fix initially, see if ringing is visible in your scenes. For the dissertation: implement it as a quality option and measure the FPS impact.
+### Implementation Strategy
+
+In a pre-traced system (where `cascade_trace.comp` already ran), the full bilinear fix requires `cascade_trace` to store 8 near-intervals per (probe, direction) — one aimed toward each parent probe's spatial corner. This is an architectural extension to the trace pass, not just a merge-pass change.
+
+**For the showcase**: the bilinear angular filter (Technique A) is always active. Skip the full bilinear fix — if ringing appears in your scenes, document it as a known limitation of single-interval tracing. Bounded indoor scenes with few small lights are unlikely to exhibit strong ringing.
+
+**For the dissertation**: implement the full bilinear fix as a compile-time option (`#define BILINEAR_FIX`), extend `cascade_trace` to store 8 near-intervals per probe, and measure FPS impact and RMSE reduction against the reference path tracer. This is a standalone, measurable contribution.
 
 ## 22. The 3D Memory Problem
 
@@ -1766,7 +1784,7 @@ Plan your ablation studies up front. For Sparse RC, the natural ablation axes ar
 | Branching factor α | 1, 2, 3 | α=2 best memory/quality balance |
 | Octahedral resolution | 4×4, 8×8, 16×16 | Higher = sharper indirect, more VRAM |
 | Depth-aware upscaling | None / Bilateral / Bilinear-3D | Bilinear-3D best on slanted surfaces |
-| Bilinear fix | Off / On | Eliminates ringing, costs ~3× ray budget |
+| Bilinear fix | Off / On | Eliminates ringing, costs 8× trace storage (3D) |
 | Min-max probes | Off / On | Cleaner depth edges, doubles probes |
 | BVH builder | Median / SAH | SAH 2-5× faster traversal in complex scenes |
 

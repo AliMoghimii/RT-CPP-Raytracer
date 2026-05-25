@@ -1,0 +1,74 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+// One 16x16 workgroup covers a 16x16 tile of pixels (for cascade-0 G-buffer mode)
+// and a flat slice of parent slots (for cascade k>0 parent mode).
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// G-buffer - only accessed when allocMode == 0 (cascade 0 from screen pixels)
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D gPosition;
+layout(set = 0, binding = 4, r32f)   uniform readonly image2D gLinearDepth;
+
+// Current cascade hash map (set 1)
+// Names MUST match cascade_layout.glsl convention
+layout(std430, set = 1, binding = 0) buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) buffer SC  { uint nextSlot; };
+// bindings 4 and 5 not used in alloc
+
+// Parent cascade (set 2 = rcParentHashDescSets[k-1]) - only used when allocMode == 1
+// Names MUST match cascade_layout.glsl convention
+layout(std430, set = 2, binding = 0) readonly buffer PHK  { uint parentHashKeys[]; };
+layout(std430, set = 2, binding = 1) readonly buffer PHV  { uint parentHashValues[]; };
+layout(std430, set = 2, binding = 2) readonly buffer PSTK { uint parentSlotToKey[]; };
+layout(std430, set = 2, binding = 3) readonly buffer PSC  { uint parentNextSlot; };
+
+// RC_ALLOC_PASS: enables probeInsert() in cascade_layout.glsl (writes to hashKeys/hashValues/slotToKey/nextSlot)
+#define RC_ALLOC_PASS
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform AllocPC {
+    ivec4 gridSizeHashSize;     // xyz = gridSize of this cascade, w = hashTableSize
+    vec4  worldOriginSpacing;   // xyz = worldOrigin, w = spacing of this cascade
+    int   allocMode;            // 0 = G-buffer pixels -> cascade 0 cells; 1 = parent slots -> this cascade's cells
+    int   pad[3];
+} pc;
+
+void main()
+{
+    ivec3 cell;
+
+    if (pc.allocMode == 0)
+    {
+        // --- Cascade 0: one thread per G-buffer pixel ---
+        ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+        ivec2 sz    = imageSize(gPosition);
+        if (pixel.x >= sz.x || pixel.y >= sz.y) return;
+
+        // Sky pixels have no surface - no probe needed
+        if (imageLoad(gLinearDepth, pixel).r >= 1e5) return;
+
+        vec3 worldPos = imageLoad(gPosition, pixel).xyz;
+        // Which cascade-0 cell contains this world position?
+        cell = ivec3(floor((worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w));
+    }
+    else
+    {
+        // --- Cascade k>0: one thread per parent slot ---
+        uint parentSlot = gl_GlobalInvocationID.x + gl_GlobalInvocationID.y * (gl_NumWorkGroups.x * gl_WorkGroupSize.x);
+        if (parentSlot >= parentNextSlot) return;
+
+        uint  parentKey  = parentSlotToKey[parentSlot];
+        ivec3 parentCell = unpackCellKey(parentKey);
+        // This cascade's cells are 2x larger - each parent cell maps to one cell here.
+        cell = parentCell / 2;
+    }
+
+    // Bounds check
+    if (any(lessThan(cell, ivec3(0))) ||
+        any(greaterThanEqual(cell, pc.gridSizeHashSize.xyz))) return;
+
+    uint key = packCellKey(cell);
+    probeInsert(key, uint(pc.gridSizeHashSize.w));
+    // probeInsert atomically claims a slot and writes slotToKey[slot] = key
+}

@@ -173,4 +173,6 @@ private:
         VkImageLayout newLayout
     );
     static std::vector<char> readFile(const std::string& filename);
+    void emitComputeBarrier(VkCommandBuffer cmd);
+    void emitTransferToComputeBarrier(VkCommandBuffer cmd);
 };

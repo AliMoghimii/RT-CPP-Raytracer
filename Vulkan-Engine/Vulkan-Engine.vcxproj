@@ -196,6 +196,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <None Include="shaders\rc\probe_alloc.comp" />
     <None Include="shaders\rc\probe_trace.comp" />
     <None Include="shaders\shading\composite_temp.comp" />
+    <None Include="shaders\shading\final_gather.comp" />
     <None Include="shaders\tonemap\tonemap.comp" />
     <None Include="shaders\visibility\primary.comp" />
   </ItemGroup>

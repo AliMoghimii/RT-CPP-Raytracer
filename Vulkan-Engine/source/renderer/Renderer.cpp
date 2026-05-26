@@ -73,6 +73,7 @@ void Renderer::initVulkan() {
     VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
     gbuffer.transitionForWrite(cmd);
     transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, ldrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     cmdManager.submitOneTime(ctx, cmd);
 
     createTextureSampler();
@@ -351,10 +352,11 @@ void Renderer::createRCPipelineLayouts() {
         { rcHashDescSetLayout, rcParentHashDescSetLayout },
         sizeof(RCMergePC));
 
-    // Gather: set0=gbufDescSetLayout (G-buffer read + hdrImage write at b5),
-    //         set1=rcHashDescSetLayout (cascade-0 read)
+    // Gather: set0=sceneDescSetLayout (BVH + lights + materials, matches bvh.glsl/lighting.glsl bindings),
+    //         set1=gbufDescSetLayout  (G-buffer read + hdrImage write at b5),
+    //         set2=rcHashDescSetLayout (cascade-0 read)
     rcGatherPipelineLayout = makeLayout(
-        { gbufDescSetLayout, rcHashDescSetLayout },
+        { sceneDescSetLayout, gbufDescSetLayout, rcHashDescSetLayout },
         sizeof(RCGatherPC));
 
     // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
@@ -364,6 +366,12 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/probe_alloc.comp.spv", rcAllocPipelineLayout);
     rcTracePipeline = createComputePipelineFromSpv(
         "shaders/rc/probe_trace.comp.spv", rcTracePipelineLayout);
+    rcMergePipeline = createComputePipelineFromSpv(
+        "shaders/rc/cascade_merge.comp.spv", rcMergePipelineLayout);
+    rcGatherPipeline = createComputePipelineFromSpv(
+        "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
+    tonemapPipeline = createComputePipelineFromSpv(
+        "shaders/tonemap/tonemap.comp.spv", tonemapPipelineLayout);
 }
 
 VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipelineLayout layout) {
@@ -500,7 +508,7 @@ void Renderer::createGBufferDescriptorSet() {
         throw runtime_error("Renderer: G-buffer descriptor set allocation failed.");
 
     VkImageView views[6] = {
-        gbuffer.position.view, gbuffer.normal.view,     gbuffer.albedo.view,
+        gbuffer.position.view, gbuffer.normal.view, gbuffer.albedo.view,
         gbuffer.emissive.view, gbuffer.linearDepth.view, hdrImage.view
     };
 
@@ -612,7 +620,6 @@ void Renderer::mainLoop() {
     lastFrame = (float)glfwGetTime();
     float fpsTimer  = 0.0f;
     int   frameCount = 0;
-    bool  rcChecked = false;   // ← ADD: one-shot flag
     cout << "Renderer: Rendering started.\n";
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
@@ -632,35 +639,6 @@ void Renderer::mainLoop() {
         processInput();
         updateDynamicData();
         drawFrame();
-
-        if (!rcChecked) {
-            rcChecked = true;
-            vkDeviceWaitIdle(ctx.device);   // GPU must have finished the alloc pass
-
-            // 4-byte CPU-readable staging buffer
-            Buffer readback(ctx.allocator, sizeof(uint32_t),
-                VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_TO_CPU);
-
-            // Copy slotCounter → readback
-            VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
-            VkBufferCopy region{ 0, 0, sizeof(uint32_t) };
-            vkCmdCopyBuffer(cmd,
-                rcStorage.levels[0].slotCounter.handle,
-                readback.handle, 1, &region);
-            cmdManager.submitOneTime(ctx, cmd);
-
-            uint32_t count = *reinterpret_cast<uint32_t*>(readback.mapped);
-            printf("[RC] cascade-0 nextSlot = %u  (budget = %u)\n",
-                count, rcStorage.maxActiveSlots[0]);
-            if (count == 0)
-                printf("  ERROR: alloc did not run — check clear barrier or shader compile\n");
-            else if (count >= rcStorage.maxActiveSlots[0])
-                printf("  WARNING: at budget cap — increase kMaxSlots[0] in CascadeStorage.cpp\n");
-            else
-                printf("  OK\n");
-
-            readback = Buffer();   // destroy immediately — temp debug only
-        }
     }
     vkDeviceWaitIdle(ctx.device);
 }
@@ -748,51 +726,22 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &bi);
 
-    // Reusable SSBO read-write barrier between compute passes.
-    auto emitComputeBarrier = [](VkCommandBuffer c) {
-        VkMemoryBarrier b{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-        b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(
-            c,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0,
-            1,
-            &b,
-            0,
-            nullptr,
-            0,
-            nullptr
-        );
-    };
+    int      N = rcConfig.numCascades;
+    uint32_t dX = swapchain.extent.width / 16;
+    uint32_t dY = swapchain.extent.height / 16;
 
-    // Clear hash keys (sentinel 0xFFFFFFFF = empty) and slot counters (0) for all levels.
-	// This runs each frame so each frame recomputes active probes from scratch.
-    for (int i = 0; i < rcConfig.numCascades; i++) {
-        auto& lvl = rcStorage.levels[i];
-        vkCmdFillBuffer(cmd, lvl.hashKeys.handle, 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
-        vkCmdFillBuffer(cmd, lvl.slotCounter.handle, 0, sizeof(uint32_t), 0);
-        // hashValues and slotToKey don't need clearing: only read after a valid insert wrote them.
+    // === 1. Clear RC hash tables (transfer stage) ===
+    // Probes are fully re-allocated each frame. Reset hash keys to the empty sentinel
+    // (0xFFFFFFFF) and slot counters to 0. hashValues/slotToKey don't need clearing
+    // because they're only ever read after a valid atomicCompSwap insert wrote them.
+    for (int i = 0; i < N; i++) {
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].hashKeys.handle, 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].slotCounter.handle, 0, sizeof(uint32_t), 0);
     }
+    emitTransferToComputeBarrier(cmd);  // fill writes visible before allocation shaders read
 
-    // Barrier: fill writes visible to shaders before allocation dispatches start.
-    VkMemoryBarrier clearBarrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-    clearBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-    clearBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_TRANSFER_BIT,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0,
-        1,
-        &clearBarrier,
-        0,
-        nullptr,
-        0,
-        nullptr
-    );
-
+    // === 2. Primary visibility — fills G-buffer ===
+    // primary.comp: one thread per pixel, outputs world-pos / normal / albedo / emissive.
     CameraPushConstants pc{};
     pc.camPos = glm::vec4(cameraPos, 0.0f);
     pc.camForward = glm::vec4(cameraFront, 0.0f);
@@ -817,40 +766,33 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.skyTopColor = skyTopColor;
     pc.enableTextures = enableTextures;
 
-    uint32_t dispatchX = swapchain.extent.width / 16;
-    uint32_t dispatchY = swapchain.extent.height / 16;
-
-    VkDescriptorSet sets[] = { sceneDescSet, gbufDescSet };
-
-    // Pass 1: Primary Visibility
+    VkDescriptorSet primarySets[] = { sceneDescSet, gbufDescSet };
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
-    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
-    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+        twoPassPipelineLayout, 0, 2, primarySets, 0, nullptr);
+    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+        0, sizeof(CameraPushConstants), &pc);
+    vkCmdDispatch(cmd, dX, dY, 1);
+    emitComputeBarrier(cmd);  // G-buffer writes visible to alloc shaders
 
-    // Barrier: G-buffer writes visible to composite reads
-    VkMemoryBarrier memBarrier{};
-    memBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-    memBarrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-    memBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        0, 1, &memBarrier, 0, nullptr, 0, nullptr);
-
-    // alloc dispatch — levels 0, 1, 2, ... strictly in order
-    for (int level = 0; level < rcConfig.numCascades; level++) {
+    // === 3. Probe allocation — all cascades, bottom-up (0 → N-1) ===
+    // Cascade 0 (allocMode=0): one thread per G-buffer pixel, inserts probe cell keys
+    //   for each pixel's surface position into the level-0 hash map.
+    // Cascades 1-N-1 (allocMode=1): one thread per parent slot, propagates occupied cells
+    //   outward by one level. Each level k must complete before level k+1 reads it.
+    for (int level = 0; level < N; level++) {
         RCAllocPC allocPC{};
-        glm::ivec3 gs = rcConfig.gridSize(level);
-        allocPC.gridSizeHashSize = glm::ivec4(gs, (int)rcStorage.hashTableSize[level]);
+        allocPC.gridSizeHashSize = glm::ivec4(rcConfig.gridSize(level), (int)rcStorage.hashTableSize[level]);
         allocPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
         allocPC.allocMode = (level == 0) ? 0 : 1;
         allocPC.parentMaxSlots = (level == 0) ? 0 : (int)rcStorage.maxActiveSlots[level - 1];
 
+        // set 2 for cascade-0: rcParentHashDescSets[0] is a layout-compatible dummy
+        // (allocMode=0 never reads set 2, but the pipeline layout requires a valid binding)
         VkDescriptorSet allocSets[3] = {
             gbufDescSet,
             rcHashDescSets[level],
-            (level == 0) ? rcParentHashDescSets[0]         // cascade 0: no parent — layout-compatible dummy (allocMode=0 never reads set 2)
-                         : rcParentHashDescSets[level - 1]
+            (level == 0) ? rcParentHashDescSets[0] : rcParentHashDescSets[level - 1]
         };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcAllocPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
@@ -859,20 +801,21 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             0, sizeof(RCAllocPC), &allocPC);
 
         if (level == 0) {
-            // One thread per G-buffer pixel (workgroup = 16x16 = 256 threads)
-            vkCmdDispatch(cmd,
-                (swapchain.extent.width + 15) / 16,
-                (swapchain.extent.height + 15) / 16, 1);
+            // One thread per G-buffer pixel (16x16 workgroup)
+            vkCmdDispatch(cmd, (swapchain.extent.width + 15) / 16, (swapchain.extent.height + 15) / 16, 1);
         }
         else {
-            // One thread per parent slot — 1D dispatch, 256 threads per workgroup
-            uint32_t parentSlots = rcStorage.maxActiveSlots[level - 1];
-            vkCmdDispatch(cmd, (parentSlots + 255) / 256, 1, 1);
+            // One thread per parent slot (256-wide 1D workgroup)
+            vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level - 1] + 255) / 256, 1, 1);
         }
-        emitComputeBarrier(cmd);  // level k's slotToKey must be ready before level k+1 reads it
+        emitComputeBarrier(cmd);  // level k hash map complete before level k+1 reads it
     }
 
-    for (int level = 0; level < rcConfig.numCascades; level++) {
+    // === 4. Probe trace — all cascades ===
+    // Each active probe fires octRes*octRes rays covering its assigned depth interval
+    // [intervalStart, intervalEnd]. Results are packed (radiance, transmittance) per
+    // direction and written into cascadeData for the merge step.
+    for (int level = 0; level < N; level++) {
         RCTracePC tracePC{};
         tracePC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
         tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
@@ -887,40 +830,98 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             rcTracePipelineLayout, 0, 2, traceSets, 0, nullptr);
         vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCTracePC), &tracePC);
-        vkCmdDispatch(cmd, (rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
-        emitComputeBarrier(cmd);  // trace writes visible to next level or to merge
+        vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);  // trace writes visible to merge (or gather for level 0)
     }
 
-    // Pass 2: Composite Shading
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compositePassPipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, sets, 0, nullptr);
-    vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
-    vkCmdDispatch(cmd, dispatchX, dispatchY, 1);
+    // === 5. Cascade merge — top-down (N-2 → 0) ===
+    // Composites each probe's near-interval with the trilinearly-interpolated far-interval
+    // from the parent level: merged.L = near.L + near.T * far.L; merged.T = near.T * far.T.
+    // Top-down order is mandatory: parent must be fully merged before child reads it.
+    // Cascade N-1 is skipped (no parent; its traced data is already the final far-field).
+    for (int level = N - 2; level >= 0; level--) {
+        int parent = level + 1;
+        RCMergePC mergePC{};
+        mergePC.currentGridOctRes = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
+        mergePC.parentGridOctRes = glm::ivec4(rcConfig.gridSize(parent), rcConfig.octRes(parent));
+        mergePC.worldOriginCurrentSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
+        mergePC.parentSpacing = rcConfig.spacing(parent);
+        mergePC.currentHashSize = (int)rcStorage.hashTableSize[level];
+        mergePC.parentHashSize = (int)rcStorage.hashTableSize[parent];
+        mergePC.currentMaxSlots = (int)rcStorage.maxActiveSlots[level];
 
-    // Blit hdrImage (R16G16B16A16_SFLOAT) → swapchain (R8G8B8A8_UNORM)
-    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_GENERAL,   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        // set 0 = current level (read cascadeData + hash for slot lookup, write cascadeData)
+        // set 1 = parent level  (read parentHashKeys/Values for probeLookupInParent)
+        VkDescriptorSet mergeSets[] = { rcHashDescSets[level], rcParentHashDescSets[parent] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcMergePipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcMergePipelineLayout, 0, 2, mergeSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcMergePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCMergePC), &mergePC);
+        vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        emitComputeBarrier(cmd);  // merged data visible to the next lower level
+    }
 
-    VkImageBlit blitRegion{};
-    blitRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blitRegion.srcOffsets[0] = { 0, 0, 0 };
-    blitRegion.srcOffsets[1] = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
-    blitRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
-    blitRegion.dstOffsets[0] = { 0, 0, 0 };
-    blitRegion.dstOffsets[1] = { (int32_t)swapchain.extent.width, (int32_t)swapchain.extent.height, 1 };
+    // === 6. Final gather — replaces composite_temp ===
+    // Reads cascade-0's fully merged probe data. For each G-buffer pixel: trilinearly
+    // interpolates indirect irradiance from the 8 surrounding cascade-0 probes, then adds
+    // direct Lambertian + BVH-shadow lighting. Writes HDR result to hdrImage (b5 of gbufDescSet).
+    {
+        RCGatherPC gatherPC{};
+        gatherPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
+        gatherPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
+        gatherPC.hashSize = (int)rcStorage.hashTableSize[0];
+        gatherPC.bvhCount = (int)sceneBVH.size();
+        gatherPC.lightCount = (int)sceneLights.size();
 
-    vkCmdBlitImage(cmd,
-        hdrImage.handle,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        swapchain.images[imageIndex],
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1,
-        &blitRegion,
-        VK_FILTER_NEAREST
-    );
+        // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
+        // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
+        // set 2 = rcHashDescSets[0] (cascade-0 hash + cascadeData read)
+        VkDescriptorSet gatherSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcGatherPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcGatherPipelineLayout, 0, 3, gatherSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcGatherPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCGatherPC), &gatherPC);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);  // hdrImage writes visible to tonemap
+    }
 
-    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
-    transitionImageLayout(cmd, swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+    // === 7. Tonemap — hdrImage (SFLOAT) → ldrImage (UNORM) ===
+    // ACES film curve + gamma correction. Reads hdrImage (b0 of tonemapDescSet),
+    // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
+    {
+        TonemapPC tonemapPC{ 1.0f, {0, 0, 0} };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            tonemapPipelineLayout, 0, 1, &tonemapDescSet, 0, nullptr);
+        vkCmdPushConstants(cmd, tonemapPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(TonemapPC), &tonemapPC);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        // No barrier needed before the copy — image layout transitions act as execution barriers.
+    }
+
+    // === 8. Copy ldrImage → swapchain ===
+    // ldrImage is R8G8B8A8_UNORM; the swapchain surface is also R8G8B8A8_UNORM, so
+    // vkCmdCopyImage works directly (no format conversion, no vkCmdBlitImage needed).
+    transitionImageLayout(cmd, ldrImage.handle,
+        VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex],
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    VkImageCopy copyRegion{};
+    copyRegion.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copyRegion.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    copyRegion.extent = { swapchain.extent.width, swapchain.extent.height, 1 };
+    vkCmdCopyImage(cmd,
+        ldrImage.handle, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        swapchain.images[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copyRegion);
+
+    transitionImageLayout(cmd, ldrImage.handle,
+        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, swapchain.images[imageIndex],
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     vkEndCommandBuffer(cmd);
 }
@@ -1049,6 +1050,26 @@ vector<char> Renderer::readFile(const string& filename) {
     file.seekg(0);
     file.read(buffer.data(), fileSize);
     return buffer;
+}
+
+void Renderer::emitComputeBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier b { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    b.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &b, 0, nullptr, 0, nullptr);
+}
+
+void Renderer::emitTransferToComputeBarrier(VkCommandBuffer cmd) {
+    VkMemoryBarrier b { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+    b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        0, 1, &b, 0, nullptr, 0, nullptr);
 }
 
 VkShaderModule Renderer::createShaderModule(const vector<char>& code) {

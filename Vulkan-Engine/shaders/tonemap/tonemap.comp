@@ -1,3 +1,29 @@
 #version 460
-// TODO: implement in section 18 (Phase 11: Tonemap Pass)
-void main() {}
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(set = 0, binding = 0, rgba16f) uniform readonly  image2D inHDR;
+layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outLDR;
+
+layout(push_constant) uniform TonemapPC {
+    float exposure;
+    int pad[3];
+} pc;
+
+// ACES Film tone mapping (Narkowicz 2015 approximation).
+// Better than Reinhard: preserves shadow detail (toe), correct midtones, compressed but not white highlights.
+vec3 ACESFilm(vec3 x) {
+    const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(outLDR);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec3 hdr = imageLoad(inHDR, pixel).rgb * pc.exposure;
+    vec3 ldr = ACESFilm(hdr);
+    ldr = pow(ldr, vec3(1.0 / 2.2));    // linear -> sRGB gamma
+
+    imageStore(outLDR, pixel, vec4(ldr, 1.0));
+}

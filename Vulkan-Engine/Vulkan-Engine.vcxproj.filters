@@ -239,5 +239,8 @@
     <None Include="shaders\tonemap\tonemap.comp">
       <Filter>Shader\Tonemap</Filter>
     </None>
+    <None Include="shaders\shading\final_gather.comp">
+      <Filter>Shader\Shading</Filter>
+    </None>
   </ItemGroup>
 </Project>

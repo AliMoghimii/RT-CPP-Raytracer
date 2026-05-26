@@ -11,20 +11,20 @@ struct GPUBVHNode {
 };
 
 struct GPUTriangle {
-    vec3 v0;    float p1;
-    vec3 v1;    float p2;
-    vec3 v2;    float p3;
-    vec3 n0;    float p4;
-    vec3 n1;    float p5;
+    vec3 v0;    float uv0x;
+    vec3 v1;    float uv0y;
+    vec3 v2;    float uv1x;
+    vec3 n0;    float uv1y;
+    vec3 n1;    float uv2x;
     vec3 n2;
     int isSmooth;
     int materialIndex;
-    float p6;
+    float uv2y;
     float p7;
     float p8;
 };
 
-// Bindings — assumes set=0, binding=8 for BVH and binding=3 for triangles
+// Bindings ï¿½ assumes set=0, binding=8 for BVH and binding=3 for triangles
 // Caller defines these via descriptor set layout
 layout(std430, set = 0, binding = 3) readonly buffer TriangleBuffer { GPUTriangle triangles[]; };
 layout(std430, set = 0, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhNodes[]; };
@@ -82,7 +82,10 @@ bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
     } else {
         hit.normal = normalize(cross(tri.v1 - tri.v0, tri.v2 - tri.v0));
     }
-    hit.uv = vec2(hitU, hitV);
+    // Interpolate per-vertex texture UV using barycentric weights (w already defined above)
+    hit.uv = w    * vec2(tri.uv0x, tri.uv0y)
+           + hitU * vec2(tri.uv1x, tri.uv1y)
+           + hitV * vec2(tri.uv2x, tri.uv2y);
     hit.materialIndex = tri.materialIndex;
     
     return true;

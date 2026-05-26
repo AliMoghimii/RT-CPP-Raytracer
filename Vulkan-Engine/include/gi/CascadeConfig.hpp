@@ -9,7 +9,7 @@ struct CascadeConfig
 	int branchingFactor = 2;	// a in the interval formula -> d_end(k) = spacing0 x 2^(a � k) = 0.5 x 4^k
 
 	glm::vec3 worldOrigin = glm::vec3(-16.0f, -4.0f, -16.0f);
-	glm::ivec3 gridSize0 = glm::ivec3(64, 32, 64);
+	glm::ivec3 gridSize0 = glm::ivec3(64, 60, 92);  // covers full room: X(-16..16) Y(-4..26) Z(-16..30)
 	float spacing0 = 0.5f;
 	int octRes0 = 4;
 

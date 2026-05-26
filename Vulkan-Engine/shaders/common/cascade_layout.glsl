@@ -22,15 +22,17 @@
 
 // --- Key encoding ---
 
+// Layout: X[5:0]=6 bits (max 63), Y[11:6]=6 bits (max 63), Z[18:12]=7 bits (max 127)
+// Supports grids up to 64×64×128 — covers the full 30×25×45 room at spacing0=0.5.
 uint packCellKey(ivec3 cell) {
-    return (uint(cell.x) & 0x3Fu) | ((uint(cell.y) & 0x1Fu) << 6) | ((uint(cell.z) & 0x3Fu) << 11);
+    return (uint(cell.x) & 0x3Fu) | ((uint(cell.y) & 0x3Fu) << 6) | ((uint(cell.z) & 0x7Fu) << 12);
 }
 
 ivec3 unpackCellKey(uint key) {
     return ivec3(
         int(key & 0x3Fu),
-        int((key >> 6) & 0x1Fu),
-        int((key >> 11) & 0x3Fu)
+        int((key >> 6) & 0x3Fu),
+        int((key >> 12) & 0x7Fu)
     );
 }
 

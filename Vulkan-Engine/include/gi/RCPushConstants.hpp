@@ -3,9 +3,9 @@
 
 // All structs use ivec4/vec4 instead of ivec3/vec3.
 // Why: in GLSL std430 (used for push constants), vec3/ivec3 have base alignment = 16,
-// but glm::vec3 has alignment = 4. Using vec4/ivec4 makes C++ and GLSL agree � no padding mismatch.
+// but glm::vec3 has alignment = 4. Using vec4/ivec4 makes C++ and GLSL agree -- no padding mismatch.
 
-struct RCAllocPC {                  // 48 bytes � well under 128-byte minimum
+struct RCAllocPC {                  // 48 bytes -- well under 128-byte minimum
 glm::ivec4 gridSizeHashSize;        // xyz = gridSize, w = hashTableSize
     glm::vec4  worldOriginSpacing;  // xyz = worldOrigin, w = spacing
     int allocMode;                  // 0 = from G-buffer, 1 = from parent slots
@@ -13,13 +13,17 @@ glm::ivec4 gridSizeHashSize;        // xyz = gridSize, w = hashTableSize
     int pad[2];
 };
 
-struct RCTracePC {                  // 48 bytes
-    glm::ivec4 gridSizeOctRes;      // xyz = gridSize (unused in trace � only w used), w = octRes
+struct RCTracePC {                  // 64 bytes
+    glm::ivec4 gridSizeOctRes;      // xyz = gridSize (unused in trace -- only w used), w = octRes
     glm::vec4 worldOriginSpacing;   // xyz = worldOrigin, w = spacing
     float intervalStart;
     float intervalEnd;
     int bvhCount;
     int maxActiveSlots;
+    int lightCount;
+    int planeCount;
+    int quadCount;
+    int pad;
 };
 
 struct RCMergePC {                          // 64 bytes

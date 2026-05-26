@@ -13,6 +13,7 @@ void tessellateSphere(
 {
 	std::vector<glm::vec3> vertices;
 	std::vector<glm::vec3> normals;
+	std::vector<glm::vec2> uvCoords;
 
 	for (int v = 0; v <= segmentsV; ++v) {
 		float phi = glm::pi<float>() * v / segmentsV;
@@ -26,6 +27,13 @@ void tessellateSphere(
 			glm::vec3 vertex = sphere.center + normal * sphere.radius;
 			vertices.push_back(vertex);
 			normals.push_back(normal);
+			// Spherical UV matching the legacy shader formula:
+			//   u = 0.5 + atan2(nz,nx)/(2π)  →  0.5 + theta/(2π)
+			//   v = 0.5 - asin(ny)/π          →  phi/π
+			uvCoords.push_back(glm::vec2(
+				0.5f + theta / (2.0f * glm::pi<float>()),
+				phi / glm::pi<float>()
+			));
 		}
 	}
 
@@ -37,17 +45,23 @@ void tessellateSphere(
 		for (int u = 0; u < segmentsU; ++u) {
 			// Two triangles per quad
 			GPUTriangle t1{};
-			t1.v0 = vertices[idx(u, v)];		t1.n0 = normals[idx(u, v)];
-			t1.v1 = vertices[idx(u + 1, v)];	t1.n1 = normals[idx(u + 1, v)];
-			t1.v2 = vertices[idx(u, v + 1)];	t1.n2 = normals[idx(u, v + 1)];
+			t1.v0 = vertices[idx(u, v)];       t1.n0 = normals[idx(u, v)];
+			t1.uv0x = uvCoords[idx(u, v)].x;   t1.uv0y = uvCoords[idx(u, v)].y;
+			t1.v1 = vertices[idx(u + 1, v)];   t1.n1 = normals[idx(u + 1, v)];
+			t1.uv1x = uvCoords[idx(u+1, v)].x; t1.uv1y = uvCoords[idx(u+1, v)].y;
+			t1.v2 = vertices[idx(u, v + 1)];   t1.n2 = normals[idx(u, v + 1)];
+			t1.uv2x = uvCoords[idx(u, v+1)].x; t1.uv2y = uvCoords[idx(u, v+1)].y;
 			t1.isSmooth = 1;
 			t1.materialIndex = materialIndex;
 			outTriangles.push_back(t1);
 
 			GPUTriangle t2{};
-			t2.v0 = vertices[idx(u + 1, v)];		t2.n0 = normals[idx(u + 1, v)];
-			t2.v1 = vertices[idx(u + 1, v + 1)];	t2.n1 = normals[idx(u + 1, v + 1)];
-			t2.v2 = vertices[idx(u, v + 1)];		t2.n2 = normals[idx(u, v + 1)];
+			t2.v0 = vertices[idx(u + 1, v)];       t2.n0 = normals[idx(u + 1, v)];
+			t2.uv0x = uvCoords[idx(u+1, v)].x;     t2.uv0y = uvCoords[idx(u+1, v)].y;
+			t2.v1 = vertices[idx(u + 1, v + 1)];   t2.n1 = normals[idx(u + 1, v + 1)];
+			t2.uv1x = uvCoords[idx(u+1, v+1)].x;   t2.uv1y = uvCoords[idx(u+1, v+1)].y;
+			t2.v2 = vertices[idx(u, v + 1)];        t2.n2 = normals[idx(u, v + 1)];
+			t2.uv2x = uvCoords[idx(u, v+1)].x;     t2.uv2y = uvCoords[idx(u, v+1)].y;
 			t2.isSmooth = 1;
 			t2.materialIndex = materialIndex;
 			outTriangles.push_back(t2);

@@ -865,8 +865,11 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
         tracePC.intervalStart = rcConfig.intervalStart(level);
         tracePC.intervalEnd = rcConfig.intervalEnd(level);
-        tracePC.bvhCount = (int)sceneBVH.size();
+        tracePC.bvhCount       = (int)sceneBVH.size();
         tracePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];
+        tracePC.lightCount     = (int)sceneLights.size();
+        tracePC.planeCount     = (int)scenePlanes.size();
+        tracePC.quadCount      = (int)sceneQuads.size();
 
         VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);

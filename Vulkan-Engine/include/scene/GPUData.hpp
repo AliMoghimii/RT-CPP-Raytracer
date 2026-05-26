@@ -46,19 +46,19 @@ struct GPUSphere {
 
 struct GPUTriangle {
     glm::vec3 v0;
-    float p1;
+    float uv0x;          // tex UV for vertex 0, packed into vec3 padding slots
     glm::vec3 v1;
-    float p2;
+    float uv0y;
     glm::vec3 v2;
-    float p3;
+    float uv1x;
     glm::vec3 n0;
-    float p4;
+    float uv1y;
     glm::vec3 n1;
-    float p5;
+    float uv2x;
     glm::vec3 n2;
     int isSmooth;
     int materialIndex;
-    float p6;
+    float uv2y;
     float p7;
     float p8;
 };

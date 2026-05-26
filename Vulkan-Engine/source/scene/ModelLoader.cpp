@@ -146,12 +146,12 @@ void ModelLoader::loadOBJ(const string& filename, vector<GPUTriangle>& sceneTria
                 for (size_t i = 1; i < vIndices.size() - 1; ++i) {
                     GPUTriangle tri;
 
-                    tri.p1 = 0.0f;
-                    tri.p2 = 0.0f;
-                    tri.p3 = 0.0f;
-                    tri.p4 = 0.0f;
-                    tri.p5 = 0.0f;
-                    tri.p6 = 0.0f;
+                    tri.uv0x = 0.0f;
+                    tri.uv0y = 0.0f;
+                    tri.uv1x = 0.0f;
+                    tri.uv1y = 0.0f;
+                    tri.uv2x = 0.0f;
+                    tri.uv2y = 0.0f;
                     tri.p7 = 0.0f;
                     tri.p8 = 0.0f;
 

@@ -111,12 +111,14 @@ private:
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;
     VkPipeline rcMergePipeline = VK_NULL_HANDLE;
     VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
+    VkPipeline rcTransparentPipeline = VK_NULL_HANDLE;
     VkPipeline tonemapPipeline = VK_NULL_HANDLE;
 
     VkPipelineLayout rcAllocPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTracePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcMergePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcGatherPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout rcTransparentPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout tonemapPipelineLayout = VK_NULL_HANDLE;
 
     VkSampler textureSampler = VK_NULL_HANDLE;

@@ -359,6 +359,11 @@ void Renderer::createRCPipelineLayouts() {
         { sceneDescSetLayout, gbufDescSetLayout, rcHashDescSetLayout },
         sizeof(RCGatherPC));
 
+    // Transparent: same three descriptor sets as gather; separate push constant (128 bytes, includes camera orientation)
+    rcTransparentPipelineLayout = makeLayout(
+        { sceneDescSetLayout, gbufDescSetLayout, rcHashDescSetLayout },
+        sizeof(TransparentPC));
+
     // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
     tonemapPipelineLayout = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
 
@@ -370,6 +375,8 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/cascade_merge.comp.spv", rcMergePipelineLayout);
     rcGatherPipeline = createComputePipelineFromSpv(
         "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
+    rcTransparentPipeline = createComputePipelineFromSpv(
+        "shaders/shading/transparent.comp.spv", rcTransparentPipelineLayout);
     tonemapPipeline = createComputePipelineFromSpv(
         "shaders/tonemap/tonemap.comp.spv", tonemapPipelineLayout);
 }
@@ -621,6 +628,7 @@ void Renderer::mainLoop() {
     float fpsTimer  = 0.0f;
     int   frameCount = 0;
     cout << "Renderer: Rendering started.\n";
+    bool rcSlotChecked = false;
     while (!glfwWindowShouldClose(window)) {
         float currentFrame = (float)glfwGetTime();
         deltaTime = currentFrame - lastFrame;
@@ -639,6 +647,42 @@ void Renderer::mainLoop() {
         processInput();
         updateDynamicData();
         drawFrame();
+
+        if (!rcSlotChecked) {
+            rcSlotChecked = true;
+            vkDeviceWaitIdle(ctx.device);
+
+            printf("[RC] Cascade slot counts:\n");
+            uint32_t prevCount = UINT32_MAX;
+            bool hierarchyOK = true;
+
+            for (int lvl = 0; lvl < rcConfig.numCascades; lvl++) {
+                Buffer rb(ctx.allocator, sizeof(uint32_t),
+                    VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_TO_CPU);
+                VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+                VkBufferCopy region{ 0, 0, sizeof(uint32_t) };
+                vkCmdCopyBuffer(cmd, rcStorage.levels[lvl].slotCounter.handle, rb.handle, 1, &region);
+                cmdManager.submitOneTime(ctx, cmd);
+
+                uint32_t count = *reinterpret_cast<uint32_t*>(rb.mapped);
+                uint32_t maxSlots = rcStorage.maxActiveSlots[lvl];
+
+                printf("  cascade-%d: %5u probes  (max=%u)  %s\n",
+                    lvl, count, maxSlots,
+                    (count == 0) ? "WARNING: empty!" :
+                    (count > maxSlots) ? "ERROR: overflow!" : "OK");
+
+                if (lvl > 0 && count > prevCount) {
+                    printf("    ERROR: cascade-%d has MORE probes than cascade-%d\n", lvl, lvl - 1);
+                    hierarchyOK = false;
+                }
+                prevCount = count;
+            }
+
+            if (hierarchyOK)
+                printf("  Hierarchy invariant OK (each level <= previous)\n");
+            printf("  Remove this block once counts look correct.\n");
+        }
     }
     vkDeviceWaitIdle(ctx.device);
 }
@@ -870,9 +914,14 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         RCGatherPC gatherPC{};
         gatherPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
         gatherPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
-        gatherPC.hashSize = (int)rcStorage.hashTableSize[0];
-        gatherPC.bvhCount = (int)sceneBVH.size();
-        gatherPC.lightCount = (int)sceneLights.size();
+        gatherPC.camPos      = glm::vec4(cameraPos, 0.0f);
+        gatherPC.hashSize       = (int)rcStorage.hashTableSize[0];
+        gatherPC.bvhCount       = (int)sceneBVH.size();
+        gatherPC.planeCount     = (int)scenePlanes.size();
+        gatherPC.quadCount      = (int)sceneQuads.size();
+        gatherPC.lightCount     = (int)sceneLights.size();
+        gatherPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
+        gatherPC.skyTopColor    = glm::vec4(skyTopColor, 0.0f);
 
         // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
         // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
@@ -884,10 +933,39 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         vkCmdPushConstants(cmd, rcGatherPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCGatherPC), &gatherPC);
         vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);  // hdrImage writes visible to transparent pass
+    }
+
+    // === 7. Transparent pass — re-traces rays for transparent pixels, overwrites outHDR ===
+    // Reads G-buffer to identify transparent pixels, reconstructs primary rays from camera
+    // orientation, then follows the refraction/reflection chain and shades the final hit.
+    // Opaque pixels in outHDR are left untouched.
+    {
+        TransparentPC transPC{};
+        transPC.camPos            = pc.camPos;
+        transPC.camRight          = pc.camRight;
+        transPC.camUp             = pc.camUp;
+        transPC.camForward        = pc.camForward;
+        transPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
+        transPC.gridSizeOctRes    = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
+        transPC.bvhCount          = (int)sceneBVH.size();
+        transPC.lightCount        = (int)sceneLights.size();
+        transPC.planeCount        = (int)scenePlanes.size();
+        transPC.quadCount         = (int)sceneQuads.size();
+        transPC.maxBounces        = 8;
+        transPC.hashSize          = (int)rcStorage.hashTableSize[0];
+
+        VkDescriptorSet transSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTransparentPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcTransparentPipelineLayout, 0, 3, transSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcTransparentPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(TransparentPC), &transPC);
+        vkCmdDispatch(cmd, dX, dY, 1);
         emitComputeBarrier(cmd);  // hdrImage writes visible to tonemap
     }
 
-    // === 7. Tonemap — hdrImage (SFLOAT) → ldrImage (UNORM) ===
+    // === 8. Tonemap — hdrImage (SFLOAT) → ldrImage (UNORM) ===
     // ACES film curve + gamma correction. Reads hdrImage (b0 of tonemapDescSet),
     // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
     {
@@ -956,6 +1034,7 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcTransparentPipeline, nullptr);
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
     vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);
     vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
@@ -964,6 +1043,7 @@ void Renderer::cleanup() {
     vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcTransparentPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, twoPassPipelineLayout, nullptr);
 

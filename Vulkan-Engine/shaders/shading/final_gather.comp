@@ -220,7 +220,7 @@ void main() {
     // Indirect scale: absorbs (1/PI BRDF) + scene calibration mismatch (lightIntensity=100).
     // All cascade levels evaluate direct lighting, so irradiance is ~300x larger than original
     // mat.ambient=0.1. Once direct is restricted to cascade-0 only this needs re-tuning upward.
-    const float kIndirectScale = 0.005;
+    const float kIndirectScale = 0.0005;
 
     // Final color: direct + indirect diffuse GI (albedo × irradiance from cascades)
     vec3 color = directLight + albedo * indirect * kIndirectScale;
@@ -506,7 +506,7 @@ void main() {
     // Exponential distance fog (density 0.04, same as legacy renderer).
     // Blends toward sky gradient for a natural depth haze on distant surfaces.
     float fogDepth  = length(worldPos - pc.camPos.xyz);
-    float fogAtten  = exp(-0.04 * fogDepth);
+    float fogAtten  = exp(-0.02 * fogDepth);
     vec3  fogDir    = (fogDepth > 0.0001) ? normalize(worldPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
     vec3  fogColor  = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
                           clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));

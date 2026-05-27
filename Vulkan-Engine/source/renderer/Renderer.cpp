@@ -729,11 +729,14 @@ void Renderer::drawFrame() {
     if (width == 0 || height == 0) return;
 
     vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(ctx.device, 1, &cmdManager.inFlightFence);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(ctx.device, swapchain.handle, UINT64_MAX,
-                          cmdManager.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    VkResult acquireResult = vkAcquireNextImageKHR(ctx.device, swapchain.handle, UINT64_MAX,
+                                                   cmdManager.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+        return;
+
+    vkResetFences(ctx.device, 1, &cmdManager.inFlightFence);
 
     vkResetCommandBuffer(cmdManager.buffer, 0);
     recordCommandBuffer(cmdManager.buffer, imageIndex);
@@ -752,7 +755,8 @@ void Renderer::drawFrame() {
     si.signalSemaphoreCount = 1;
     si.pSignalSemaphores = signalSems;
 
-    vkQueueSubmit(ctx.computeQueue, 1, &si, cmdManager.inFlightFence);
+    if (vkQueueSubmit(ctx.computeQueue, 1, &si, cmdManager.inFlightFence) != VK_SUCCESS)
+        throw std::runtime_error("Renderer: vkQueueSubmit failed");
 
     VkPresentInfoKHR pi{};
     pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;

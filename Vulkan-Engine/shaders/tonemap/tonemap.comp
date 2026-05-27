@@ -10,7 +10,8 @@ layout(push_constant) uniform TonemapPC {
 } pc;
 
 // ACES Film tone mapping (Narkowicz 2015 approximation).
-// Better than Reinhard: preserves shadow detail (toe), correct midtones, compressed but not white highlights.
+// Preserves shadow detail (toe), rich saturated midtones, compressed-not-clipped highlights.
+// Reinhard was tried but maps moderate HDR values too low, making GI-lit areas look grey.
 vec3 ACESFilm(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);

@@ -6,7 +6,7 @@ void Swapchain::create(VulkanContext& ctx, VkSurfaceKHR surf, VkExtent2D size) {
     VkSwapchainCreateInfoKHR ci{};
     ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     ci.surface = surf;
-    ci.minImageCount = 2;
+    ci.minImageCount = 3;
     ci.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
     ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
     ci.imageExtent = size;

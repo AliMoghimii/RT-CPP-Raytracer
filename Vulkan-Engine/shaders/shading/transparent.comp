@@ -238,7 +238,7 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
     if (weightSum > 0.001) indirect /= weightSum;
     else indirect = vec3(0.05);
 
-    const float kIndirectScale = 0.02;
+    const float kIndirectScale = 0.005;
     color += albedo * indirect * kIndirectScale;
 
     // --- First-order reflection for reflective terminal surfaces (T6) ---
@@ -325,6 +325,14 @@ void main() {
     vec3 accumulatedColor = vec3(0.0);
     vec3 attenuation      = vec3(1.0);
 
+    // Pre-baked albedo/roughness/metallic for the first transparent hit.
+    // primary.comp already sampled all textures and stored the results in the G-buffer.
+    // We reuse them here because hitUV is vec2(0) for the first hit (G-buffer doesn't store UVs).
+    vec4 firstHitAlbedoData = imageLoad(gAlbedo, pixel);
+    vec3 firstHitAlbedo     = firstHitAlbedoData.rgb;
+    float firstHitMetallic  = firstHitAlbedoData.a;
+    float firstHitRoughness = imageLoad(gNormal, pixel).a;  // roughness stored in gNormal.w
+
     // rayOrig/rayDir track the next ray to cast (unused on the first iteration).
     vec3 rayOrig = pc.camPos.xyz;
     vec3 rayDir  = primaryRayDir;
@@ -342,6 +350,11 @@ void main() {
             hitPos    = imageLoad(gPosition, pixel).xyz;
             hitNormal = normalize(imageLoad(gNormal, pixel).xyz);
             mat       = primaryMat;
+            // Override roughness/metallic with G-buffer values (sampled from texture maps by primary.comp).
+            // mat.roughness defaults to the flat material value (e.g. 1.0 for ice); the texture map
+            // gives the correct per-pixel roughness needed for accurate PBR specular.
+            mat.roughness = firstHitRoughness;
+            mat.metallic  = firstHitMetallic;
             hitUV     = vec2(0.0);
             hitIsPlane = false;
             firstHit  = false;
@@ -374,9 +387,6 @@ void main() {
         }
 
         // --- Transparent surface: Schlick Fresnel + refract() ---
-        // eta and n depend on whether the ray is entering or exiting the medium.
-        // dot(rayDir, hitNormal) < 0: entering (air→glass), normal faces incoming ray
-        // dot(rayDir, hitNormal) > 0: exiting  (glass→air), flip normal for refract()
         float cosI      = dot(rayDir, hitNormal);
         float eta       = (cosI < 0.0) ? 1.0 / mat.ior : mat.ior;
         vec3  n         = (cosI < 0.0) ? hitNormal : -hitNormal;
@@ -384,24 +394,39 @@ void main() {
         float r0        = (1.0 - eta) / (1.0 + eta); r0 *= r0;
         float fresnel   = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
         vec3  refractDir = refract(rayDir, n, eta);
-        if (length(refractDir) < 0.001) fresnel = 1.0;  // total internal reflection
+        if (length(refractDir) < 0.001) fresnel = 1.0;
 
-        // Surface emission bleeds through proportional to (1 - transparency)
-        accumulatedColor += attenuation * mat.emission * (1.0 - mat.transparency);
+        // Surface shading bleeds through at (1 - transparency): gives textured transparent
+        // objects (ice, glass) their visible surface detail, shadows, and specular highlights.
+        // Uses shadeOpaque for shadow testing + cascade GI — same as the opaque terminal path.
+        // depth==0: use G-buffer albedo (primary.comp sampled textures + displacement).
+        // depth>0: sample texture directly with BVH-provided hitUV.
+        {
+            vec3 surfAlbedo;
+            if (depth == 0) {
+                surfAlbedo = firstHitAlbedo;
+            } else {
+                vec2 sUV = hitIsPlane ? (hitPos.xz * 0.1) : hitUV;
+                surfAlbedo = applyProceduralPattern(mat, sampleAlbedo(mat, sUV), hitPos);
+            }
+            accumulatedColor += attenuation
+                              * shadeOpaque(mat, hitPos, hitNormal, surfAlbedo, -rayDir)
+                              * (1.0 - mat.transparency);
+        }
 
         if (fresnel < 1.0) {
-            // Transmission: tint attenuation by glass color and continue refracted ray
+            // Transmission: tint by mat.color (black for ice = kills refraction, giving the
+            // dark crystalline look; clear glass keeps mat.color = white)
             attenuation *= mat.transparency * (1.0 - fresnel) * mat.color;
             rayOrig = hitPos - n * 0.001;
             rayDir  = normalize(refractDir);
         } else {
-            // Total internal reflection: reflect and continue
+            // Total internal reflection
             attenuation *= mat.reflection;
             rayOrig = hitPos + n * 0.001;
             rayDir  = reflect(rayDir, n);
         }
 
-        // Early exit when contribution is negligible (avoids wasted bounces)
         if (dot(attenuation, attenuation) < 0.0001) break;
     }
 

@@ -870,6 +870,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.lightCount     = (int)sceneLights.size();
         tracePC.planeCount     = (int)scenePlanes.size();
         tracePC.quadCount      = (int)sceneQuads.size();
+        tracePC.evaluateDirect = (level == 0) ? 1 : 0;  // only cascade-0 evaluates direct per SRC paper
 
         VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);

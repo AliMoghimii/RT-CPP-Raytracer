@@ -23,7 +23,7 @@ struct RCTracePC {                  // 64 bytes
     int lightCount;
     int planeCount;
     int quadCount;
-    int pad;
+    int evaluateDirect;             // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
 };
 
 struct RCMergePC {                          // 64 bytes

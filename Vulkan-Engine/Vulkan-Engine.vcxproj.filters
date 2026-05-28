@@ -134,6 +134,27 @@
     <ClCompile Include="source\gi\CascadeStorage.cpp">
       <Filter>Source\GI</Filter>
     </ClCompile>
+    <ClCompile Include="source\debug\DebugUI.cpp">
+      <Filter>Source\Debug</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\imgui.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\imgui_draw.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\imgui_tables.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\imgui_widgets.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\backends\imgui_impl_vulkan.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
+    <ClCompile Include="lib\imgui-docking\backends\imgui_impl_glfw.cpp">
+      <Filter>Third-Party</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\passes\LegacyPass.hpp">
@@ -175,6 +196,12 @@
     </ClInclude>
     <ClInclude Include="include\renderer\Renderer.hpp">
       <Filter>Include\Renderer</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\DebugUI.hpp">
+      <Filter>Include\Debug</Filter>
+    </ClInclude>
+    <ClInclude Include="include\debug\FrameStats.hpp">
+      <Filter>Include\Debug</Filter>
     </ClInclude>
     <ClInclude Include="include\gi\CascadeConfig.hpp">
       <Filter>Include\GI</Filter>

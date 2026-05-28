@@ -15,6 +15,8 @@
 #include "scene/GPUData.hpp"
 #include "gi/CascadeConfig.hpp"
 #include "gi/CascadeStorage.hpp"
+#include "debug/FrameStats.hpp"
+#include "debug/DebugUI.hpp"
 
 struct CameraPushConstants {
     glm::vec4 camPos;
@@ -43,6 +45,7 @@ struct CameraPushConstants {
 
 class Renderer {
 public:
+    // --- Render settings (wired into push constants each frame) ---
     int maxDepth = 5;
     int shadowRays = 4;
     int primaryRaysPerPixel = 1;
@@ -55,6 +58,18 @@ public:
     glm::vec3 skyBottomColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 skyTopColor = glm::vec3(0.1f, 0.3f, 0.7f);
     int enableTextures = 1;
+
+    // --- Debug / visualization (controlled by DebugUI) ---
+    int   debugMode      = 0;    // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    float exposure       = 1.0f; // tonemap exposure
+    int   enableDirect   = 1;
+    int   enableIndirect = 1;
+
+    // --- Cascade configuration (public so DebugUI can live-tune it) ---
+    CascadeConfig rcConfig;
+
+    void recreateCascades();
+    FrameStats lastStats() const { return lastFrameStats; }
 
     void run();
     void loadScene(
@@ -79,7 +94,6 @@ private:
     Image ldrImage; // R8G8B8A8_UNORM, written by tonemap.comp, blitted to swapchain
 
     // --- Radiance Cascade state ---
-    CascadeConfig rcConfig;     // default-initialised (numCascades=5, spacing0=0.5, etc.)
     CascadeStorage rcStorage;   // populated by rcStorage.initialize(ctx, rcConfig) in initVulkan()
 
     Buffer materialBuffer;
@@ -144,6 +158,15 @@ private:
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
 
+    // --- GPU timestamp queries (per-pass timing) ---
+    VkQueryPool timestampPool      = VK_NULL_HANDLE;
+    float       timestampPeriod    = 0.0f;
+    bool        timestampsSupported = false;
+
+    // --- Stats and debug ---
+    FrameStats lastFrameStats{};
+    DebugUI    debugUI;
+
     void initWindow();
     void initVulkan();
     void createSceneBuffers();
@@ -159,6 +182,9 @@ private:
     void createSceneDescriptorSet();
     void createGBufferDescriptorSet();
     void createRCDescriptorSets();
+    void createTimestampQueryPool();
+    void readbackTimestamps();
+    void destroyTimestampQueryPool();
     void mainLoop();
     void processInput();
     void updateDynamicData();
@@ -169,7 +195,7 @@ private:
     VkPipeline createComputePipelineFromSpv(const std::string& path, VkPipelineLayout layout);
     VkShaderModule createShaderModule(const std::vector<char>& code);
     void transitionImageLayout(
-        VkCommandBuffer cmd, 
+        VkCommandBuffer cmd,
         VkImage image,
         VkImageLayout oldLayout,
         VkImageLayout newLayout

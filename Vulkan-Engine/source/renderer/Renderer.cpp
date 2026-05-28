@@ -2,6 +2,8 @@
 #include "scene/ImageLoader.hpp"
 #include "gi/RCPushConstants.hpp"
 
+#include "imgui-docking/imgui.h"
+
 #include <stdexcept>
 #include <vector>
 #include <fstream>
@@ -89,6 +91,8 @@ void Renderer::initVulkan() {
     createSceneDescriptorSet();
     createGBufferDescriptorSet();
     createRCDescriptorSets();
+    createTimestampQueryPool();
+    debugUI.init(ctx, swapchain, window);
 }
 
 // ---- Scene Buffers ----
@@ -419,9 +423,10 @@ void Renderer::createDescriptorPool() {
 
     VkDescriptorPoolCreateInfo pi{};
     pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT; // needed by recreateCascades()
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
-	pi.maxSets = uint32_t(2 + N + N + 1);                           // 13 when N=5
+    pi.maxSets = uint32_t(2 + N + N + 1);                           // 13 when N=5
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
         throw runtime_error("Renderer: descriptor pool creation failed.");
@@ -688,6 +693,7 @@ void Renderer::mainLoop() {
 }
 
 void Renderer::processInput() {
+    if (ImGui::GetIO().WantCaptureKeyboard) return;
     float cameraSpeed = 3.5f * deltaTime;
     float rotSpeed    = 90.0f * deltaTime;
 
@@ -730,6 +736,10 @@ void Renderer::drawFrame() {
 
     vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
 
+    // Read back GPU timestamps and VRAM stats from the previous frame (GPU is now idle)
+    readbackTimestamps();
+    lastFrameStats.frameTimeMs = deltaTime * 1000.0f;
+
     uint32_t imageIndex;
     VkResult acquireResult = vkAcquireNextImageKHR(ctx.device, swapchain.handle, UINT64_MAX,
                                                    cmdManager.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
@@ -737,6 +747,9 @@ void Renderer::drawFrame() {
         return;
 
     vkResetFences(ctx.device, 1, &cmdManager.inFlightFence);
+
+    // Build ImGui draw lists (must happen before recordCommandBuffer where we render them)
+    debugUI.draw(*this, lastFrameStats);
 
     vkResetCommandBuffer(cmdManager.buffer, 0);
     recordCommandBuffer(cmdManager.buffer, imageIndex);
@@ -928,6 +941,9 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.planeCount     = (int)scenePlanes.size();
         gatherPC.quadCount      = (int)sceneQuads.size();
         gatherPC.lightCount     = (int)sceneLights.size();
+        gatherPC.debugMode      = debugMode;
+        gatherPC.enableDirect   = enableDirect;
+        gatherPC.enableIndirect = enableIndirect;
         gatherPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
         gatherPC.skyTopColor    = glm::vec4(skyTopColor, 0.0f);
 
@@ -977,7 +993,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     // ACES film curve + gamma correction. Reads hdrImage (b0 of tonemapDescSet),
     // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
     {
-        TonemapPC tonemapPC{ 1.0f, {0, 0, 0} };
+        TonemapPC tonemapPC{ exposure, {0, 0, 0} };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             tonemapPipelineLayout, 0, 1, &tonemapDescSet, 0, nullptr);
@@ -1006,8 +1022,13 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 
     transitionImageLayout(cmd, ldrImage.handle,
         VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
+    // ImGui overlay: transition swapchain to COLOR_ATTACHMENT, render, then transition to PRESENT
     transitionImageLayout(cmd, swapchain.images[imageIndex],
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    debugUI.renderOnSwapchain(cmd, swapchain.imageViews[imageIndex], swapchain.extent);
+    transitionImageLayout(cmd, swapchain.images[imageIndex],
+        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
     vkEndCommandBuffer(cmd);
 }
@@ -1015,6 +1036,9 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
 // ---- Cleanup ----
 
 void Renderer::cleanup() {
+    debugUI.shutdown(ctx);
+    destroyTimestampQueryPool();
+
     // Destroy VMA-backed buffers before the allocator goes down
     materialBuffer = Buffer();
     sphereBuffer = Buffer();
@@ -1121,6 +1145,18 @@ void Renderer::transitionImageLayout(VkCommandBuffer cmd, VkImage image,
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
         dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
     }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.dstAccessMask = 0;
+        srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+    }
     else {
         throw std::invalid_argument("Renderer: unsupported layout transition.");
     }
@@ -1170,4 +1206,99 @@ VkShaderModule Renderer::createShaderModule(const vector<char>& code) {
     if (vkCreateShaderModule(ctx.device, &ci, nullptr, &mod) != VK_SUCCESS)
         throw runtime_error("Renderer: shader module creation failed.");
     return mod;
+}
+
+// ---- Timestamp Query Pool ----
+
+void Renderer::createTimestampQueryPool() {
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(ctx.physicalDevice, &props);
+    timestampPeriod = props.limits.timestampPeriod;
+    if (timestampPeriod == 0.0f) return;
+
+    uint32_t qfCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(ctx.physicalDevice, &qfCount, nullptr);
+    vector<VkQueueFamilyProperties> qfProps(qfCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(ctx.physicalDevice, &qfCount, qfProps.data());
+
+    if (ctx.computeQueueFamily >= qfCount) return;
+    if (qfProps[ctx.computeQueueFamily].timestampValidBits == 0) return;
+
+    VkQueryPoolCreateInfo qi{};
+    qi.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    qi.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    qi.queryCount = 16; // 8 pairs: outer(0/1) primary(2/3) alloc(4/5) trace(6/7) merge(8/9) gather(10/11) transparent(12/13) tonemap(14/15)
+
+    if (vkCreateQueryPool(ctx.device, &qi, nullptr, &timestampPool) == VK_SUCCESS)
+        timestampsSupported = true;
+}
+
+void Renderer::readbackTimestamps() {
+    if (!timestampsSupported) return;
+
+    uint64_t results[16]{};
+    VkResult res = vkGetQueryPoolResults(
+        ctx.device, timestampPool, 0, 16,
+        sizeof(results), results, sizeof(uint64_t),
+        VK_QUERY_RESULT_64_BIT);
+
+    if (res == VK_SUCCESS) {
+        auto toMs = [&](int begin, int end) -> float {
+            return float(results[end] - results[begin]) * timestampPeriod * 1e-6f;
+        };
+        lastFrameStats.gpuTotalMs       = toMs(0,  1);
+        lastFrameStats.gpuPrimaryMs     = toMs(2,  3);
+        lastFrameStats.gpuAllocMs       = toMs(4,  5);
+        lastFrameStats.gpuTraceMs       = toMs(6,  7);
+        lastFrameStats.gpuMergeMs       = toMs(8,  9);
+        lastFrameStats.gpuGatherMs      = toMs(10, 11);
+        lastFrameStats.gpuTransparentMs = toMs(12, 13);
+        lastFrameStats.gpuTonemapMs     = toMs(14, 15);
+    }
+
+    // Reset pool for the next frame (safe: GPU done after vkWaitForFences)
+    vkResetQueryPool(ctx.device, timestampPool, 0, 16);
+
+    // VRAM stats via VMA heap budgets
+    VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
+    vmaGetHeapBudgets(ctx.allocator, budgets);
+
+    VkPhysicalDeviceMemoryProperties memProps{};
+    vkGetPhysicalDeviceMemoryProperties(ctx.physicalDevice, &memProps);
+
+    uint64_t usedBytes = 0, budgetBytes = 0;
+    for (uint32_t i = 0; i < memProps.memoryHeapCount; i++) {
+        if (memProps.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
+            usedBytes   += budgets[i].usage;
+            budgetBytes += budgets[i].budget;
+        }
+    }
+    lastFrameStats.vramUsedBytes   = usedBytes;
+    lastFrameStats.vramBudgetBytes = budgetBytes;
+}
+
+void Renderer::destroyTimestampQueryPool() {
+    if (timestampPool != VK_NULL_HANDLE) {
+        vkDestroyQueryPool(ctx.device, timestampPool, nullptr);
+        timestampPool = VK_NULL_HANDLE;
+    }
+}
+
+// ---- Cascade Recreation ----
+
+void Renderer::recreateCascades() {
+    vkDeviceWaitIdle(ctx.device);
+
+    if (!rcHashDescSets.empty())
+        vkFreeDescriptorSets(ctx.device, descriptorPool,
+            (uint32_t)rcHashDescSets.size(), rcHashDescSets.data());
+    if (!rcParentHashDescSets.empty())
+        vkFreeDescriptorSets(ctx.device, descriptorPool,
+            (uint32_t)rcParentHashDescSets.size(), rcParentHashDescSets.data());
+    rcHashDescSets.clear();
+    rcParentHashDescSets.clear();
+
+    rcStorage.destroy();
+    rcStorage.initialize(ctx, rcConfig);
+    createRCDescriptorSets();
 }

@@ -45,7 +45,9 @@ struct RCGatherPC {                 // 112 bytes
     int lightCount;
     int planeCount;
     int quadCount;
-    int pad[3];
+    int debugMode;    // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    int enableDirect;   // 0 = skip per-light loop
+    int enableIndirect; // 0 = skip cascade lookup
     glm::vec4  skyBottomColor;      // xyz = horizon sky color
     glm::vec4  skyTopColor;         // xyz = zenith sky color
 };

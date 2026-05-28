@@ -152,6 +152,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClCompile Include="source\passes\GBuffer.cpp" />
     <ClCompile Include="source\passes\LegacyPass.cpp" />
     <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\debug\DebugUI.cpp" />
     <ClCompile Include="source\renderer\Renderer.cpp" />
     <ClCompile Include="source\resources\Buffer.cpp" />
     <ClCompile Include="source\resources\Image.cpp" />
@@ -159,6 +160,12 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClCompile Include="source\scene\ModelLoader.cpp" />
     <ClCompile Include="source\scene\Primitive.cpp" />
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp" />
+    <ClCompile Include="lib\imgui-docking\imgui.cpp" />
+    <ClCompile Include="lib\imgui-docking\imgui_draw.cpp" />
+    <ClCompile Include="lib\imgui-docking\imgui_tables.cpp" />
+    <ClCompile Include="lib\imgui-docking\imgui_widgets.cpp" />
+    <ClCompile Include="lib\imgui-docking\backends\imgui_impl_vulkan.cpp" />
+    <ClCompile Include="lib\imgui-docking\backends\imgui_impl_glfw.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\core\CommandManager.hpp" />
@@ -171,6 +178,8 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\gi\RCPushConstants.hpp" />
     <ClInclude Include="include\math\MathUtils.hpp" />
     <ClInclude Include="include\passes\GBuffer.hpp" />
+    <ClInclude Include="include\debug\DebugUI.hpp" />
+    <ClInclude Include="include\debug\FrameStats.hpp" />
     <ClInclude Include="include\renderer\Renderer.hpp" />
     <ClInclude Include="include\resources\Buffer.hpp" />
     <ClInclude Include="include\resources\Image.hpp" />

@@ -84,6 +84,12 @@
     <Filter Include="Include\Renderer">
       <UniqueIdentifier>{40f59cb0-f898-480f-90bc-e52d87f1f5d8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Config">
+      <UniqueIdentifier>{0f71f925-5cd9-4ff0-bfb3-bcfae67d6f76}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Config\ImGUI">
+      <UniqueIdentifier>{026efd6f-6af7-4b04-ac66-5a5b52f1ce08}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">
@@ -268,6 +274,9 @@
     </None>
     <None Include="shaders\shading\final_gather.comp">
       <Filter>Shader\Shading</Filter>
+    </None>
+    <None Include="config\imgui\imgui.ini">
+      <Filter>Config\ImGUI</Filter>
     </None>
   </ItemGroup>
 </Project>

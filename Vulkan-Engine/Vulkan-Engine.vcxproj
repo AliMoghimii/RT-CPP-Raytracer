@@ -191,6 +191,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
+    <None Include="config\imgui\imgui.ini" />
     <None Include="shaders\common\bvh.glsl" />
     <None Include="shaders\common\cascade_layout.glsl" />
     <None Include="shaders\common\lighting.glsl" />

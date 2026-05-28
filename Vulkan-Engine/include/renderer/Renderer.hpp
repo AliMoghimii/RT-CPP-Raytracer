@@ -60,10 +60,13 @@ public:
     int enableTextures = 1;
 
     // --- Debug / visualization (controlled by DebugUI) ---
-    int   debugMode      = 0;    // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
-    float exposure       = 1.0f; // tonemap exposure
-    int   enableDirect   = 1;
-    int   enableIndirect = 1;
+    int   debugMode       = 0;      // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    float exposure        = 1.0f;   // tonemap exposure
+    int   tonemapMode     = 0;      // 0=ACES Film  1=Reinhard  2=Linear
+    int   enableDirect    = 1;
+    int   enableIndirect  = 1;
+    float kIndirectScale  = 0.0005f; // GI irradiance → color scale (slider in Scene Controls)
+    float fogDensity      = 0.02f;   // exponential fog decay coefficient
 
     // --- Cascade configuration (public so DebugUI can live-tune it) ---
     CascadeConfig rcConfig;
@@ -124,6 +127,8 @@ private:
     VkPipeline rcAllocPipeline = VK_NULL_HANDLE;
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;
     VkPipeline rcMergePipeline = VK_NULL_HANDLE;
+    VkPipeline rcBlurPipeline    = VK_NULL_HANDLE;
+    VkPipeline rcBlurRevPipeline = VK_NULL_HANDLE; // reverse pass: blurredCascadeData → cascadeData
     VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
     VkPipeline rcTransparentPipeline = VK_NULL_HANDLE;
     VkPipeline tonemapPipeline = VK_NULL_HANDLE;
@@ -131,6 +136,7 @@ private:
     VkPipelineLayout rcAllocPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTracePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcMergePipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout rcBlurPipelineLayout  = VK_NULL_HANDLE;
     VkPipelineLayout rcGatherPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTransparentPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout tonemapPipelineLayout = VK_NULL_HANDLE;

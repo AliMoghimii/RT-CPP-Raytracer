@@ -49,8 +49,10 @@ void main()
         if (imageLoad(gLinearDepth, pixel).r >= 1e5) return;
 
         vec3 worldPos = imageLoad(gPosition, pixel).xyz;
-        // Which cascade-0 cell contains this world position?
-        cell = ivec3(floor((worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w));
+        // Match the gather's trilinear base formula: floor(pos/spacing - 0.5).
+        // This ensures the allocated cell == gather's base corner, so the surface's
+        // own probe is always the nearest probe in the stencil (never behind a wall).
+        cell = ivec3(floor((worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5));
     }
     else
     {

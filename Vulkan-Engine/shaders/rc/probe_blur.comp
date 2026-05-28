@@ -1,0 +1,74 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 64) in;
+
+// cascade_layout.glsl references hashKeys/hashValues by name — declare SSBOs first.
+layout(std430, set = 0, binding = 0) readonly  buffer HK  { uint hashKeys[];    };
+layout(std430, set = 0, binding = 1) readonly  buffer HV  { uint hashValues[];  };
+layout(std430, set = 0, binding = 2) readonly  buffer STK { uint slotToKey[];   };
+layout(std430, set = 0, binding = 3) readonly  buffer SC  { uint nextSlot;      };
+layout(std430, set = 0, binding = 4) readonly  buffer CD  { uvec2 cascadeData[]; };
+// binding 5 = parentCascadeData (not used here, but present in layout)
+layout(std430, set = 0, binding = 6) writeonly buffer BCD { uvec2 blurredCascadeData[]; };
+
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform BlurPC {
+    ivec4 gridSizeOctRes;   // xyz = cascade-0 grid size, w = octRes
+    int   hashSize;
+    int   maxActiveSlots;
+    int   pad[2];
+} pc;
+
+void main() {
+    uint tid = gl_GlobalInvocationID.x;
+
+    int octRes   = pc.gridSizeOctRes.w;
+    int dirCount = octRes * octRes;
+    uint activeProbes = nextSlot;
+
+    uint slot = tid / uint(dirCount);
+    int  d    = int(tid % uint(dirCount));
+
+    if (slot >= activeProbes || slot >= uint(pc.maxActiveSlots)) return;
+
+    // Decode this probe's 3D grid cell from its key.
+    uint myKey  = slotToKey[slot];
+    ivec3 cell  = unpackCellKey(myKey);
+
+    int base = probeStorageBase(slot, octRes);
+
+    // 27-tap 3x3x3 Gaussian filter (all 26 neighbors + center).
+    // Weights: exp(-0.5 * dist^2) where dist = Chebyshev distance.
+    // Center=1.0, face=0.607, edge=0.368, corner=0.223 — σ≈1 probe spacing.
+    // This reduces 2-4 probe-spacing variation by ~87% vs the 7-tap box filter.
+    vec4 accumulated = vec4(0.0);
+    float totalWeight = 0.0;
+
+    for (int oz = -1; oz <= 1; oz++) {
+    for (int oy = -1; oy <= 1; oy++) {
+    for (int ox = -1; ox <= 1; ox++) {
+        float gw = exp(-0.5 * float(ox*ox + oy*oy + oz*oz));
+
+        if (ox == 0 && oy == 0 && oz == 0) {
+            accumulated += unpackRadianceTransmittance(cascadeData[base + d]) * gw;
+            totalWeight += gw;
+            continue;
+        }
+
+        ivec3 nCell = cell + ivec3(ox, oy, oz);
+        if (any(lessThan(nCell, ivec3(0))) ||
+            any(greaterThanEqual(nCell, pc.gridSizeOctRes.xyz))) continue;
+
+        uint nKey  = packCellKey(nCell);
+        uint nSlot = probeLookup(nKey, uint(pc.hashSize));
+        if (nSlot == 0xFFFFFFFFu) continue;
+
+        int nBase = probeStorageBase(nSlot, octRes);
+        accumulated += unpackRadianceTransmittance(cascadeData[nBase + d]) * gw;
+        totalWeight += gw;
+    }}}
+
+    if (totalWeight > 0.0) accumulated /= totalWeight;
+    blurredCascadeData[base + d] = packRadianceTransmittance(accumulated.rgb, accumulated.a);
+}

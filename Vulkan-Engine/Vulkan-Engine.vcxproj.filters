@@ -90,6 +90,9 @@
     <Filter Include="Config\ImGUI">
       <UniqueIdentifier>{026efd6f-6af7-4b04-ac66-5a5b52f1ce08}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Config\Scenarios">
+      <UniqueIdentifier>{1bd1c73c-5174-4720-8052-b1c4a46c2d3c}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">

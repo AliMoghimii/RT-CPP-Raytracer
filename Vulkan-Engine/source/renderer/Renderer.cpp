@@ -256,16 +256,18 @@ void Renderer::createGBufferDescriptorSetLayout() {
 
 void Renderer::createRCDescriptorSetLayouts() {
 
-    // RC hash set: 6 SSBOs - current level's full hash map (b0-b4) + parent cascade data (b5)
-    // b0 = hashKeys, b1 = hashValues, b2 = slotToKey, b3 = slotCounter, b4 = cascadeData, b5 = parentCascadeData
-    // b5 is only needed in merge; alloc/trace shaders simply don't declare it and the descriptor is a dummy.
+    // RC hash set: 7 SSBOs
+    // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData, b5=parentCascadeData
+    // b6=blurredCascadeData  (written by probe_blur, read by final_gather/transparent)
+    // b5 is only used in merge; b6 is only written by blur and read by gather/transparent.
+    // Shaders that don't declare an unused binding ignore it with no validation error.
     {
-        VkDescriptorSetLayoutBinding binds[6] = {};
-        for (uint32_t i = 0; i < 6; i++) {
+        VkDescriptorSetLayoutBinding binds[7] = {};
+        for (uint32_t i = 0; i < 7; i++) {
             binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
         }
         VkDescriptorSetLayoutCreateInfo ci{
-            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, binds };
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 7, binds };
         if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcHashDescSetLayout) != VK_SUCCESS)
             throw std::runtime_error("Renderer: rcHashDescSetLayout creation failed.");
     }
@@ -377,6 +379,12 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/probe_trace.comp.spv", rcTracePipelineLayout);
     rcMergePipeline = createComputePipelineFromSpv(
         "shaders/rc/cascade_merge.comp.spv", rcMergePipelineLayout);
+    // Blur: set0=rcHashDescSetLayout (reads cascadeData b4, writes blurredCascadeData b6)
+    rcBlurPipelineLayout = makeLayout({ rcHashDescSetLayout }, sizeof(RCBlurPC));
+    rcBlurPipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_blur.comp.spv", rcBlurPipelineLayout);
+    rcBlurRevPipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_blur_rev.comp.spv", rcBlurPipelineLayout);
     rcGatherPipeline = createComputePipelineFromSpv(
         "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
     rcTransparentPipeline = createComputePipelineFromSpv(
@@ -417,7 +425,7 @@ void Renderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 9;                               // 7 existing + 2 tonemap
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(8 + N * 6 + N * 4);     // 58 when N=5
+    poolSizes[1].descriptorCount = uint32_t(8 + N * 7 + N * 4);     // 63 when N=5  (N*7: +blurredCascadeData)
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 100;
 
@@ -562,21 +570,22 @@ void Renderer::createRCDescriptorSets() {
             ? rcStorage.levels[i + 1].cascadeData.handle
             : lvl.cascadeData.handle; // last level: self-reference dummy
 
-        VkDescriptorBufferInfo infos[6] = {
+        VkDescriptorBufferInfo infos[7] = {
             { lvl.hashKeys.handle, 0, VK_WHOLE_SIZE },
             { lvl.hashValues.handle, 0, VK_WHOLE_SIZE },
             { lvl.slotToKey.handle, 0, VK_WHOLE_SIZE },
             { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
             { lvl.cascadeData.handle, 0, VK_WHOLE_SIZE },
             { parentDataHandle, 0, VK_WHOLE_SIZE },
+            { lvl.blurredCascadeData.handle, 0, VK_WHOLE_SIZE },
         };
-        VkWriteDescriptorSet writes[6] = {};
-        for (uint32_t b = 0; b < 6; b++) {
+        VkWriteDescriptorSet writes[7] = {};
+        for (uint32_t b = 0; b < 7; b++) {
             writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
                 rcHashDescSets[i], b, 0, 1,
                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
         }
-        vkUpdateDescriptorSets(ctx.device, 6, writes, 0, nullptr);
+        vkUpdateDescriptorSets(ctx.device, 7, writes, 0, nullptr);
     }
 
     // --- rcParentHashDescSets[i]: 4 SSBOs pointing at level i's keys/values/slotToKey/counter ---
@@ -787,6 +796,11 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &bi);
 
+    // Reset timestamp queries before any writes this frame.
+    // vkCmdResetQueryPool requires no device feature (unlike vkResetQueryPool which needs hostQueryReset).
+    if (timestampsSupported)
+        vkCmdResetQueryPool(cmd, timestampPool, 0, 16);
+
     int      N = rcConfig.numCascades;
     uint32_t dX = swapchain.extent.width / 16;
     uint32_t dY = swapchain.extent.height / 16;
@@ -927,6 +941,30 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         emitComputeBarrier(cmd);  // merged data visible to the next lower level
     }
 
+    // === 5b. Probe blur — 27-tap 3×3×3 Gaussian filter on cascade-0 radiance ===
+    // Reads cascadeData(b4), writes blurredCascadeData(b6). Single pass.
+    // Uses full face+edge+corner neighborhood (all 26 adjacent cells) with Gaussian weights
+    // exp(-0.5 × dist²) so σ ≈ 1 probe spacing. Reduces probe-to-probe irradiance variation
+    // at the 2–4 probe-spacing scale by ~87%, eliminating visible grid squares on flat walls.
+    {
+        RCBlurPC blurPC{};
+        blurPC.gridSizeOctRes  = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
+        blurPC.hashSize        = (int)rcStorage.hashTableSize[0];
+        blurPC.maxActiveSlots  = (int)rcStorage.maxActiveSlots[0];
+
+        int dirCount = rcConfig.octRes(0) * rcConfig.octRes(0);
+        uint32_t totalInvocations = (uint32_t)rcStorage.maxActiveSlots[0] * (uint32_t)dirCount;
+        uint32_t blurGroups = (totalInvocations + 63) / 64;
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcBlurPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcBlurPipelineLayout, 0, 1, &rcHashDescSets[0], 0, nullptr);
+        vkCmdPushConstants(cmd, rcBlurPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCBlurPC), &blurPC);
+        vkCmdDispatch(cmd, blurGroups, 1, 1);
+        emitComputeBarrier(cmd);  // blurredCascadeData visible to final_gather and transparent
+    }
+
     // === 6. Final gather — replaces composite_temp ===
     // Reads cascade-0's fully merged probe data. For each G-buffer pixel: trilinearly
     // interpolates indirect irradiance from the 8 surrounding cascade-0 probes, then adds
@@ -944,8 +982,10 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.debugMode      = debugMode;
         gatherPC.enableDirect   = enableDirect;
         gatherPC.enableIndirect = enableIndirect;
-        gatherPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
-        gatherPC.skyTopColor    = glm::vec4(skyTopColor, 0.0f);
+        gatherPC.skyBottomColor  = glm::vec4(skyBottomColor, 0.0f);
+        gatherPC.skyTopColor     = glm::vec4(skyTopColor, 0.0f);
+        gatherPC.kIndirectScale  = kIndirectScale;
+        gatherPC.fogDensity      = fogDensity;
 
         // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
         // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
@@ -976,8 +1016,10 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         transPC.lightCount        = (int)sceneLights.size();
         transPC.planeCount        = (int)scenePlanes.size();
         transPC.quadCount         = (int)sceneQuads.size();
-        transPC.maxBounces        = 8;
-        transPC.hashSize          = (int)rcStorage.hashTableSize[0];
+        transPC.maxBounces       = 8;
+        transPC.hashSize         = (int)rcStorage.hashTableSize[0];
+        transPC.kIndirectScale   = kIndirectScale;
+        transPC.fogDensity       = fogDensity;
 
         VkDescriptorSet transSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTransparentPipeline);
@@ -993,7 +1035,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     // ACES film curve + gamma correction. Reads hdrImage (b0 of tonemapDescSet),
     // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
     {
-        TonemapPC tonemapPC{ exposure, {0, 0, 0} };
+        TonemapPC tonemapPC{ exposure, tonemapMode, {0, 0} };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             tonemapPipelineLayout, 0, 1, &tonemapDescSet, 0, nullptr);
@@ -1065,6 +1107,8 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, rcAllocPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcBlurPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcBlurRevPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTransparentPipeline, nullptr);
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
@@ -1074,6 +1118,7 @@ void Renderer::cleanup() {
     vkDestroyPipelineLayout(ctx.device, rcAllocPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcBlurPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTransparentPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout, nullptr);
@@ -1236,6 +1281,11 @@ void Renderer::createTimestampQueryPool() {
 void Renderer::readbackTimestamps() {
     if (!timestampsSupported) return;
 
+    // Skip the first call: the query pool was just created and vkCmdResetQueryPool
+    // hasn't run yet (it runs inside recordCommandBuffer which hasn't executed for frame 0).
+    static bool firstCall = true;
+    if (firstCall) { firstCall = false; return; }
+
     uint64_t results[16]{};
     VkResult res = vkGetQueryPoolResults(
         ctx.device, timestampPool, 0, 16,
@@ -1255,9 +1305,6 @@ void Renderer::readbackTimestamps() {
         lastFrameStats.gpuTransparentMs = toMs(12, 13);
         lastFrameStats.gpuTonemapMs     = toMs(14, 15);
     }
-
-    // Reset pool for the next frame (safe: GPU done after vkWaitForFences)
-    vkResetQueryPool(ctx.device, timestampPool, 0, 16);
 
     // VRAM stats via VMA heap budgets
     VmaBudget budgets[VK_MAX_MEMORY_HEAPS]{};
@@ -1295,8 +1342,11 @@ void Renderer::recreateCascades() {
     if (!rcParentHashDescSets.empty())
         vkFreeDescriptorSets(ctx.device, descriptorPool,
             (uint32_t)rcParentHashDescSets.size(), rcParentHashDescSets.data());
+    if (tonemapDescSet != VK_NULL_HANDLE)
+        vkFreeDescriptorSets(ctx.device, descriptorPool, 1, &tonemapDescSet);
     rcHashDescSets.clear();
     rcParentHashDescSets.clear();
+    tonemapDescSet = VK_NULL_HANDLE;
 
     rcStorage.destroy();
     rcStorage.initialize(ctx, rcConfig);

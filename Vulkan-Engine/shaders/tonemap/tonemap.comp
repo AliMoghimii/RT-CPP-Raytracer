@@ -6,16 +6,18 @@ layout(set = 0, binding = 1, rgba8) uniform writeonly image2D outLDR;
 
 layout(push_constant) uniform TonemapPC {
     float exposure;
-    int pad[3];
+    int tonemapMode; // 0=ACES Film  1=Reinhard  2=Linear
+    int pad[2];
 } pc;
 
 // ACES Film tone mapping (Narkowicz 2015 approximation).
-// Preserves shadow detail (toe), rich saturated midtones, compressed-not-clipped highlights.
-// Reinhard was tried but maps moderate HDR values too low, making GI-lit areas look grey.
 vec3 ACESFilm(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
+
+// Reinhard per-channel — softer shoulder, preserves hue better than ACES.
+vec3 Reinhard(vec3 x) { return x / (1.0 + x); }
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -23,7 +25,10 @@ void main() {
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     vec3 hdr = imageLoad(inHDR, pixel).rgb * pc.exposure;
-    vec3 ldr = ACESFilm(hdr);
+    vec3 ldr;
+    if (pc.tonemapMode == 1)      ldr = Reinhard(hdr);
+    else if (pc.tonemapMode == 2) ldr = clamp(hdr, 0.0, 1.0);   // linear (matches original backup)
+    else                          ldr = ACESFilm(hdr);            // default: ACES Film
     ldr = pow(ldr, vec3(1.0 / 2.2));    // linear -> sRGB gamma
 
     imageStore(outLDR, pixel, vec4(ldr, 1.0));

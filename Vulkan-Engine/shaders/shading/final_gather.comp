@@ -21,11 +21,14 @@ layout(set = 1, binding = 3, rgba16f) uniform readonly image2D gEmissive;
 layout(set = 1, binding = 5, rgba16f) uniform writeonly image2D outHDR;
 
 // Cascade 0 hash + data (set 2 = rcHashDescSets[0])
-layout(std430, set = 2, binding = 0) readonly buffer HK { uint hashKeys[]; };
-layout(std430, set = 2, binding = 1) readonly buffer HV { uint hashValues[]; };
-layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[]; };
-layout(std430, set = 2, binding = 3) readonly buffer SC { uint nextSlot; };
-layout(std430, set = 2, binding = 4) readonly buffer CD { uvec2 cascadeData[]; };
+layout(std430, set = 2, binding = 0) readonly buffer HK  { uint hashKeys[];    };
+layout(std430, set = 2, binding = 1) readonly buffer HV  { uint hashValues[];  };
+layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[];   };
+layout(std430, set = 2, binding = 3) readonly buffer SC  { uint nextSlot;      };
+layout(std430, set = 2, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
+// b5 = parentCascadeData (not used in gather)
+// b6 = spatially box-filtered cascade data written by probe_blur.comp
+layout(std430, set = 2, binding = 6) readonly buffer BCD { uvec2 blurredCascadeData[]; };
 
 // Planes and quads live in sceneDescSetLayout (set 0) at bindings 5 and 6.
 // Declaring them here gives the reflection pass access to all analytical geometry.
@@ -63,6 +66,9 @@ layout(push_constant) uniform GatherPC {
     int enableIndirect;
     vec4 skyBottomColor;        // xyz = horizon sky color
     vec4 skyTopColor;           // xyz = zenith sky color
+    float kIndirectScale;       // GI irradiance → color scale
+    float fogDensity;           // exponential fog decay coefficient
+    int pad[2];
 } pc;
 
 // Returns vec3(1) if unoccluded, vec3(0) if fully blocked, tinted vec3 for transparent hits.
@@ -114,7 +120,7 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
         float NdotL = max(0.0, dot(dir, normal));
         if (NdotL < 0.001) continue;
 
-        vec4 interval = unpackRadianceTransmittance(cascadeData[storageBase + d]);
+        vec4 interval = unpackRadianceTransmittance(blurredCascadeData[storageBase + d]);
         irradiance += interval.rgb * NdotL;
     }
 
@@ -163,7 +169,11 @@ void main() {
     if (pc.debugMode == 4) { imageStore(outHDR, pixel, vec4(emissiveData.rgb, 1.0)); return; }
 
     // --- Indirect light: trilinear interpolation over 8 surrounding cascade-0 probes ---
-    vec3 indirect = vec3(0.0);
+    // When probes are available: albedo * probeIrradiance * kIndirectScale.
+    // When probes are absent or indirect is disabled: albedo * mat.ambient (original constant fill).
+    // The two paths use different scales because probe irradiance magnitudes are ~1000× mat.ambient.
+    vec3 indirect  = vec3(0.0);
+    bool hasProbes = false;
     if (pc.enableIndirect != 0) {
         vec3 cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
         ivec3 base = ivec3(floor(cascadeSpace));
@@ -187,18 +197,19 @@ void main() {
                     float wz = (pz == 0) ? (1.0 - f.z) : f.z;
                     float w = wx * wy * wz;
 
-                    indirect += sampleProbeIrradiance(pSlot, normal) * w;
+                    indirect  += sampleProbeIrradiance(pSlot, normal) * w;
                     weightSum += w;
                 }
             }
         }
 
-        if (weightSum > 0.001) indirect /= weightSum;
-        else indirect = vec3(0.05); // fallback ambient for pixels outside cascade volume
+        if (weightSum > 0.001) {
+            indirect /= weightSum;
+            hasProbes = true;
+        }
     }
 
     // --- Direct lighting: emissive + PBR/Blinn-Phong per light ---
-    // Ambient is NOT added here — the cascade GI (indirect) replaces it.
     vec3 directLight = emissiveData.rgb;
 
     if (pc.enableDirect != 0) {
@@ -231,13 +242,11 @@ void main() {
     }
     } // enableDirect
 
-    // Indirect scale: absorbs (1/PI BRDF) + scene calibration mismatch (lightIntensity=100).
-    // All cascade levels evaluate direct lighting, so irradiance is ~300x larger than original
-    // mat.ambient=0.1. Once direct is restricted to cascade-0 only this needs re-tuning upward.
-    const float kIndirectScale = 0.0005;
-
-    // Final color: direct + indirect diffuse GI (albedo × irradiance from cascades)
-    vec3 color = directLight + albedo * indirect * kIndirectScale;
+    // Final color: direct + indirect.
+    // With probe data: albedo × probeIrradiance × kIndirectScale (GI path).
+    // Without probe data: albedo × mat.ambient (original constant-fill fallback).
+    vec3 indirectContrib = hasProbes ? (albedo * indirect * pc.kIndirectScale) : (albedo * mat.ambient);
+    vec3 color = directLight + indirectContrib;
 
     // --- First-order reflections ---
     // Shoots one reflection ray per pixel when mat.reflection > 0.
@@ -334,7 +343,7 @@ void main() {
                 }
             }
             if (reflWtSum > 0.001) reflIndirect /= reflWtSum;
-            else reflIndirect = vec3(0.05);
+            else reflIndirect = vec3(reflMat.ambient);
 
             // Horizontal transparent surfaces (glass cube bottom face) must not get the
             // transparency ambient boost: it creates a flat grey(0.15) that looks opaque.
@@ -344,9 +353,7 @@ void main() {
             float reflAmbient = isHorizTrans
                 ? reflMat.ambient
                 : max(reflMat.ambient, reflMat.transparency * 0.2);
-            // Reflected surfaces show their shadow side (direct=0), so indirect must carry
-            // the full brightness. Use 5× the primary scale so the floor reflection is visible.
-            reflColor = reflMat.emission + reflAlbedo * (reflAmbient + reflIndirect * (kIndirectScale * 5.0));
+            reflColor = reflMat.emission + reflAlbedo * (reflAmbient + reflIndirect * pc.kIndirectScale);
 
             for (int l = 0; l < pc.lightCount; l++) {
                 vec3  toLight  = lights[l].position - reflWorldPos;
@@ -517,10 +524,9 @@ void main() {
         color = color * (1.0 - mat.reflection) + reflColor * mat.reflection;
     }
 
-    // Exponential distance fog (density 0.04, same as legacy renderer).
-    // Blends toward sky gradient for a natural depth haze on distant surfaces.
+    // Exponential distance fog. Density controlled via push constant (ImGUI slider).
     float fogDepth  = length(worldPos - pc.camPos.xyz);
-    float fogAtten  = exp(-0.02 * fogDepth);
+    float fogAtten  = exp(-pc.fogDensity * fogDepth);
     vec3  fogDir    = (fogDepth > 0.0001) ? normalize(worldPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
     vec3  fogColor  = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
                           clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));

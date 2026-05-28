@@ -26,6 +26,13 @@ struct RCTracePC {                  // 64 bytes
     int evaluateDirect;             // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
 };
 
+struct RCBlurPC {                   // 32 bytes
+    glm::ivec4 gridSizeOctRes;      // xyz = cascade-0 grid size, w = octRes
+    int hashSize;
+    int maxActiveSlots;
+    int pad[2];
+};
+
 struct RCMergePC {                          // 64 bytes
     glm::ivec4 currentGridOctRes;           // xyz = current gridSize, w = current octRes
     glm::ivec4 parentGridOctRes;            // xyz = parent gridSize,  w = parent octRes
@@ -36,7 +43,7 @@ struct RCMergePC {                          // 64 bytes
     int currentMaxSlots;
 };
 
-struct RCGatherPC {                 // 112 bytes
+struct RCGatherPC {                 // 128 bytes
     glm::vec4  worldOriginSpacing;  // xyz = worldOrigin, w = cascade-0 spacing
     glm::ivec4 gridSizeOctRes;      // xyz = cascade-0 gridSize, w = cascade-0 octRes
     glm::vec4  camPos;              // xyz = camera world position for specular/viewDir
@@ -50,6 +57,9 @@ struct RCGatherPC {                 // 112 bytes
     int enableIndirect; // 0 = skip cascade lookup
     glm::vec4  skyBottomColor;      // xyz = horizon sky color
     glm::vec4  skyTopColor;         // xyz = zenith sky color
+    float kIndirectScale;           // GI irradiance → color scale (probe path only)
+    float fogDensity;               // exponential fog decay coefficient
+    int pad[2];
 };
 
 struct TransparentPC {               // 128 bytes
@@ -65,10 +75,12 @@ struct TransparentPC {               // 128 bytes
     int quadCount;
     int maxBounces;
     int hashSize;
-    int pad[2];
+    float kIndirectScale;            // GI irradiance → color scale (probe path only)
+    float fogDensity;                // exponential fog decay coefficient
 };
 
 struct TonemapPC {  // 16 bytes
     float exposure;
-    int pad[3];
+    int tonemapMode; // 0=ACES Film  1=Reinhard  2=Linear
+    int pad[2];
 };

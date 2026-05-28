@@ -17,7 +17,6 @@ void CascadeHashMap::create(VulkanContext& ctx, uint32_t tableSize, uint32_t max
 	slotToKey = Buffer(ctx.allocator, sizeof(uint32_t) * maxActiveSlots, flags, VMA_MEMORY_USAGE_GPU_ONLY);
 	slotCounter = Buffer(ctx.allocator, sizeof(uint32_t), flags, VMA_MEMORY_USAGE_GPU_ONLY);
 	cascadeData = Buffer(ctx.allocator, dataBufferSize(), flags, VMA_MEMORY_USAGE_GPU_ONLY);
-	blurredCascadeData = Buffer(ctx.allocator, dataBufferSize(), flags, VMA_MEMORY_USAGE_GPU_ONLY);
 }
 
 void CascadeHashMap::destroy()
@@ -27,5 +26,4 @@ void CascadeHashMap::destroy()
 	slotToKey = Buffer();
 	slotCounter = Buffer();
 	cascadeData = Buffer();
-	blurredCascadeData = Buffer();
 }

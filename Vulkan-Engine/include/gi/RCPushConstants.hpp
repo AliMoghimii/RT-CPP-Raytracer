@@ -26,13 +26,6 @@ struct RCTracePC {                  // 64 bytes
     int evaluateDirect;             // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
 };
 
-struct RCBlurPC {                   // 32 bytes
-    glm::ivec4 gridSizeOctRes;      // xyz = cascade-0 grid size, w = octRes
-    int hashSize;
-    int maxActiveSlots;
-    int pad[2];
-};
-
 struct RCMergePC {                          // 64 bytes
     glm::ivec4 currentGridOctRes;           // xyz = current gridSize, w = current octRes
     glm::ivec4 parentGridOctRes;            // xyz = parent gridSize,  w = parent octRes

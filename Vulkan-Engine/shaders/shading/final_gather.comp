@@ -27,8 +27,6 @@ layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[];   }
 layout(std430, set = 2, binding = 3) readonly buffer SC  { uint nextSlot;      };
 layout(std430, set = 2, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
 // b5 = parentCascadeData (not used in gather)
-// b6 = spatially box-filtered cascade data written by probe_blur.comp
-layout(std430, set = 2, binding = 6) readonly buffer BCD { uvec2 blurredCascadeData[]; };
 
 // Planes and quads live in sceneDescSetLayout (set 0) at bindings 5 and 6.
 // Declaring them here gives the reflection pass access to all analytical geometry.
@@ -120,7 +118,7 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
         float NdotL = max(0.0, dot(dir, normal));
         if (NdotL < 0.001) continue;
 
-        vec4 interval = unpackRadianceTransmittance(blurredCascadeData[storageBase + d]);
+        vec4 interval = unpackRadianceTransmittance(cascadeData[storageBase + d]);
         irradiance += interval.rgb * NdotL;
     }
 
@@ -206,6 +204,21 @@ void main() {
         if (weightSum > 0.001) {
             indirect /= weightSum;
             hasProbes = true;
+        } else {
+            // No probes in standard stencil — widen to 5×5×5 neighborhood (±2 cells).
+            // Covers gaps up to 2 spacings away, needed for curved transparent objects
+            // (e.g., glass sphere back face is ~diameter/spacing cells from front probes).
+            for (int fz = -2; fz <= 2; fz++)
+            for (int fy = -2; fy <= 2; fy++)
+            for (int fx = -2; fx <= 2; fx++) {
+                ivec3 fp = base + ivec3(fx, fy, fz);
+                if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
+                uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));
+                if (fSlot == 0xFFFFFFFFu) continue;
+                indirect  += sampleProbeIrradiance(fSlot, normal);
+                weightSum += 1.0;
+            }
+            if (weightSum > 0.001) { indirect /= weightSum; hasProbes = true; }
         }
     }
 
@@ -245,7 +258,9 @@ void main() {
     // Final color: direct + indirect.
     // With probe data: albedo × probeIrradiance × kIndirectScale (GI path).
     // Without probe data: albedo × mat.ambient (original constant-fill fallback).
-    vec3 indirectContrib = hasProbes ? (albedo * indirect * pc.kIndirectScale) : (albedo * mat.ambient);
+    vec3 indirectContrib = hasProbes
+        ? albedo * max(indirect * pc.kIndirectScale, vec3(mat.ambient))
+        : albedo * mat.ambient;
     vec3 color = directLight + indirectContrib;
 
     // --- First-order reflections ---
@@ -342,8 +357,22 @@ void main() {
                     }
                 }
             }
-            if (reflWtSum > 0.001) reflIndirect /= reflWtSum;
-            else reflIndirect = vec3(reflMat.ambient);
+            if (reflWtSum > 0.001) {
+                reflIndirect /= reflWtSum;
+            } else {
+                for (int fz = -2; fz <= 2; fz++)
+                for (int fy = -2; fy <= 2; fy++)
+                for (int fx = -2; fx <= 2; fx++) {
+                    ivec3 fp = reflBase + ivec3(fx, fy, fz);
+                    if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
+                    uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));
+                    if (fSlot == 0xFFFFFFFFu) continue;
+                    reflIndirect += sampleProbeIrradiance(fSlot, reflNormal);
+                    reflWtSum    += 1.0;
+                }
+                if (reflWtSum > 0.001) reflIndirect /= reflWtSum;
+                else reflIndirect = vec3(reflMat.ambient);
+            }
 
             // Horizontal transparent surfaces (glass cube bottom face) must not get the
             // transparency ambient boost: it creates a flat grey(0.15) that looks opaque.

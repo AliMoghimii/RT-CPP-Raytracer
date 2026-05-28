@@ -24,8 +24,6 @@ layout(std430, set = 2, binding = 1) readonly buffer HV  { uint hashValues[];  }
 layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[];   };
 layout(std430, set = 2, binding = 3) readonly buffer SC  { uint nextSlot;      };
 layout(std430, set = 2, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
-// b6 = spatially box-filtered cascade data written by probe_blur.comp
-layout(std430, set = 2, binding = 6) readonly buffer BCD { uvec2 blurredCascadeData[]; };
 
 struct GPUPlane {
     vec3 center; float p1;
@@ -106,7 +104,7 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
         vec3 dir = octDecode(uv);
         float NdotL = max(0.0, dot(dir, normal));
         if (NdotL < 0.001) continue;
-        vec4 interval = unpackRadianceTransmittance(blurredCascadeData[storageBase + d]);
+        vec4 interval = unpackRadianceTransmittance(cascadeData[storageBase + d]);
         irradiance += interval.rgb * NdotL;
     }
     return irradiance * (2.0 * 3.14159265 / float(dirCount));
@@ -239,8 +237,25 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
             }
         }
     }
-    if (weightSum > 0.001) color += albedo * (indirect / weightSum) * pc.kIndirectScale;
-    else                    color += albedo * mat.ambient;
+    // Use max(gi, ambient) so that probes with near-zero irradiance in the queried direction
+    // (e.g. back-face normals of spheres not in the G-buffer) don't create darker patches
+    // than positions where no probe was found at all. mat.ambient is the minimum floor.
+    if (weightSum > 0.001) {
+        color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
+    } else {
+        for (int fz = -2; fz <= 2; fz++)
+        for (int fy = -2; fy <= 2; fy++)
+        for (int fx = -2; fx <= 2; fx++) {
+            ivec3 fp = base + ivec3(fx, fy, fz);
+            if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
+            uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));
+            if (fSlot == 0xFFFFFFFFu) continue;
+            indirect  += sampleProbeIrradiance(fSlot, normal);
+            weightSum += 1.0;
+        }
+        if (weightSum > 0.001) color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
+        else                    color += albedo * mat.ambient;
+    }
 
     // --- First-order reflection for reflective terminal surfaces (T6) ---
     if (mat.reflection > 0.01) {

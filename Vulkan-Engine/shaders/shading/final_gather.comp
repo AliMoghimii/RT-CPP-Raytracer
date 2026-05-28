@@ -66,7 +66,8 @@ layout(push_constant) uniform GatherPC {
     vec4 skyTopColor;           // xyz = zenith sky color
     float kIndirectScale;       // GI irradiance → color scale
     float fogDensity;           // exponential fog decay coefficient
-    int pad[2];
+    int fogBlendWithSky;        // 1 = fog samples sky gradient; 0 = no fog applied
+    int pad;
 } pc;
 
 // Returns vec3(1) if unoccluded, vec3(0) if fully blocked, tinted vec3 for transparent hits.
@@ -554,12 +555,14 @@ void main() {
     }
 
     // Exponential distance fog. Density controlled via push constant (ImGUI slider).
-    float fogDepth  = length(worldPos - pc.camPos.xyz);
-    float fogAtten  = exp(-pc.fogDensity * fogDepth);
-    vec3  fogDir    = (fogDepth > 0.0001) ? normalize(worldPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
-    vec3  fogColor  = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
-                          clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));
-    color = mix(fogColor, color, fogAtten);
+    if (pc.fogBlendWithSky == 1) {
+        float fogDepth  = length(worldPos - pc.camPos.xyz);
+        float fogAtten  = exp(-pc.fogDensity * fogDepth);
+        vec3  fogDir    = (fogDepth > 0.0001) ? normalize(worldPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
+        vec3  fogColor  = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                              clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));
+        color = mix(fogColor, color, fogAtten);
+    }
 
     imageStore(outHDR, pixel, vec4(color, 1.0));
 }

@@ -66,7 +66,8 @@ public:
     int   enableDirect    = 1;
     int   enableIndirect  = 1;
     float kIndirectScale  = 0.0005f; // GI irradiance → color scale (slider in Scene Controls)
-    float fogDensity      = 0.02f;   // exponential fog decay coefficient
+    float fogDensity      = 0.04f;   // exponential fog decay coefficient
+    bool  fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
 
     // --- Cascade configuration (public so DebugUI can live-tune it) ---
     CascadeConfig rcConfig;

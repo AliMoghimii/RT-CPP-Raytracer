@@ -52,7 +52,8 @@ struct RCGatherPC {                 // 128 bytes
     glm::vec4  skyTopColor;         // xyz = zenith sky color
     float kIndirectScale;           // GI irradiance → color scale (probe path only)
     float fogDensity;               // exponential fog decay coefficient
-    int pad[2];
+    int fogBlendWithSky;            // 1 = fog samples sky gradient; 0 = no fog applied
+    int pad;
 };
 
 struct TransparentPC {               // 128 bytes
@@ -66,7 +67,7 @@ struct TransparentPC {               // 128 bytes
     int lightCount;
     int planeCount;
     int quadCount;
-    int maxBounces;
+    int fogBlendWithSky;             // 1 = fog samples sky gradient; 0 = no fog applied
     int hashSize;
     float kIndirectScale;            // GI irradiance → color scale (probe path only)
     float fogDensity;                // exponential fog decay coefficient

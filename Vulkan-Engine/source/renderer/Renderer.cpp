@@ -953,6 +953,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.skyTopColor     = glm::vec4(skyTopColor, 0.0f);
         gatherPC.kIndirectScale  = kIndirectScale;
         gatherPC.fogDensity      = fogDensity;
+        gatherPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
 
         // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
         // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
@@ -983,7 +984,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         transPC.lightCount        = (int)sceneLights.size();
         transPC.planeCount        = (int)scenePlanes.size();
         transPC.quadCount         = (int)sceneQuads.size();
-        transPC.maxBounces       = 8;
+        transPC.fogBlendWithSky  = fogBlendWithSky ? 1 : 0;
         transPC.hashSize         = (int)rcStorage.hashTableSize[0];
         transPC.kIndirectScale   = kIndirectScale;
         transPC.fogDensity       = fogDensity;

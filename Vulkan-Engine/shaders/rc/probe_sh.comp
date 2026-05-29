@@ -24,6 +24,26 @@ vec3 unpackRadiance(uvec2 packed) {
     return vec3(xy.x, xy.y, zw.x);
 }
 
+// Spherical Harmonics (SH) L0+L1 projection.
+//
+// After cascade-0 probes are traced and merged, each probe has N = octRes^2 radiance
+// samples, one per direction on the octahedral map.  Reading all N samples every time
+// a shading pass wants the irradiance at a surface point would require N texture lookups.
+// Instead we project the radiance function into 4 SH coefficients (one L0 + three L1)
+// so that irradiance can be evaluated for any normal with a single dot product:
+//
+//   irradiance(n) = sh0 + sh1*n.x + sh2*n.y + sh3*n.z
+//
+// This is equivalent to a first-order spherical harmonic expansion of the incoming
+// radiance integrated against a cosine lobe (the Lambertian BRDF kernel).
+//
+// Derivation of K0/K1:
+//   The SH coefficients for a radiance distribution L(d) sampled at N uniform directions
+//   are: c_i = SUM_d { L(d) * Y_i(d) * w(d) }
+//   where Y_0 = 1/(2*sqrt(PI)), Y_1,x = sqrt(3)/(2*sqrt(PI)) * d.x (etc.),
+//   and w(d) = 4*PI/N (uniform solid angle weight for N samples on the sphere).
+//   The irradiance integral introduces an additional cosine-lobe factor of (1/PI).
+//   Multiplying out all constants gives K0 = PI/(2N) and K1 = 3*PI/(2N).
 void main() {
     uint slot = gl_GlobalInvocationID.x;
     if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
@@ -32,24 +52,28 @@ void main() {
     int N           = octRes * octRes;
     int storageBase = probeStorageBase(slot, octRes);
 
-    // SH L0+L1 approximation of sampleProbeIrradiance(slot, n):
-    //   irradiance(n) = sh0 + sh1*n.x + sh2*n.y + sh3*n.z
-    // K0 = π/(2N), K1 = 3π/(2N): calibrated to match the 16-direction Monte Carlo estimate.
-    float K0 = 3.14159265 / (2.0 * float(N));
-    float K1 = 3.0 * 3.14159265 / (2.0 * float(N));
+    // Pre-integrated scale factors that absorb the SH basis constants and the
+    // Monte Carlo weight (4*PI/N) and the cosine-lobe normalization (1/PI).
+    float K0 = 3.14159265 / (2.0 * float(N));        // L0 band: Y_0 integral
+    float K1 = 3.0 * 3.14159265 / (2.0 * float(N));  // L1 band: Y_1 integral
 
+    // Accumulate weighted projections: c_i += L(d) * Y_i(d)
+    // For L0 the basis function is constant (1), so c0 is just the sum of radiance.
+    // For L1 the basis functions are the direction components (d.x, d.y, d.z).
     vec3 c0 = vec3(0.0), cx = vec3(0.0), cy = vec3(0.0), cz = vec3(0.0);
 
     for (int d = 0; d < N; d++) {
         vec2 uv  = octIndexToUV(ivec2(d % octRes, d / octRes), octRes);
         vec3 dir = octDecode(uv);
         vec3 L   = unpackRadiance(cascadeData[storageBase + d]);
-        c0 += L;
-        cx += L * dir.x;
-        cy += L * dir.y;
-        cz += L * dir.z;
+        c0 += L;           // L0: isotropic (ambient) term
+        cx += L * dir.x;   // L1: x-axis directional term
+        cy += L * dir.y;   // L1: y-axis directional term
+        cz += L * dir.z;   // L1: z-axis directional term
     }
 
+    // Write 4 coefficients per probe (offset by slot * 4).
+    // Evaluation in gather passes: sh0 + sh1*n.x + sh2*n.y + sh3*n.z
     int base4 = int(slot) * 4;
     shCoeffs[base4 + 0] = vec4(c0 * K0, 0.0);
     shCoeffs[base4 + 1] = vec4(cx * K1, 0.0);

@@ -151,18 +151,28 @@ void main() {
     if (pc.debugMode == 4) { imageStore(outHDR, pixel, vec4(emissiveData.rgb, 1.0)); return; }
 
     // --- Indirect light: trilinear interpolation over 8 surrounding cascade-0 probes ---
+    //
+    // Trilinear interpolation: the surface point is surrounded by 8 probe cells arranged
+    // at the corners of a unit cube in "cascade space" (world coords / spacing - 0.5).
+    // Each of the 8 probes gets a weight = wx * wy * wz where each w is a linear blend
+    // factor (1-f or f) for that axis.  The sum of all 8 weights = 1.0 when all probes
+    // exist, giving a smooth interpolation with no seams between probe cells.
+    //
     // When probes are available: albedo * probeIrradiance * kIndirectScale.
-    // When probes are absent or indirect is disabled: albedo * mat.ambient (original constant fill).
-    // The two paths use different scales because probe irradiance magnitudes are ~1000× mat.ambient.
+    // When probes are absent or indirect is disabled: albedo * mat.ambient (constant fill).
+    // The two paths use different scales because probe irradiance magnitudes are ~1000x mat.ambient.
     vec3 indirect  = vec3(0.0);
     bool hasProbes = false;
     if (pc.enableIndirect != 0) {
+        // Convert world position to fractional probe grid coordinates.
+        // The -0.5 offset aligns grid cells with probe alloc (floor(pos/spacing - 0.5)).
         vec3 cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
-        ivec3 base = ivec3(floor(cascadeSpace));
-        vec3 f = cascadeSpace - vec3(base);
+        ivec3 base = ivec3(floor(cascadeSpace));   // integer coords of the "base" corner
+        vec3 f = cascadeSpace - vec3(base);         // fractional offset inside the cell [0,1]^3
 
         float weightSum = 0.0;
 
+        // Iterate over 8 corner probes (px,py,pz in {0,1}).
         for (int pz = 0; pz <= 1; pz++) {
             for (int py = 0; py <= 1; py++) {
                 for (int px = 0; px <= 1; px++) {
@@ -172,8 +182,9 @@ void main() {
 
                     uint pKey = packCellKey(probe);
                     uint pSlot = probeLookup(pKey, uint(pc.hashSize));
-                    if (pSlot == 0xFFFFFFFFu) continue; // probe not active this frame
+                    if (pSlot == 0xFFFFFFFFu) continue;  // probe not allocated this frame
 
+                    // Trilinear weight: for each axis, the "0" corner gets (1-f), the "1" corner gets f.
                     float wx = (px == 0) ? (1.0 - f.x) : f.x;
                     float wy = (py == 0) ? (1.0 - f.y) : f.y;
                     float wz = (pz == 0) ? (1.0 - f.z) : f.z;

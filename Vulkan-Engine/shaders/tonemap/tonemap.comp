@@ -11,12 +11,18 @@ layout(push_constant) uniform TonemapPC {
 } pc;
 
 // ACES Film tone mapping (Narkowicz 2015 approximation).
+// Maps HDR luminance to [0,1] with a filmic S-curve: gentle roll-off in shadows,
+// mid-tone contrast, and a soft shoulder that prevents burned-out highlights.
+// The formula fits a rational polynomial to the original Academy Color Encoding System curve.
+// Constants a-e were fitted to the ACES RRT+ODT for sRGB output.
 vec3 ACESFilm(vec3 x) {
     const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-// Reinhard per-channel — softer shoulder, preserves hue better than ACES.
+// Reinhard per-channel: x / (1+x) maps [0, inf) -> [0, 1).
+// Simpler than ACES; brighter highlights roll off more softly, but can desaturate colors
+// because bright channels are compressed more than dim ones in the same pixel.
 vec3 Reinhard(vec3 x) { return x / (1.0 + x); }
 
 void main() {

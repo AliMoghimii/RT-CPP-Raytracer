@@ -1,7 +1,11 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_nonuniform_qualifier : enable
-layout(local_size_x = 256) in;  // 1D dispatch: one thread per ray (slot * octRes^2)
+// Per-ray dispatch: each thread handles one ray for one direction of one probe.
+// The 1D global index is decomposed as: slot = idx / raysPerProbe, localRay = idx % raysPerProbe.
+// This keeps all threads of a workgroup working on the same probe (good for cache coherency
+// since they all read from the same slotToKey[] entry and cascadeData[] base offset).
+layout(local_size_x = 256) in;
 
 #include "../common/ray.glsl"
 #include "../common/bvh.glsl"
@@ -142,16 +146,55 @@ void main()
                 float NdotL     = max(0.0, dot(hitN, lightDir));
                 if (NdotL < 0.001) continue;
 
-                Ray shadowRay;
-                shadowRay.origin    = hitPos + hitN * 0.001;
-                shadowRay.direction = lightDir;
-                shadowRay.tMin      = 0.001;
-                shadowRay.tMax      = lightDist - 0.01;
-                vec3 shadowAtten = traverseBVHShadow(shadowRay, pc.bvhCount);
+                vec3 shadowOrigin = hitPos + hitN * 0.001;
+                float shadowMaxT  = lightDist - 0.01;
+
+                // Analytical shadow: planes and quads are NOT in the BVH, so walls
+                // must be tested here or lights will bleed through them into probes.
+                vec3 shadowAtten = vec3(1.0);
+                for (int i = 0; i < pc.planeCount; i++) {
+                    float denom = dot(planes[i].normal, lightDir);
+                    if (abs(denom) < 1e-6) continue;
+                    float t = dot(planes[i].center - shadowOrigin, planes[i].normal) / denom;
+                    if (t <= 0.001 || t >= shadowMaxT) continue;
+                    GPUMaterial smat = materials[planes[i].materialIndex];
+                    if (smat.castShadows == 0) continue;
+                    if (smat.transparency > 0.01) { shadowAtten *= smat.color * smat.transparency; }
+                    else { shadowAtten = vec3(0.0); break; }
+                }
+                if (dot(shadowAtten, shadowAtten) > 0.001) {
+                    for (int i = 0; i < pc.quadCount; i++) {
+                        float denom = dot(quads[i].normalVector, lightDir);
+                        if (abs(denom) < 1e-6) continue;
+                        float t = dot(quads[i].corner - shadowOrigin, quads[i].normalVector) / denom;
+                        if (t <= 0.001 || t >= shadowMaxT) continue;
+                        vec3  p    = shadowOrigin + lightDir * t - quads[i].corner;
+                        float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+                        float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+                        float qu   = dot(p, quads[i].edge1) / e1l2;
+                        float qv   = dot(p, quads[i].edge2) / e2l2;
+                        if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+                        GPUMaterial smat = materials[quads[i].materialIndex];
+                        if (smat.castShadows == 0) continue;
+                        if (smat.transparency > 0.01) { shadowAtten *= smat.color * smat.transparency; }
+                        else { shadowAtten = vec3(0.0); break; }
+                    }
+                }
+
+                // BVH shadow: tessellated meshes (spheres, doughnut, etc.)
+                if (dot(shadowAtten, shadowAtten) > 0.001) {
+                    Ray shadowRay;
+                    shadowRay.origin    = shadowOrigin;
+                    shadowRay.direction = lightDir;
+                    shadowRay.tMin      = 0.001;
+                    shadowRay.tMax      = shadowMaxT;
+                    shadowAtten *= traverseBVHShadow(shadowRay, pc.bvhCount);
+                }
+
                 if (dot(shadowAtten, shadowAtten) < 0.001) continue;
 
                 float atten = 1.0 / max(lightDist * lightDist, 0.01);
-                radiance += albedo * mat.diffuse * NdotL * lights[l].color * atten;
+                radiance += albedo * mat.diffuse * NdotL * lights[l].color * atten * shadowAtten;
             }
         }
     }

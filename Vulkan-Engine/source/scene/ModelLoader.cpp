@@ -262,30 +262,45 @@ void ModelLoader::subdivide(int nodeIdx, vector<GPUBVHNode>& bvhNodes, vector<GP
     subdivide(rightChildIdx, bvhNodes, triangles, nodesUsed);
 }
 
+// Surface Area Heuristic (SAH) BVH construction.
+//
+// The SAH estimates the expected ray-traversal cost for a given split as:
+//   cost(split) = 1 + SA(left)/SA(parent) * N_left + SA(right)/SA(parent) * N_right
+// where SA is surface area (proportional to the probability a random ray hits that AABB)
+// and N is the number of triangles in the child.  The +1 accounts for the AABB test cost.
+//
+// Binned SAH: instead of testing every triangle centroid as a split plane candidate
+// (O(N^2)), we divide the centroid range into NUM_BINS equal-width bins and evaluate
+// the SAH cost at each of the NUM_BINS-1 bin boundaries (O(N*B) time).
+// We then pick the split axis + position with the lowest cost and recurse.
+// If no split improves over keeping all triangles in one leaf, we stop.
 void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
                                vector<GPUTriangle>& triangles, int& nodesUsed)
 {
     GPUBVHNode& node = bvhNodes[nodeIdx];
-    if (node.triCount <= 4) return;
+    if (node.triCount <= 4) return;  // leaf threshold: small nodes are cheaper to test directly
 
     const int NUM_BINS = 16;
     float bestCost  = std::numeric_limits<float>::infinity();
     int   bestAxis  = -1;
     float bestSplit = 0.0f;
 
+    // Try splitting along each of the 3 axes; keep the cheapest overall.
     for (int axis = 0; axis < 3; axis++) {
         float axisMin =  std::numeric_limits<float>::infinity();
         float axisMax = -std::numeric_limits<float>::infinity();
 
+        // Find the range of centroids along this axis to size the bins.
         for (int i = 0; i < node.triCount; i++) {
             float c = triCentroid(triangles[node.leftFirst + i])[axis];
             axisMin = std::min(axisMin, c);
             axisMax = std::max(axisMax, c);
         }
-        if (axisMax - axisMin < 1e-6f) continue;
+        if (axisMax - axisMin < 1e-6f) continue;  // all centroids coplanar on this axis: skip
 
         float scale = float(NUM_BINS) / (axisMax - axisMin);
 
+        // Scatter triangles into bins based on centroid position.
         BinInfo bins[NUM_BINS] = {};
         for (int i = 0; i < node.triCount; i++) {
             const GPUTriangle& tri = triangles[node.leftFirst + i];
@@ -294,6 +309,9 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
             bins[b].bounds = unionAABB(bins[b].bounds, triAABB(tri));
         }
 
+        // Prefix sums: lCounts[i]/lAABB[i] = total count/AABB for bins [0..i].
+        // Suffix sums: rCounts[i]/rAABB[i] = total count/AABB for bins [i..N-1].
+        // These allow O(1) SAH evaluation for each candidate split plane.
         int  lCounts[NUM_BINS], rCounts[NUM_BINS];
         AABB lAABB[NUM_BINS],   rAABB[NUM_BINS];
 
@@ -310,6 +328,7 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
         }
 
         float parentSA = surfaceArea(node);
+        // Evaluate SAH cost at each bin boundary (split s = "bins 0..s go left, s+1..N-1 go right").
         for (int s = 0; s < NUM_BINS - 1; s++) {
             if (lCounts[s] == 0 || rCounts[s + 1] == 0) continue;
             float cost = 1.0f
@@ -323,8 +342,10 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
         }
     }
 
+    // If no split reduces cost below the leaf cost (N triangles directly), leave as a leaf.
     if (bestAxis == -1 || bestCost >= float(node.triCount)) return;
 
+    // Partition triangles in-place around the split plane (Dutch flag / lomuto-style).
     int i = node.leftFirst, j = i + node.triCount - 1;
     while (i <= j) {
         if (triCentroid(triangles[i])[bestAxis] < bestSplit) i++;
@@ -332,7 +353,7 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
     }
 
     int leftCount = i - node.leftFirst;
-    if (leftCount == 0 || leftCount == node.triCount) return;
+    if (leftCount == 0 || leftCount == node.triCount) return;  // degenerate: all on one side
 
     int leftChild  = nodesUsed++;
     int rightChild = nodesUsed++;
@@ -345,6 +366,8 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
     bvhNodes[rightChild].triCount  = node.triCount - leftCount;
     updateNodeBounds(rightChild, bvhNodes, triangles);
 
+    // Convert this node from leaf to internal: leftFirst now points to the left child.
+    // triCount = 0 signals "internal node" to the GPU traversal shader.
     node.leftFirst = leftChild;
     node.triCount  = 0;
 

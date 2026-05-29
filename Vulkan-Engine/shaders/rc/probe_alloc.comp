@@ -34,6 +34,17 @@ layout(push_constant) uniform AllocPC {
     int   pad[3];
 } pc;
 
+// Probe allocation: decides which grid cells need probes this frame.
+//
+// Cascade 0 (allocMode=0): driven by the G-buffer.  Every surface pixel contributes
+// the grid cell that contains it.  Only cells that have visible geometry in this frame
+// get probes — this is the "sparse" part of Sparse Radiance Cascades.  Unused cells
+// (e.g. behind a wall out of view) stay empty and are simply skipped in trace/gather.
+//
+// Cascade k>0 (allocMode=1): driven by the filled parent (level k-1).  Each occupied
+// parent cell maps to one cell at this coarser level (integer division by 2 per axis,
+// because each level has 2x the spacing).  This propagates coverage outward so the
+// merge step has parent data available for every occupied child probe.
 void main()
 {
     ivec3 cell;
@@ -45,13 +56,13 @@ void main()
         ivec2 sz    = imageSize(gPosition);
         if (pixel.x >= sz.x || pixel.y >= sz.y) return;
 
-        // Sky pixels have no surface - no probe needed
+        // Sky pixels have no surface — no probe needed
         if (imageLoad(gLinearDepth, pixel).r >= 1e5) return;
 
         vec3 worldPos = imageLoad(gPosition, pixel).xyz;
-        // Match the gather's trilinear base formula: floor(pos/spacing - 0.5).
-        // This ensures the allocated cell == gather's base corner, so the surface's
-        // own probe is always the nearest probe in the stencil (never behind a wall).
+        // floor(pos/spacing - 0.5) matches the trilinear gather's "base corner" formula
+        // so the surface's own cell is always one of the 8 stencil probes in gather,
+        // preventing a surface from being lit only by probes on the far side of a wall.
         cell = ivec3(floor((worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5));
     }
     else
@@ -62,15 +73,16 @@ void main()
 
         uint  parentKey  = parentSlotToKey[parentSlot];
         ivec3 parentCell = unpackCellKey(parentKey);
-        // This cascade's cells are 2x larger - each parent cell maps to one cell here.
+        // Integer division by 2: each level is 2x coarser, so 2 child cells share 1 parent cell.
         cell = parentCell / 2;
     }
 
-    // Bounds check
+    // Skip out-of-bounds cells (can happen at scene edges after the floor() computation).
     if (any(lessThan(cell, ivec3(0))) ||
         any(greaterThanEqual(cell, pc.gridSizeHashSize.xyz))) return;
 
+    // probeInsert atomically claims a slot in the open-addressing hash map and records
+    // the dense slot index in slotToKey[] for the trace/merge dispatch to iterate over.
     uint key = packCellKey(cell);
     probeInsert(key, uint(pc.gridSizeHashSize.w));
-    // probeInsert atomically claims a slot and writes slotToKey[slot] = key
 }

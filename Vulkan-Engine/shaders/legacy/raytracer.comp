@@ -170,17 +170,29 @@ struct Ray {
 
 const float PI = 3.14159265359;
 
+// PCG (Permuted Congruential Generator) hash-based pseudo-random number generator.
+// A simple LCG (Linear Congruential Generator) step produces a raw state, then a
+// permutation step (variable-shift XOR + multiplicative hash) scrambles the bits
+// to break the obvious period patterns an LCG alone would exhibit.
+// Seeded once per pixel from its screen position, so each pixel has an independent
+// random stream.  Deterministic: same seed = same sequence every frame.
 uint randState;
 float rand() {
-    randState = randState * 747796405u + 2891336453u;
-    uint word = ((randState >> ((randState >> 28u) + 4u)) ^ randState) * 277803737u;
-    return float((word >> 22u) ^ word) / 4294967295.0;
+    randState = randState * 747796405u + 2891336453u;  // LCG step
+    uint word = ((randState >> ((randState >> 28u) + 4u)) ^ randState) * 277803737u;  // permutation
+    return float((word >> 22u) ^ word) / 4294967295.0;  // map to [0, 1)
 }
 
+// Builds a Tangent-Bitangent-Normal (TBN) matrix from a surface normal.
+// TBN transforms vectors between tangent space (used by normal maps, parallax maps)
+// and world space.  The tangent (t) and bitangent (b) are arbitrary perpendicular
+// vectors in the surface plane; we pick them using a "robust up vector" trick:
+// if the normal is nearly vertical we use world-X instead of world-Y to avoid
+// the degenerate cross product that would produce a zero-length tangent.
 mat3 getTBN(vec3 n) {
     vec3 up = abs(n.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-    vec3 t = normalize(cross(up, n));
-    vec3 b = cross(n, t);
+    vec3 t = normalize(cross(up, n));  // tangent: perpendicular to both up and normal
+    vec3 b = cross(n, t);              // bitangent: completes the right-handed basis
     return mat3(t, b, n);
 }
 
@@ -200,45 +212,59 @@ float noise(vec3 x) {
                    mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
+// Fractal Brownian Motion: sums multiple octaves of value noise with decreasing amplitude.
+// Each octave doubles the frequency (x * 2.0) and halves the amplitude (a *= 0.5),
+// adding fine detail on top of coarse structure — exactly how natural textures (clouds,
+// terrain, marble) look.  The shift vec3(100) decorrelates successive octaves so they
+// don't add in phase (which would just be scaled noise, not fractal structure).
 float fbm(vec3 x) {
     float v = 0.0;
-    float a = 0.5;
-    vec3 shift = vec3(100.0);
+    float a = 0.5;          // initial amplitude (halved each octave)
+    vec3 shift = vec3(100.0);  // phase shift between octaves to prevent coherent summation
     for (int i = 0; i < 5; ++i) {
         v += a * noise(x);
-        x = x * 2.0 + shift;
-        a *= 0.5;
+        x = x * 2.0 + shift;   // double frequency
+        a *= 0.5;               // halve amplitude
     }
     return v;
 }
 
+// Uniform random point on a unit disk (used for depth-of-field lens sampling).
+// Naive rejection sampling is slow; instead use the area-preserving transform:
+// if theta is uniform in [0, 2PI) and r^2 is uniform in [0,1), then (r*cos, r*sin)
+// is uniformly distributed over the disk.  sqrt(rand()) gives r such that r^2 is uniform.
 vec2 randomPointOnDisk() {
     float angle = rand() * 2.0 * PI;
-    float r = sqrt(rand());
+    float r = sqrt(rand());  // sqrt maps uniform [0,1) -> radially uniform disk distribution
     return vec2(r * cos(angle), r * sin(angle));
 }
 
+// Constructs a ZYX Euler rotation matrix (applied in order: first X, then Y, then Z).
+// Each axis matrix is derived from the 2D rotation formula: a rotation by angle theta
+// in a plane leaves one axis unchanged and rotates the other two.
+// GLSL matrices are stored column-major, so mat3(col0, col1, col2) means each vec3 is
+// a column, not a row.  The combined matrix rz*ry*rx applies rx first (right-to-left).
 mat3 rotationMatrixXYZ(vec3 rot) {
     vec3 rad = radians(rot);
     vec3 c = cos(rad);
     vec3 s = sin(rad);
 
     mat3 rx = mat3(
-        1.0, 0.0, 0.0,
-        0.0, c.x, s.x,
-        0.0, -s.x, c.x
+        1.0,  0.0,  0.0,
+        0.0,  c.x,  s.x,
+        0.0, -s.x,  c.x
     );
     mat3 ry = mat3(
-        c.y, 0.0, -s.y,
-        0.0, 1.0, 0.0,
-        s.y, 0.0, c.y
+         c.y,  0.0, -s.y,
+         0.0,  1.0,  0.0,
+         s.y,  0.0,  c.y
     );
     mat3 rz = mat3(
-        c.z, s.z, 0.0,
-        -s.z, c.z, 0.0,
-        0.0, 0.0, 1.0
+         c.z,  s.z,  0.0,
+        -s.z,  c.z,  0.0,
+         0.0,  0.0,  1.0
     );
-    return rz * ry * rx;
+    return rz * ry * rx;  // ZYX order: X rotation applied first to the vector
 }
 
 float intersectAABB(Ray ray, vec3 invDir, vec3 bMin, vec3 bMax) {
@@ -463,27 +489,42 @@ void main() {
     if (pixelCoords.x >= imageSize.x || pixelCoords.y >= imageSize.y) return;
 
 
+    // Seed the per-pixel random state from the pixel index.
+    // Adding 1 avoids a degenerate seed of 0 (which would produce 0 for all subsequent calls).
     randState = pixelCoords.y * imageSize.x + pixelCoords.x + 1;
 
     float fov = 60.0;
     float halfFovTan = tan(radians(fov * 0.5));
-    
+
     vec3 accumulatedColor = vec3(0.0);
 
+    // Multi-sample anti-aliasing (MSAA) / soft depth-of-field loop.
+    // Each sample fires one primary ray with a random sub-pixel jitter and
+    // a random lens offset.  Results are averaged at the end.
     for (int s = 0; s < cam.primaryRaysPerPixel; s++) {
+        // Sub-pixel jitter: shift the sample point randomly within the pixel boundary.
+        // When primaryRaysPerPixel > 1, this gives stochastic anti-aliasing by averaging
+        // many slightly offset samples.  With 1 sample, the center of the pixel is used.
         vec2 subPixel = vec2(pixelCoords);
         if (cam.primaryRaysPerPixel > 1) {
             subPixel += vec2(rand(), rand());
         }
 
+        // Map pixel (in [0, imageSize)) to NDC space [-1, 1] then scale by the FOV half-tangent.
+        // The Y flip (uv.y = -uv.y) converts from top-left screen origin to bottom-left math convention.
+        // The aspect ratio correction keeps circles round on non-square images.
         vec2 uv = subPixel / vec2(imageSize) * 2.0 - 1.0;
         uv.y = -uv.y;
         uv.x *= float(imageSize.x) / float(imageSize.y);
         uv *= halfFovTan;
 
+        // Depth-of-field: instead of shooting a pinhole ray from the camera center,
+        // offset the ray origin randomly on a thin lens of radius lensRadius.
+        // All rays aimed at the same focal point will converge there (in-focus),
+        // while objects at other distances get blurred proportional to their defocus.
         vec3 rawDir = normalize(cam.camRight.xyz * uv.x + cam.camUp.xyz * uv.y + cam.camForward.xyz);
         vec3 focalPoint = cam.camPos.xyz + rawDir * cam.focalDistance;
-        
+
         vec2 disk = randomPointOnDisk() * cam.lensRadius;
 
         Ray ray;
@@ -492,9 +533,16 @@ void main() {
         vec3 primaryRayDir = ray.direction;
 
         vec3 sampleColor = vec3(0.0);
+        // attenuation tracks how much of the final radiance this bounce contributes.
+        // It starts at vec3(1) (full weight) and is multiplied by the surface reflectance
+        // or refraction tint at each bounce.  Rays that hit diffuse surfaces accumulate
+        // color normally; reflective/transparent surfaces dilute their contribution by
+        // the reflectance factor, so the ray "continues" at reduced energy.
         vec3 attenuation = vec3(1.0);
-        
 
+        // Path tracing depth loop.  Each iteration follows the ray one more bounce.
+        // maxDepth limits the recursion depth to prevent infinite loops on mirrors.
+        // When a diffuse surface is hit the loop breaks immediately (no further bouncing).
         for (int depth = 0; depth < cam.maxDepth; depth++) {
             float minHitDistance = 999999.0;
             int hitObjType = -1;
@@ -579,10 +627,14 @@ void main() {
             }
 
             if (cam.enableFog == 1) {
+                // Exponential (Beer-Lambert) fog: transmittance = exp(-density * distance).
+                // The fog contributes (1 - T) of the fog color blended by the sky gradient,
+                // while the surface contribution is attenuated by T.  This models a homogeneous
+                // participating medium where fogDensity controls how quickly light is scattered.
                 float fogDensity = 0.04;
                 float transmittance = exp(-minHitDistance * fogDensity);
                 vec3 fogGrad = (cam.enableSkybox == 1) ? mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (primaryRayDir.y + 1.0)) : cam.fogColor;
-                
+
                 sampleColor += attenuation * fogGrad * (1.0 - transmittance);
                 attenuation *= transmittance;
             }
@@ -629,34 +681,48 @@ void main() {
 
             vec3 baseColor = mat.color;
             if (cam.enableTextures == 1 && mat.useTexture == 1) {
-                if (mat.patternType == 0) { 
+                if (mat.patternType == 0) {
                     if (mat.heightMapIndex >= 0) {
-                        vec3 viewDir = normalize(getTBN(hitNormal) * -ray.direction);
-    
+                        // Steep Parallax Occlusion Mapping: simulates surface depth without
+                        // displacing actual geometry.  The height map encodes elevation; we
+                        // "march" along the view direction in tangent space, stepping through
+                        // virtual depth layers until the ray crosses below the height surface.
+                        //
+                        // More layers are used for steep view angles (grazing) where the
+                        // approximation breaks down; fewer layers are needed for near-vertical views.
+                        vec3 viewDir = normalize(getTBN(hitNormal) * -ray.direction);  // view in tangent space
+
                         float minLayers = 8.0;
                         float maxLayers = 32.0;
-                        float numLayers = mix(maxLayers, minLayers, abs(dot(vec3(0.0, 0.0, 1.0), viewDir)));  
-    
-                        float layerDepth = 1.0 / numLayers;
+                        // Grazing angles (dot -> 0) need more layers to avoid aliasing
+                        float numLayers = mix(maxLayers, minLayers, abs(dot(vec3(0.0, 0.0, 1.0), viewDir)));
+
+                        float layerDepth = 1.0 / numLayers;   // step size in depth
                         float currentLayerDepth = 0.0;
-    
-                        vec2 P = viewDir.xy * mat.parallaxScale; 
+
+                        // P is the total 2D UV offset accumulated over the full depth range.
+                        // We subdivide it into numLayers steps and march until we go below the surface.
+                        vec2 P = viewDir.xy * mat.parallaxScale;
                         vec2 deltaTexCoords = P / numLayers;
-    
+
                         vec2 currentTexCoords = hitUV;
+                        // Height map stores elevation; (1 - r) inverts so 0 = high, 1 = deep.
                         float currentDepthMapValue = 1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], currentTexCoords, 0.0).r;
-    
+
+                        // Step forward until the virtual ray depth exceeds the surface depth.
                         while(currentLayerDepth < currentDepthMapValue) {
                             currentTexCoords -= deltaTexCoords;
-                            currentDepthMapValue = 1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], currentTexCoords, 0.0).r;  
-                            currentLayerDepth += layerDepth;  
+                            currentDepthMapValue = 1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], currentTexCoords, 0.0).r;
+                            currentLayerDepth += layerDepth;
                         }
-    
+
+                        // Linear interpolation between the last two steps to find the precise
+                        // crossing point (removes the staircase artifact of integer stepping).
                         vec2 prevTexCoords = currentTexCoords + deltaTexCoords;
                         float afterDepth  = currentDepthMapValue - currentLayerDepth;
                         float beforeDepth = (1.0 - textureLod(textures[nonuniformEXT(mat.heightMapIndex)], prevTexCoords, 0.0).r) - currentLayerDepth + layerDepth;
                         float weight = afterDepth / (afterDepth - beforeDepth);
-    
+
                         hitUV = prevTexCoords * weight + currentTexCoords * (1.0 - weight);
     
                         if(hitUV.x > 1.0 || hitUV.y > 1.0 || hitUV.x < 0.0 || hitUV.y < 0.0) {
@@ -925,46 +991,65 @@ void main() {
                 }
             }
 
+            // --- Decide the next event: refraction, reflection, or terminate ---
+
             if (mat.transparency > 0.0) {
+                // Snell's law refraction + Schlick Fresnel approximation.
+                // eta = ratio of the indices of refraction (n_incoming / n_outgoing).
+                // cosI is the angle between the incoming ray and the surface normal.
+                // If the ray is entering (cosI < 0, ray opposes normal) then eta = 1/ior (air->glass).
+                // If the ray is exiting (cosI > 0, ray agrees with normal) then eta = ior (glass->air),
+                // and we flip n so the refract() call always receives an outward-facing normal.
                 float cosI = dot(ray.direction, hitNormal);
                 float eta;
                 vec3 n = hitNormal;
-                
+
                 if (cosI < 0.0) {
-                    eta = 1.0 / mat.ior;
+                    eta = 1.0 / mat.ior;  // entering the medium
                     cosI = -cosI;
                 } else {
-                    eta = mat.ior;
-                    n = -hitNormal;
+                    eta = mat.ior;        // exiting the medium
+                    n = -hitNormal;       // flip so normal opposes the ray inside the medium
                 }
-                
+
+                // Schlick's approximation: F = F0 + (1-F0)*(1-cosI)^5
+                // F0 = ((n1-n2)/(n1+n2))^2 is the normal-incidence reflectance.
+                // As cosI -> 0 (grazing angle) reflectance approaches 1 (total reflection).
                 float r0 = (1.0 - eta) / (1.0 + eta);
                 r0 = r0 * r0;
                 float fresnel = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
                 vec3 refractDir = refract(ray.direction, n, eta);
-                
+
+                // Total internal reflection: occurs when the refracted ray can't exist
+                // (the angle exceeds the critical angle).  refract() returns (0,0,0) in this case.
                 if (length(refractDir) < 0.001) fresnel = 1.0;
                 if (fresnel < 1.0 && length(refractDir) > 0.001) {
+                    // Partial transmission: accumulate surface shading attenuated by opacity,
+                    // then continue the refracted ray tinted by the material color and transmission.
                     sampleColor += attenuation * localColor * (1.0 - mat.transparency);
-                    attenuation *= mat.transparency * (1.0 - fresnel) * baseColor; 
-                    ray.origin = hitPos - n * MIN_DISPLACEMENT; 
+                    attenuation *= mat.transparency * (1.0 - fresnel) * baseColor;
+                    ray.origin = hitPos - n * MIN_DISPLACEMENT;  // offset away from surface on the transmission side
                     ray.direction = normalize(refractDir);
                 } else {
+                    // Full reflection (either by Fresnel or TIR): treat like a mirror at this bounce.
                     sampleColor += attenuation * localColor * (1.0 - mat.reflection);
                     attenuation *= mat.reflection;
                     ray.origin = hitPos + n * MIN_DISPLACEMENT;
                     ray.direction = reflect(ray.direction, n);
                 }
-            } 
+            }
             else if (mat.reflection > 0.0) {
+                // Mirror-like reflection: the (1 - reflection) fraction of energy stays at this
+                // surface; the remaining fraction continues along the reflected direction.
                 sampleColor += attenuation * localColor * (1.0 - mat.reflection);
                 attenuation *= mat.reflection;
                 ray.origin = hitPos + hitNormal * MIN_DISPLACEMENT;
                 ray.direction = reflect(ray.direction, hitNormal);
-            } 
+            }
             else {
+                // Fully diffuse (no further bouncing): accumulate and stop.
                 sampleColor += attenuation * localColor;
-                break; 
+                break;
             }
         }
         

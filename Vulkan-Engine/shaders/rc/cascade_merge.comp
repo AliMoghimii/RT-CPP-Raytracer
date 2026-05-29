@@ -88,8 +88,13 @@ void main() {
     vec2 uv = octIndexToUV(ivec2(dx, dy), cOctRes);
     vec3 dir = octDecode(uv);
 
-    // Trilinear gather: find 8 surrounding parent probes, weight by position
-    vec4  parentAccum = vec4(0.0);
+    // Trilinear gather: find 8 surrounding parent probes, weight by position.
+    // Initialize with transmittance=1 so that if ALL parent neighbors are missing
+    // (volume boundary), the merge formula correctly preserves this probe's own
+    // transmittance: merged.T = myInterval.a * 1.0 = myInterval.a.
+    // Without this init, T=0 at boundaries would make edges appear to fully absorb
+    // all incoming light, producing an artificial darkening band at cascade edges.
+    vec4  parentAccum = vec4(0.0, 0.0, 0.0, 1.0);
     float weightSum = 0.0;
 
     for (int pz = 0; pz <= 1; pz++) {
@@ -114,19 +119,29 @@ void main() {
         }
     }
 
-    // Normalize (handles missing parent neighbors at volume boundaries)
+    // Normalize weighted sum. If weightSum is near zero, all 8 parent neighbors
+    // are outside the grid or unallocated. parentAccum keeps its init of (0,0,0,1):
+    //   radiance=0 adds nothing, transmittance=1 propagates this probe's own T unchanged.
     if (weightSum > 0.001) parentAccum /= weightSum;
-    // If no parent probes found: parentAccum stays (0,0,0,1)  -  correct for a boundary region
-    // (transmittance=1 means "nothing found beyond me"; radiance=0 is safe to add)
 
-    // Load this cascade's own traced interval for this direction
+    // Load this cascade's own traced interval for this direction.
+    // After probe_trace.comp ran: myInterval.rgb = radiance from the near interval,
+    // myInterval.a = transmittance through the near interval (0 = fully occluded, 1 = miss).
     int myIdx = storageBase + dy * cOctRes + dx;
     vec4 myInterval = unpackRadianceTransmittance(cascadeData[myIdx]);
 
-    // Merge: my near interval + parent's far interval attenuated by my transmittance.
-    // This is volume rendering compositing:
+    // Volume rendering compositing (the "over" operator from Porter-Duff):
     //   merged.L = near.L + near.T * far.L
     //   merged.T = near.T * far.T
+    // Intuition: the near interval contributes its own radiance.  Whatever light the near
+    // interval did NOT absorb (near.T) gets multiplied by the far interval's radiance and
+    // added.  The surviving transmittance is the product of both intervals' transmittances.
+    // This is exactly the Beer-Lambert law extended to piecewise intervals.
+    //
+    // The cascade hierarchy provides the far interval: each cascade level covers a distance
+    // range 2x larger than the one below it, so cascade 0 provides the near interval and
+    // cascade N-1 provides the farthest reach.  Merging bottom-up assembles the full
+    // radiance integral from 0 to infinity for each probe direction.
     vec4 merged = vec4(
         myInterval.rgb + myInterval.a * parentAccum.rgb,
         myInterval.a * parentAccum.a

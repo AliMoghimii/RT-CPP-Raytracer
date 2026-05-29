@@ -1,0 +1,58 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 256) in;
+
+#include "../common/octahedral.glsl"
+
+// cascade-0 hash map SSBOs (set 0 = rcHashDescSets[0])
+// Only nextSlot and cascadeData are needed; others exist in the layout but are not used here.
+layout(std430, set = 0, binding = 3) readonly buffer SC { uint nextSlot;       };
+layout(std430, set = 0, binding = 4) readonly buffer CD { uvec2 cascadeData[]; };
+layout(std430, set = 0, binding = 6) writeonly buffer SH { vec4  shCoeffs[];   };
+
+layout(push_constant) uniform SHPC {
+    int octRes;
+    int maxActiveSlots;
+} pc;
+
+// Inline helpers (subset of cascade_layout.glsl, avoids hash-map SSBO requirements)
+int probeStorageBase(uint slot, int res) { return int(slot) * res * res; }
+
+vec3 unpackRadiance(uvec2 packed) {
+    vec2 xy = unpackHalf2x16(packed.x);
+    vec2 zw = unpackHalf2x16(packed.y);
+    return vec3(xy.x, xy.y, zw.x);
+}
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+    if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
+
+    int octRes      = pc.octRes;
+    int N           = octRes * octRes;
+    int storageBase = probeStorageBase(slot, octRes);
+
+    // SH L0+L1 approximation of sampleProbeIrradiance(slot, n):
+    //   irradiance(n) = sh0 + sh1*n.x + sh2*n.y + sh3*n.z
+    // K0 = π/(2N), K1 = 3π/(2N): calibrated to match the 16-direction Monte Carlo estimate.
+    float K0 = 3.14159265 / (2.0 * float(N));
+    float K1 = 3.0 * 3.14159265 / (2.0 * float(N));
+
+    vec3 c0 = vec3(0.0), cx = vec3(0.0), cy = vec3(0.0), cz = vec3(0.0);
+
+    for (int d = 0; d < N; d++) {
+        vec2 uv  = octIndexToUV(ivec2(d % octRes, d / octRes), octRes);
+        vec3 dir = octDecode(uv);
+        vec3 L   = unpackRadiance(cascadeData[storageBase + d]);
+        c0 += L;
+        cx += L * dir.x;
+        cy += L * dir.y;
+        cz += L * dir.z;
+    }
+
+    int base4 = int(slot) * 4;
+    shCoeffs[base4 + 0] = vec4(c0 * K0, 0.0);
+    shCoeffs[base4 + 1] = vec4(cx * K1, 0.0);
+    shCoeffs[base4 + 2] = vec4(cy * K1, 0.0);
+    shCoeffs[base4 + 3] = vec4(cz * K1, 0.0);
+}

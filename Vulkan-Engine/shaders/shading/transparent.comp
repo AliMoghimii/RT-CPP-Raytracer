@@ -24,6 +24,7 @@ layout(std430, set = 2, binding = 1) readonly buffer HV  { uint hashValues[];  }
 layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[];   };
 layout(std430, set = 2, binding = 3) readonly buffer SC  { uint nextSlot;      };
 layout(std430, set = 2, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
+layout(std430, set = 2, binding = 6) readonly buffer SH  { vec4 shCoeffs[];    };
 
 struct GPUPlane {
     vec3 center; float p1;
@@ -92,22 +93,14 @@ vec3 analyticalShadow(vec3 origin, vec3 dir, float maxT) {
     return atten;
 }
 
+// SH L0+L1 probe irradiance: 4 reads + dot-product (matches final_gather.comp).
 vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
-    int octRes = pc.gridSizeOctRes.w;
-    int storageBase = probeStorageBase(slot, octRes);
-    int dirCount = octRes * octRes;
-    vec3 irradiance = vec3(0.0);
-    for (int d = 0; d < dirCount; d++) {
-        int dx = d % octRes;
-        int dy = d / octRes;
-        vec2 uv = octIndexToUV(ivec2(dx, dy), octRes);
-        vec3 dir = octDecode(uv);
-        float NdotL = max(0.0, dot(dir, normal));
-        if (NdotL < 0.001) continue;
-        vec4 interval = unpackRadianceTransmittance(cascadeData[storageBase + d]);
-        irradiance += interval.rgb * NdotL;
-    }
-    return irradiance * (2.0 * 3.14159265 / float(dirCount));
+    int base4 = int(slot) * 4;
+    vec3 sh0 = shCoeffs[base4 + 0].rgb;
+    vec3 sh1 = shCoeffs[base4 + 1].rgb;
+    vec3 sh2 = shCoeffs[base4 + 2].rgb;
+    vec3 sh3 = shCoeffs[base4 + 3].rgb;
+    return max(vec3(0.0), sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z);
 }
 
 // Hybrid analytical+BVH intersection. Returns the nearest hit along (origin, dir).

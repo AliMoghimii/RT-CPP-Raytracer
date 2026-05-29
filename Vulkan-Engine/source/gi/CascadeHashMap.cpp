@@ -16,6 +16,7 @@ void CascadeHashMap::create(VulkanContext& ctx, uint32_t tableSize, uint32_t max
 	// after vkWaitForFences, enabling frame-latency indirect dispatch sizing.
 	slotCounter = Buffer(ctx.allocator, sizeof(uint32_t), flags, VMA_MEMORY_USAGE_GPU_TO_CPU);
 	cascadeData = Buffer(ctx.allocator, dataBufferSize(), flags, VMA_MEMORY_USAGE_GPU_ONLY);
+	shCoeffs    = Buffer(ctx.allocator, shBufferSize(),  flags, VMA_MEMORY_USAGE_GPU_ONLY);
 }
 
 void CascadeHashMap::destroy()
@@ -25,4 +26,5 @@ void CascadeHashMap::destroy()
 	slotToKey = Buffer();
 	slotCounter = Buffer();
 	cascadeData = Buffer();
+	shCoeffs    = Buffer();
 }

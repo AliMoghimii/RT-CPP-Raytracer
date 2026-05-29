@@ -259,16 +259,16 @@ void Renderer::createGBufferDescriptorSetLayout() {
 
 void Renderer::createRCDescriptorSetLayouts() {
 
-    // RC hash set: 6 SSBOs
-    // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData, b5=parentCascadeData
-    // b5 is only used in merge; shaders that don't declare it ignore it with no validation error.
+    // RC hash set: 7 SSBOs
+    // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData,
+    // b5=parentCascadeData (merge only), b6=shCoeffs (SH pre-integration, probe_sh + gather)
     {
-        VkDescriptorSetLayoutBinding binds[6] = {};
-        for (uint32_t i = 0; i < 6; i++) {
+        VkDescriptorSetLayoutBinding binds[7] = {};
+        for (uint32_t i = 0; i < 7; i++) {
             binds[i] = { i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
         }
         VkDescriptorSetLayoutCreateInfo ci{
-            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 6, binds };
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 7, binds };
         if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcHashDescSetLayout) != VK_SUCCESS)
             throw std::runtime_error("Renderer: rcHashDescSetLayout creation failed.");
     }
@@ -359,6 +359,10 @@ void Renderer::createRCPipelineLayouts() {
         { rcHashDescSetLayout, rcParentHashDescSetLayout },
         sizeof(RCMergePC));
 
+    // SH pre-integration: set0=rcHashDescSetLayout (reads cascadeData b4, writes shCoeffs b6)
+    struct RCSHPushConstants { int octRes; int maxActiveSlots; };
+    rcSHPipelineLayout = makeLayout({ rcHashDescSetLayout }, sizeof(RCSHPushConstants));
+
     // Gather: set0=sceneDescSetLayout (BVH + lights + materials, matches bvh.glsl/lighting.glsl bindings),
     //         set1=gbufDescSetLayout  (G-buffer read + hdrImage write at b5),
     //         set2=rcHashDescSetLayout (cascade-0 read)
@@ -380,6 +384,8 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/probe_trace.comp.spv", rcTracePipelineLayout);
     rcMergePipeline = createComputePipelineFromSpv(
         "shaders/rc/cascade_merge.comp.spv", rcMergePipelineLayout);
+    rcSHPipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_sh.comp.spv", rcSHPipelineLayout);
     rcGatherPipeline = createComputePipelineFromSpv(
         "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
     rcTransparentPipeline = createComputePipelineFromSpv(
@@ -420,7 +426,7 @@ void Renderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 9;                               // 7 existing + 2 tonemap
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(8 + N * 6 + N * 4);     // 58 when N=5
+    poolSizes[1].descriptorCount = uint32_t(8 + N * 7 + N * 4);     // N*7: rcHash (7 bindings incl. shCoeffs)
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 100;
 
@@ -565,21 +571,22 @@ void Renderer::createRCDescriptorSets() {
             ? rcStorage.levels[i + 1].cascadeData.handle
             : lvl.cascadeData.handle; // last level: self-reference dummy
 
-        VkDescriptorBufferInfo infos[6] = {
-            { lvl.hashKeys.handle, 0, VK_WHOLE_SIZE },
-            { lvl.hashValues.handle, 0, VK_WHOLE_SIZE },
-            { lvl.slotToKey.handle, 0, VK_WHOLE_SIZE },
+        VkDescriptorBufferInfo infos[7] = {
+            { lvl.hashKeys.handle,    0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle,  0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle,   0, VK_WHOLE_SIZE },
             { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
             { lvl.cascadeData.handle, 0, VK_WHOLE_SIZE },
-            { parentDataHandle, 0, VK_WHOLE_SIZE },
+            { parentDataHandle,       0, VK_WHOLE_SIZE },
+            { lvl.shCoeffs.handle,    0, VK_WHOLE_SIZE },
         };
-        VkWriteDescriptorSet writes[6] = {};
-        for (uint32_t b = 0; b < 6; b++) {
+        VkWriteDescriptorSet writes[7] = {};
+        for (uint32_t b = 0; b < 7; b++) {
             writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
                 rcHashDescSets[i], b, 0, 1,
                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
         }
-        vkUpdateDescriptorSets(ctx.device, 6, writes, 0, nullptr);
+        vkUpdateDescriptorSets(ctx.device, 7, writes, 0, nullptr);
     }
 
     // --- rcParentHashDescSets[i]: 4 SSBOs pointing at level i's keys/values/slotToKey/counter ---
@@ -977,6 +984,22 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 9);
 
+    // === 5.5 SH pre-integration — cascade-0 only ===
+    // Converts the 16-direction cascadeData into 4 SH coefficients (L0+L1) per probe.
+    // gather/transparent then use a dot-product lookup instead of a 16-iteration inner loop,
+    // reducing register pressure and improving GPU occupancy significantly.
+    {
+        struct RCSHPushConstants { int octRes; int maxActiveSlots; } shPC{
+            rcConfig.octRes(0), (int)rcStorage.maxActiveSlots[0] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcSHPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcSHPipelineLayout, 0, 1, &rcHashDescSets[0], 0, nullptr);
+        vkCmdPushConstants(cmd, rcSHPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(shPC), &shPC);
+        vkCmdDispatch(cmd, (prevFrameSlots[0] + 255) / 256, 1, 1);
+        emitComputeBarrier(cmd);  // shCoeffs writes visible to gather + transparent
+    }
+
     // === 6. Final gather — replaces composite_temp ===
     // Reads cascade-0's fully merged probe data. For each G-buffer pixel: trilinearly
     // interpolates indirect irradiance from the 8 surrounding cascade-0 probes, then adds
@@ -1134,6 +1157,7 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, rcAllocPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcSHPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTransparentPipeline, nullptr);
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
@@ -1143,6 +1167,7 @@ void Renderer::cleanup() {
     vkDestroyPipelineLayout(ctx.device, rcAllocPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcSHPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTransparentPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout, nullptr);

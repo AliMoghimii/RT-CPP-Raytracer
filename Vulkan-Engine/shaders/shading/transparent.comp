@@ -189,18 +189,16 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
         shadowRay.tMin      = 0.001;
         shadowRay.tMax      = lightDist - 0.01;
 
+        // Analytical shadow only — no BVH shadow inside refraction chains (too expensive).
         vec3 shadowAtten = analyticalShadow(shadowRay.origin, lightDir, shadowRay.tMax);
         if (dot(shadowAtten, shadowAtten) > 0.001) {
-            shadowAtten *= traverseBVHShadow(shadowRay, pc.bvhCount);
-            if (dot(shadowAtten, shadowAtten) > 0.001) {
-                float atten = 1.0 / max(lightDist * lightDist, 0.01);
-                vec3  attLt = lights[l].color * shadowAtten * atten;
-                if (mat.shadingModel == 1) {
-                    color += pbrShading(mat, albedo, normal, viewDir, lightDir, attLt);
-                } else {
-                    color += lambertianShading(mat, albedo, normal, lightDir, attLt);
-                    color += blingPhongShading(mat, attLt, normal, lightDir, viewDir, 50.0);
-                }
+            float atten = 1.0 / max(lightDist * lightDist, 0.01);
+            vec3  attLt = lights[l].color * shadowAtten * atten;
+            if (mat.shadingModel == 1) {
+                color += pbrShading(mat, albedo, normal, viewDir, lightDir, attLt);
+            } else {
+                color += lambertianShading(mat, albedo, normal, lightDir, attLt);
+                color += blingPhongShading(mat, attLt, normal, lightDir, viewDir, 50.0);
             }
         }
     }
@@ -274,18 +272,16 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
                 shadowRay.direction = lightDir;
                 shadowRay.tMin      = 0.001;
                 shadowRay.tMax      = lightDist - 0.01;
+                // Analytical shadow only for reflections inside glass.
                 vec3 shadowAtten = analyticalShadow(shadowRay.origin, lightDir, shadowRay.tMax);
                 if (dot(shadowAtten, shadowAtten) > 0.001) {
-                    shadowAtten *= traverseBVHShadow(shadowRay, pc.bvhCount);
-                    if (dot(shadowAtten, shadowAtten) > 0.001) {
-                        float atten = 1.0 / max(lightDist * lightDist, 0.01);
-                        vec3  attLt = lights[l].color * shadowAtten * atten;
-                        if (reflMat.shadingModel == 1) {
-                            reflColor += pbrShading(reflMat, reflAlbedo, reflHit.normal, reflViewDir, lightDir, attLt);
-                        } else {
-                            reflColor += lambertianShading(reflMat, reflAlbedo, reflHit.normal, lightDir, attLt);
-                            reflColor += blingPhongShading(reflMat, attLt, reflHit.normal, lightDir, reflViewDir, 50.0);
-                        }
+                    float atten = 1.0 / max(lightDist * lightDist, 0.01);
+                    vec3  attLt = lights[l].color * shadowAtten * atten;
+                    if (reflMat.shadingModel == 1) {
+                        reflColor += pbrShading(reflMat, reflAlbedo, reflHit.normal, reflViewDir, lightDir, attLt);
+                    } else {
+                        reflColor += lambertianShading(reflMat, reflAlbedo, reflHit.normal, lightDir, attLt);
+                        reflColor += blingPhongShading(reflMat, attLt, reflHit.normal, lightDir, reflViewDir, 50.0);
                     }
                 }
             }
@@ -347,7 +343,7 @@ void main() {
     vec3 rayDir  = primaryRayDir;
     bool firstHit = true;
 
-    for (int depth = 0; depth < 8; depth++) {
+    for (int depth = 0; depth < 4; depth++) {
         vec3        hitPos;
         vec3        hitNormal;
         GPUMaterial mat;

@@ -388,6 +388,9 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/probe_sh.comp.spv", rcSHPipelineLayout);
     rcGatherPipeline = createComputePipelineFromSpv(
         "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
+    // Reflection pass: reuses rcGatherPipelineLayout (same 3 desc sets + RCGatherPC push constant).
+    rcReflectionPipeline = createComputePipelineFromSpv(
+        "shaders/shading/reflection.comp.spv", rcGatherPipelineLayout);
     rcTransparentPipeline = createComputePipelineFromSpv(
         "shaders/shading/transparent.comp.spv", rcTransparentPipelineLayout);
     tonemapPipeline = createComputePipelineFromSpv(
@@ -1035,7 +1038,19 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         vkCmdPushConstants(cmd, rcGatherPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCGatherPC), &gatherPC);
         vkCmdDispatch(cmd, dX, dY, 1);
-        emitComputeBarrier(cmd);  // hdrImage writes visible to transparent pass
+        emitComputeBarrier(cmd);  // gather writes visible to reflection pass
+
+        // === 6.5 Reflection pass — fog + first-order reflections for all geometry pixels ===
+        // Reads outHDR (from gather_simple), applies fog to ALL geometry pixels, blends
+        // reflection BVH color for reflective pixels (~30%). Reuses rcGatherPipelineLayout
+        // (same 3 descriptor sets and RCGatherPC push constant) — no new layout needed.
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcReflectionPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcGatherPipelineLayout, 0, 3, gatherSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcGatherPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(RCGatherPC), &gatherPC);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);  // reflection writes visible to transparent pass
         if (timestampsSupported)
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 11);
     }
@@ -1159,6 +1174,7 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcSHPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcReflectionPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTransparentPipeline, nullptr);
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
     vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);

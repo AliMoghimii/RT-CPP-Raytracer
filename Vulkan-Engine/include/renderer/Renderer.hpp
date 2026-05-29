@@ -129,8 +129,9 @@ private:
     VkPipeline rcAllocPipeline = VK_NULL_HANDLE;
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;
     VkPipeline rcMergePipeline = VK_NULL_HANDLE;
-    VkPipeline rcSHPipeline    = VK_NULL_HANDLE;
-    VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
+    VkPipeline rcSHPipeline         = VK_NULL_HANDLE;
+    VkPipeline rcGatherPipeline     = VK_NULL_HANDLE;
+    VkPipeline rcReflectionPipeline = VK_NULL_HANDLE;
     VkPipeline rcTransparentPipeline = VK_NULL_HANDLE;
     VkPipeline tonemapPipeline = VK_NULL_HANDLE;
 

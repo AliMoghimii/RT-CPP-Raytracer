@@ -1,0 +1,338 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_nonuniform_qualifier : enable
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#include "../common/ray.glsl"
+#include "../common/bvh.glsl"
+#include "../common/material.glsl"
+#include "../common/lighting.glsl"
+#include "../common/shadow.glsl"
+#include "../common/octahedral.glsl"
+
+// G-buffer (set 1 = gbufDescSet)
+layout(set = 1, binding = 0, rgba32f) uniform readonly image2D gPosition;
+layout(set = 1, binding = 1, rgba16f) uniform readonly image2D gNormal;
+layout(set = 1, binding = 2, rgba8)   uniform readonly image2D gAlbedo;
+layout(set = 1, binding = 3, rgba16f) uniform readonly image2D gEmissive;
+// outHDR is read-write: reads gather_simple output, writes fog+reflection blend.
+layout(set = 1, binding = 5, rgba16f) uniform image2D outHDR;
+
+// Cascade-0 hash + SH data (set 2 = rcHashDescSets[0])
+layout(std430, set = 2, binding = 0) readonly buffer HK  { uint hashKeys[];    };
+layout(std430, set = 2, binding = 1) readonly buffer HV  { uint hashValues[];  };
+layout(std430, set = 2, binding = 2) readonly buffer STK { uint slotToKey[];   };
+layout(std430, set = 2, binding = 3) readonly buffer SC  { uint nextSlot;      };
+layout(std430, set = 2, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
+layout(std430, set = 2, binding = 6) readonly buffer SH  { vec4  shCoeffs[];   };
+
+struct GPUPlane {
+    vec3 center; float p1;
+    vec3 normal; int  materialIndex;
+    float p2; float p3; float p4; float p5;
+};
+struct GPUQuad {
+    vec3 corner;       float p1;
+    vec3 edge1;        float p2;
+    vec3 edge2;        float p3;
+    vec3 normalVector; int   materialIndex;
+    float p4; float p5; float p6; float p7;
+};
+layout(std430, set = 0, binding = 5) readonly buffer PlaneBuffer { GPUPlane planes[]; };
+layout(std430, set = 0, binding = 6) readonly buffer QuadBuffer  { GPUQuad  quads[];  };
+
+#include "../common/cascade_layout.glsl"
+
+// Reuse the same push constant layout as final_gather.comp (pipeline layout is shared).
+layout(push_constant) uniform GatherPC {
+    vec4  worldOriginSpacing;
+    ivec4 gridSizeOctRes;
+    vec4  camPos;
+    int hashSize;
+    int bvhCount;
+    int lightCount;
+    int planeCount;
+    int quadCount;
+    int debugMode;
+    int enableDirect;
+    int enableIndirect;
+    vec4 skyBottomColor;
+    vec4 skyTopColor;
+    float kIndirectScale;
+    float fogDensity;
+    int fogBlendWithSky;
+    int pad;
+} pc;
+
+// ---- Helpers (identical to final_gather.comp) ----
+
+vec3 analyticalShadow(vec3 origin, vec3 dir, float maxT) {
+    vec3 atten = vec3(1.0);
+    for (int i = 0; i < pc.planeCount; i++) {
+        float denom = dot(planes[i].normal, dir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(planes[i].center - origin, planes[i].normal) / denom;
+        if (t <= 0.001 || t >= maxT) continue;
+        GPUMaterial mat = materials[planes[i].materialIndex];
+        if (mat.castShadows == 0) continue;
+        if (mat.transparency > 0.01) { atten *= mat.color * mat.transparency; }
+        else return vec3(0.0);
+    }
+    for (int i = 0; i < pc.quadCount; i++) {
+        float denom = dot(quads[i].normalVector, dir);
+        if (abs(denom) < 1e-6) continue;
+        float t = dot(quads[i].corner - origin, quads[i].normalVector) / denom;
+        if (t <= 0.001 || t >= maxT) continue;
+        vec3  p    = origin + dir * t - quads[i].corner;
+        float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+        float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+        float qu   = dot(p, quads[i].edge1) / e1l2;
+        float qv   = dot(p, quads[i].edge2) / e2l2;
+        if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+        GPUMaterial mat = materials[quads[i].materialIndex];
+        if (mat.castShadows == 0) continue;
+        if (mat.transparency > 0.01) { atten *= mat.color * mat.transparency; }
+        else return vec3(0.0);
+    }
+    return atten;
+}
+
+vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
+    int base4 = int(slot) * 4;
+    vec3 sh0 = shCoeffs[base4 + 0].rgb;
+    vec3 sh1 = shCoeffs[base4 + 1].rgb;
+    vec3 sh2 = shCoeffs[base4 + 2].rgb;
+    vec3 sh3 = shCoeffs[base4 + 3].rgb;
+    return max(vec3(0.0), sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z);
+}
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size  = imageSize(outHDR);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+
+    vec4 emissiveData = imageLoad(gEmissive, pixel);
+    if (emissiveData.a < 0.0) return;  // sky — gather already wrote it correctly
+
+    int         matIdx = int(round(emissiveData.a));
+    GPUMaterial mat    = materials[matIdx];
+
+    // Read base color written by final_gather.comp (direct + indirect, no fog).
+    vec3 color    = imageLoad(outHDR, pixel).rgb;
+    // worldPos needed by both the reflection path and the fog block.
+    vec3 worldPos = imageLoad(gPosition, pixel).xyz;
+
+    // --- First-order reflections ---
+    if (mat.reflection > 0.01) {
+        vec4 normalData = imageLoad(gNormal, pixel);
+        vec4 albedoData = imageLoad(gAlbedo, pixel);
+        vec3 normal    = normalize(normalData.xyz);
+        vec3 albedo    = albedoData.rgb;
+        float roughness = normalData.w;
+        float metallic  = albedoData.w;
+        mat.roughness = roughness;
+        mat.metallic  = metallic;
+        vec3 viewDir = normalize(pc.camPos.xyz - worldPos);
+
+        vec3 reflDir = reflect(-viewDir, normal);
+
+        float reflT      = 1e6;
+        int   reflMatIdx = -1;
+        vec3  reflNormal = vec3(0.0);
+        bool  reflIsBVH  = false;
+        vec2  reflUV     = vec2(0.0);
+
+        // Analytical planes
+        for (int i = 0; i < pc.planeCount; i++) {
+            float denom = dot(planes[i].normal, reflDir);
+            if (abs(denom) < 1e-6) continue;
+            float t = dot(planes[i].center - worldPos, planes[i].normal) / denom;
+            if (t > 0.001 && t < reflT) {
+                reflT = t; reflMatIdx = planes[i].materialIndex;
+                reflNormal = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
+                reflIsBVH  = false;
+            }
+        }
+
+        // Analytical quads
+        for (int i = 0; i < pc.quadCount; i++) {
+            float denom = dot(quads[i].normalVector, reflDir);
+            if (abs(denom) < 1e-6) continue;
+            float t = dot(quads[i].corner - worldPos, quads[i].normalVector) / denom;
+            if (t <= 0.001 || t >= reflT) continue;
+            vec3  p    = worldPos + reflDir * t - quads[i].corner;
+            float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+            float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+            float qu   = dot(p, quads[i].edge1) / e1l2;
+            float qv   = dot(p, quads[i].edge2) / e2l2;
+            if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+            reflT = t; reflMatIdx = quads[i].materialIndex;
+            reflNormal = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
+            reflIsBVH  = false;
+        }
+
+        // BVH (tessellated spheres + triangles)
+        Ray reflRay;
+        reflRay.origin    = worldPos + normal * 0.002;
+        reflRay.direction = reflDir;
+        reflRay.tMin      = 0.001;
+        reflRay.tMax      = reflT;
+        HitInfo reflHit;
+        if (traverseBVH(reflRay, pc.bvhCount, reflHit)) {
+            reflT = reflHit.t; reflMatIdx = reflHit.materialIndex;
+            reflNormal = reflHit.normal; reflIsBVH = true; reflUV = reflHit.uv;
+        }
+
+        vec3 reflColor = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                             clamp(0.5 * (reflDir.y + 1.0), 0.0, 1.0));
+        if (reflMatIdx >= 0) {
+            vec3 reflWorldPos = worldPos + reflDir * reflT;
+            GPUMaterial reflMat = materials[reflMatIdx];
+
+            vec3 reflAlbedo = reflIsBVH ? sampleAlbedo(reflMat, reflUV) : reflMat.color;
+            reflAlbedo = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos);
+
+            vec3 reflViewDir = -reflDir;
+
+            // Probe GI at reflected surface position
+            vec3 reflCascadeSpace = (reflWorldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
+            ivec3 reflBase = ivec3(floor(reflCascadeSpace));
+            vec3  reflF    = reflCascadeSpace - vec3(reflBase);
+            vec3  reflIndirect  = vec3(0.0);
+            float reflWtSum     = 0.0;
+            for (int pz2 = 0; pz2 <= 1; pz2++) {
+                for (int py2 = 0; py2 <= 1; py2++) {
+                    for (int px2 = 0; px2 <= 1; px2++) {
+                        ivec3 rp = reflBase + ivec3(px2, py2, pz2);
+                        if (any(lessThan(rp, ivec3(0))) ||
+                            any(greaterThanEqual(rp, pc.gridSizeOctRes.xyz))) continue;
+                        uint rKey  = packCellKey(rp);
+                        uint rSlot = probeLookup(rKey, uint(pc.hashSize));
+                        if (rSlot == 0xFFFFFFFFu) continue;
+                        float wx2 = (px2 == 0) ? (1.0 - reflF.x) : reflF.x;
+                        float wy2 = (py2 == 0) ? (1.0 - reflF.y) : reflF.y;
+                        float wz2 = (pz2 == 0) ? (1.0 - reflF.z) : reflF.z;
+                        float w2  = wx2 * wy2 * wz2;
+                        reflIndirect += sampleProbeIrradiance(rSlot, reflNormal) * w2;
+                        reflWtSum    += w2;
+                    }
+                }
+            }
+            if (reflWtSum > 0.001) {
+                reflIndirect /= reflWtSum;
+            } else {
+                for (int fz = -1; fz <= 1; fz++)
+                for (int fy = -1; fy <= 1; fy++)
+                for (int fx = -1; fx <= 1; fx++) {
+                    ivec3 fp = reflBase + ivec3(fx, fy, fz);
+                    if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
+                    uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));
+                    if (fSlot == 0xFFFFFFFFu) continue;
+                    reflIndirect += sampleProbeIrradiance(fSlot, reflNormal);
+                    reflWtSum    += 1.0;
+                }
+                if (reflWtSum > 0.001) reflIndirect /= reflWtSum;
+                else reflIndirect = vec3(reflMat.ambient);
+            }
+
+            bool isHorizTrans = reflMat.transparency > 0.5 && reflNormal.y < -0.9;
+            bool isTrans = reflMat.transparency > 0.5;
+            float reflAmbient = isHorizTrans
+                ? reflMat.ambient
+                : max(reflMat.ambient, reflMat.transparency * 0.2);
+            reflColor = reflMat.emission + reflAlbedo * (reflAmbient + reflIndirect * pc.kIndirectScale);
+
+            // Direct lighting on reflected surface: analytical shadow only.
+            for (int l = 0; l < pc.lightCount; l++) {
+                vec3  toLight  = lights[l].position - reflWorldPos;
+                vec3  reflLDir = normalize(toLight);
+                float reflDist = length(toLight);
+                float atten    = 1.0 / max(reflDist * reflDist, 0.01);
+
+                vec3 reflShadowAtten = analyticalShadow(reflWorldPos + reflNormal * 0.001,
+                                                         reflLDir, reflDist - 0.01);
+                if (dot(reflShadowAtten, reflShadowAtten) > 0.001) {
+                    vec3 attLt = lights[l].color * reflShadowAtten * atten;
+                    if (reflMat.shadingModel == 1) {
+                        reflColor += pbrShading(reflMat, reflAlbedo, reflNormal, reflViewDir, reflLDir, attLt);
+                    } else {
+                        reflColor += lambertianShading(reflMat, reflAlbedo, reflNormal, reflLDir, attLt);
+                        reflColor += blingPhongShading(reflMat, attLt, reflNormal, reflLDir, reflViewDir, 50.0);
+                    }
+                }
+            }
+
+            // Second-order reflection: sky gradient approximation (no BVH).
+            if (reflMat.reflection > 0.08) {
+                vec3 r2Dir = isHorizTrans ? reflDir : reflect(reflDir, reflNormal);
+                vec3 r2Color = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                                   clamp(0.5 * (r2Dir.y + 1.0), 0.0, 1.0));
+                reflColor = reflColor * (1.0 - reflMat.reflection) + r2Color * reflMat.reflection;
+            }
+
+            // Transparency passthrough with Snell's law refraction.
+            if (isTrans) {
+                vec3 entryN = (dot(reflDir, reflNormal) < 0.0) ? reflNormal : -reflNormal;
+                float tpEta = 1.0 / max(reflMat.ior, 1.0);
+                vec3 tpDir = refract(reflDir, entryN, tpEta);
+                if (dot(tpDir, tpDir) < 0.001) tpDir = reflDir;
+                else tpDir = normalize(tpDir);
+
+                vec3 tpPos = reflWorldPos - entryN * 0.005;
+                vec3 transColor = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                                      clamp(0.5 * (tpDir.y + 1.0), 0.0, 1.0));
+                bool tpFoundOpaque = false;
+                for (int tp = 0; tp < 2; tp++) {
+                    Ray tpRay;
+                    tpRay.origin    = tpPos;
+                    tpRay.direction = tpDir;
+                    tpRay.tMin      = 0.001;
+                    tpRay.tMax      = 8.0;
+                    HitInfo tpHit;
+                    if (!traverseBVH(tpRay, pc.bvhCount, tpHit)) break;
+                    tpPos = tpPos + tpDir * tpHit.t;
+                    GPUMaterial tpMat = materials[tpHit.materialIndex];
+                    if (tpMat.transparency < 0.3) {
+                        vec3 tpAlbedo = sampleAlbedo(tpMat, tpHit.uv);
+                        tpAlbedo = applyProceduralPattern(tpMat, tpAlbedo, tpPos);
+                        float tpScale = 1.0 / max(float(pc.lightCount), 1.0);
+                        transColor = tpMat.emission + tpAlbedo * tpMat.ambient;
+                        for (int l = 0; l < pc.lightCount; l++) {
+                            vec3  toL   = lights[l].position - tpPos;
+                            float dist  = length(toL);
+                            vec3  ldir  = normalize(toL);
+                            float NdotL = max(0.0, dot(tpHit.normal, ldir));
+                            if (NdotL < 0.001) continue;
+                            float atten = 1.0 / max(dist * dist, 0.01);
+                            transColor += tpAlbedo * tpMat.diffuse * NdotL * lights[l].color * atten * tpScale;
+                        }
+                        tpFoundOpaque = true;
+                        break;
+                    } else {
+                        vec3 exitN = (dot(tpDir, tpHit.normal) > 0.0) ? -tpHit.normal : tpHit.normal;
+                        vec3 exitDir = refract(tpDir, exitN, reflMat.ior);
+                        if (dot(exitDir, exitDir) > 0.001) tpDir = normalize(exitDir);
+                        tpPos = tpPos + tpDir * 0.01;
+                    }
+                }
+                if (tpFoundOpaque) {
+                    reflColor = reflColor * (1.0 - reflMat.transparency) + transColor * reflMat.transparency;
+                }
+            }
+        }
+
+        color = color * (1.0 - mat.reflection) + reflColor * mat.reflection;
+    }
+
+    // Exponential distance fog (applied AFTER reflection blend to preserve original order).
+    if (pc.fogBlendWithSky == 1) {
+        float fogDepth  = length(worldPos - pc.camPos.xyz);
+        float fogAtten  = exp(-pc.fogDensity * fogDepth);
+        vec3  fogDir    = (fogDepth > 0.0001) ? normalize(worldPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
+        vec3  fogColor  = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                              clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));
+        color = mix(fogColor, color, fogAtten);
+    }
+
+    imageStore(outHDR, pixel, vec4(color, 1.0));
+}

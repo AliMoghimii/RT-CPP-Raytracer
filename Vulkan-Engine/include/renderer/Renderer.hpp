@@ -99,6 +99,7 @@ private:
 
     // --- Radiance Cascade state ---
     CascadeStorage rcStorage;   // populated by rcStorage.initialize(ctx, rcConfig) in initVulkan()
+    std::vector<uint32_t> prevFrameSlots; // actual probe counts read back after fence; 1-frame latency
 
     Buffer materialBuffer;
     Buffer sphereBuffer;

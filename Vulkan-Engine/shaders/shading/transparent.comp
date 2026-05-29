@@ -243,9 +243,9 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
     if (weightSum > 0.001) {
         color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
     } else {
-        for (int fz = -2; fz <= 2; fz++)
-        for (int fy = -2; fy <= 2; fy++)
-        for (int fx = -2; fx <= 2; fx++) {
+        for (int fz = -1; fz <= 1; fz++)
+        for (int fy = -1; fy <= 1; fy++)
+        for (int fx = -1; fx <= 1; fx++) {
             ivec3 fp = base + ivec3(fx, fy, fz);
             if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
             uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));

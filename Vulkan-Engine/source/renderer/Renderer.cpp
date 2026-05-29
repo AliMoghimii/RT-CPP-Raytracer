@@ -82,6 +82,9 @@ void Renderer::initVulkan() {
     createTextureResources();
     createSceneBuffers();
     rcStorage.initialize(ctx, rcConfig);
+    prevFrameSlots.assign(rcConfig.numCascades, 0);
+    for (int i = 0; i < rcConfig.numCascades; i++)
+        prevFrameSlots[i] = rcStorage.maxActiveSlots[i];  // fallback for frame 0
     createSceneDescriptorSetLayout();
     createGBufferDescriptorSetLayout();
     createRCDescriptorSetLayouts();
@@ -642,8 +645,15 @@ void Renderer::mainLoop() {
         fpsTimer += deltaTime;
         frameCount++;
         if (fpsTimer >= 1.0f) {
-            cout << "FPS: " << frameCount
-                 << " | Frame: " << (fpsTimer / frameCount * 1000.0f) << " ms\n";
+            float ms = fpsTimer / frameCount * 1000.0f;
+            cout << "FPS: " << frameCount << " | " << ms << "ms"
+                 << " | prim=" << lastFrameStats.gpuPrimaryMs
+                 << " alloc=" << lastFrameStats.gpuAllocMs
+                 << " trace=" << lastFrameStats.gpuTraceMs
+                 << " merge=" << lastFrameStats.gpuMergeMs
+                 << " gather=" << lastFrameStats.gpuGatherMs
+                 << " trans=" << lastFrameStats.gpuTransparentMs
+                 << " tone=" << lastFrameStats.gpuTonemapMs << "\n";
             fpsTimer  = 0.0f;
             frameCount = 0;
         }
@@ -736,6 +746,15 @@ void Renderer::drawFrame() {
 
     vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
 
+    // Read actual probe counts from previous frame — GPU is now idle, mapped memory is safe.
+    for (int lvl = 0; lvl < rcConfig.numCascades; lvl++) {
+        const uint32_t* ptr = reinterpret_cast<const uint32_t*>(rcStorage.levels[lvl].slotCounter.mapped);
+        if (ptr && *ptr > 0 && *ptr <= rcStorage.maxActiveSlots[lvl])
+            prevFrameSlots[lvl] = *ptr;
+        else
+            prevFrameSlots[lvl] = rcStorage.maxActiveSlots[lvl];
+    }
+
     // Read back GPU timestamps and VRAM stats from the previous frame (GPU is now idle)
     readbackTimestamps();
     lastFrameStats.frameTimeMs = deltaTime * 1000.0f;
@@ -791,6 +810,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     // vkCmdResetQueryPool requires no device feature (unlike vkResetQueryPool which needs hostQueryReset).
     if (timestampsSupported)
         vkCmdResetQueryPool(cmd, timestampPool, 0, 16);
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 0);
 
     int      N = rcConfig.numCascades;
     uint32_t dX = swapchain.extent.width / 16;
@@ -833,6 +854,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.enableTextures = enableTextures;
 
     VkDescriptorSet primarySets[] = { sceneDescSet, gbufDescSet };
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 2);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, primaryPassPipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
         twoPassPipelineLayout, 0, 2, primarySets, 0, nullptr);
@@ -840,12 +863,16 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         0, sizeof(CameraPushConstants), &pc);
     vkCmdDispatch(cmd, dX, dY, 1);
     emitComputeBarrier(cmd);  // G-buffer writes visible to alloc shaders
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 3);
 
     // === 3. Probe allocation — all cascades, bottom-up (0 → N-1) ===
     // Cascade 0 (allocMode=0): one thread per G-buffer pixel, inserts probe cell keys
     //   for each pixel's surface position into the level-0 hash map.
     // Cascades 1-N-1 (allocMode=1): one thread per parent slot, propagates occupied cells
     //   outward by one level. Each level k must complete before level k+1 reads it.
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 4);
     for (int level = 0; level < N; level++) {
         RCAllocPC allocPC{};
         allocPC.gridSizeHashSize = glm::ivec4(rcConfig.gridSize(level), (int)rcStorage.hashTableSize[level]);
@@ -872,15 +899,19 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         }
         else {
             // One thread per parent slot (256-wide 1D workgroup)
-            vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level - 1] + 255) / 256, 1, 1);
+            vkCmdDispatch(cmd, (prevFrameSlots[level - 1] + 255) / 256, 1, 1);
         }
         emitComputeBarrier(cmd);  // level k hash map complete before level k+1 reads it
     }
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 5);
 
     // === 4. Probe trace — all cascades ===
     // Each active probe fires octRes*octRes rays covering its assigned depth interval
     // [intervalStart, intervalEnd]. Results are packed (radiance, transmittance) per
     // direction and written into cascadeData for the merge step.
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 6);
     for (int level = 0; level < N; level++) {
         RCTracePC tracePC{};
         tracePC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(level), rcConfig.octRes(level));
@@ -900,15 +931,23 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             rcTracePipelineLayout, 0, 2, traceSets, 0, nullptr);
         vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCTracePC), &tracePC);
-        vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        {
+            uint32_t oR = (uint32_t)rcConfig.octRes(level);
+            uint32_t numRays = prevFrameSlots[level] * oR * oR;
+            vkCmdDispatch(cmd, (numRays + 255) / 256, 1, 1);
+        }
         emitComputeBarrier(cmd);  // trace writes visible to merge (or gather for level 0)
     }
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 7);
 
     // === 5. Cascade merge — top-down (N-2 → 0) ===
     // Composites each probe's near-interval with the trilinearly-interpolated far-interval
     // from the parent level: merged.L = near.L + near.T * far.L; merged.T = near.T * far.T.
     // Top-down order is mandatory: parent must be fully merged before child reads it.
     // Cascade N-1 is skipped (no parent; its traced data is already the final far-field).
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 8);
     for (int level = N - 2; level >= 0; level--) {
         int parent = level + 1;
         RCMergePC mergePC{};
@@ -928,9 +967,15 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             rcMergePipelineLayout, 0, 2, mergeSets, 0, nullptr);
         vkCmdPushConstants(cmd, rcMergePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCMergePC), &mergePC);
-        vkCmdDispatch(cmd, ((uint32_t)rcStorage.maxActiveSlots[level] + 63) / 64, 1, 1);
+        {
+            uint32_t oR = (uint32_t)rcConfig.octRes(level);
+            uint32_t numDirs = prevFrameSlots[level] * oR * oR;
+            vkCmdDispatch(cmd, (numDirs + 255) / 256, 1, 1);
+        }
         emitComputeBarrier(cmd);  // merged data visible to the next lower level
     }
+    if (timestampsSupported)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 9);
 
     // === 6. Final gather — replaces composite_temp ===
     // Reads cascade-0's fully merged probe data. For each G-buffer pixel: trilinearly
@@ -959,6 +1004,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
         // set 2 = rcHashDescSets[0] (cascade-0 hash + cascadeData read)
         VkDescriptorSet gatherSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
+        if (timestampsSupported)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 10);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcGatherPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             rcGatherPipelineLayout, 0, 3, gatherSets, 0, nullptr);
@@ -966,6 +1013,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             0, sizeof(RCGatherPC), &gatherPC);
         vkCmdDispatch(cmd, dX, dY, 1);
         emitComputeBarrier(cmd);  // hdrImage writes visible to transparent pass
+        if (timestampsSupported)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 11);
     }
 
     // === 7. Transparent pass — re-traces rays for transparent pixels, overwrites outHDR ===
@@ -990,6 +1039,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         transPC.fogDensity       = fogDensity;
 
         VkDescriptorSet transSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
+        if (timestampsSupported)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 12);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTransparentPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             rcTransparentPipelineLayout, 0, 3, transSets, 0, nullptr);
@@ -997,6 +1048,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             0, sizeof(TransparentPC), &transPC);
         vkCmdDispatch(cmd, dX, dY, 1);
         emitComputeBarrier(cmd);  // hdrImage writes visible to tonemap
+        if (timestampsSupported)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 13);
     }
 
     // === 8. Tonemap — hdrImage (SFLOAT) → ldrImage (UNORM) ===
@@ -1004,12 +1057,18 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
     {
         TonemapPC tonemapPC{ exposure, tonemapMode, {0, 0} };
+        if (timestampsSupported)
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 14);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, tonemapPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             tonemapPipelineLayout, 0, 1, &tonemapDescSet, 0, nullptr);
         vkCmdPushConstants(cmd, tonemapPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(TonemapPC), &tonemapPC);
         vkCmdDispatch(cmd, dX, dY, 1);
+        if (timestampsSupported) {
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 15);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 1);
+        }
         // No barrier needed before the copy — image layout transitions act as execution barriers.
     }
 
@@ -1255,7 +1314,7 @@ void Renderer::readbackTimestamps() {
     VkResult res = vkGetQueryPoolResults(
         ctx.device, timestampPool, 0, 16,
         sizeof(results), results, sizeof(uint64_t),
-        VK_QUERY_RESULT_64_BIT);
+        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
 
     if (res == VK_SUCCESS) {
         auto toMs = [&](int begin, int end) -> float {
@@ -1315,5 +1374,8 @@ void Renderer::recreateCascades() {
 
     rcStorage.destroy();
     rcStorage.initialize(ctx, rcConfig);
+    prevFrameSlots.assign(rcConfig.numCascades, 0);
+    for (int i = 0; i < rcConfig.numCascades; i++)
+        prevFrameSlots[i] = rcStorage.maxActiveSlots[i];
     createRCDescriptorSets();
 }

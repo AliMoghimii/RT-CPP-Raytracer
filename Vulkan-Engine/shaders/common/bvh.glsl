@@ -29,7 +29,7 @@ struct GPUTriangle {
 layout(std430, set = 0, binding = 3) readonly buffer TriangleBuffer { GPUTriangle triangles[]; };
 layout(std430, set = 0, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhNodes[]; };
 
-#define BVH_STACK_SIZE 64
+#define BVH_STACK_SIZE 32
 
 bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
     hit.t = ray.tMax;

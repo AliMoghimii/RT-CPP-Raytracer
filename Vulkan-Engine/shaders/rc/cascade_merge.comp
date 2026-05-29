@@ -1,6 +1,6 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
-layout(local_size_x = 64) in;
+layout(local_size_x = 256) in;  // 1D dispatch: one thread per direction (slot * octRes^2)
 
 // octahedral.glsl has no SSBO references  -  safe to include first
 #include "../common/octahedral.glsl"
@@ -58,8 +58,16 @@ vec4 sampleParentProbe(uint parentSlot, vec3 direction) {
 }
 
 void main() {
-    uint slot = gl_GlobalInvocationID.x;
+    int  cOctRes     = pc.currentGridOctRes.w;
+    uint dirsPerProbe = uint(cOctRes * cOctRes);
+    uint globalIdx   = gl_GlobalInvocationID.x;
+    uint slot        = globalIdx / dirsPerProbe;
+    uint dirIdx      = globalIdx % dirsPerProbe;
+
     if (slot >= nextSlot || slot >= uint(pc.currentMaxSlots)) return;
+
+    int dx = int(dirIdx % uint(cOctRes));
+    int dy = int(dirIdx / uint(cOctRes));
 
     uint key = slotToKey[slot];
     ivec3 cell = unpackCellKey(key);
@@ -69,7 +77,6 @@ void main() {
         pc.worldOriginCurrentSpacing.w
     );
 
-    int cOctRes = pc.currentGridOctRes.w;
     int storageBase = probeStorageBase(slot, cOctRes);
 
     // Find the 8 parent probes surrounding this probe's position in the parent grid.
@@ -78,56 +85,52 @@ void main() {
     ivec3 pBase = ivec3(floor(pSpace));
     vec3 fParent = pSpace - vec3(pBase);
 
-    for (int dy = 0; dy < cOctRes; dy++) {
-        for (int dx = 0; dx < cOctRes; dx++) {
-            vec2 uv = octIndexToUV(ivec2(dx, dy), cOctRes);
-            vec3 dir = octDecode(uv);
+    vec2 uv = octIndexToUV(ivec2(dx, dy), cOctRes);
+    vec3 dir = octDecode(uv);
 
-            // Trilinear gather: find 8 surrounding parent probes, weight by position
-            vec4  parentAccum = vec4(0.0);
-            float weightSum = 0.0;
+    // Trilinear gather: find 8 surrounding parent probes, weight by position
+    vec4  parentAccum = vec4(0.0);
+    float weightSum = 0.0;
 
-            for (int pz = 0; pz <= 1; pz++) {
-                for (int py = 0; py <= 1; py++) {
-                    for (int px = 0; px <= 1; px++) {
-                        ivec3 pCell = pBase + ivec3(px, py, pz);
-                        if (any(lessThan(pCell, ivec3(0))) ||
-                            any(greaterThanEqual(pCell, pc.parentGridOctRes.xyz))) continue;
+    for (int pz = 0; pz <= 1; pz++) {
+        for (int py = 0; py <= 1; py++) {
+            for (int px = 0; px <= 1; px++) {
+                ivec3 pCell = pBase + ivec3(px, py, pz);
+                if (any(lessThan(pCell, ivec3(0))) ||
+                    any(greaterThanEqual(pCell, pc.parentGridOctRes.xyz))) continue;
 
-                        uint pKey = packCellKey(pCell);
-                        uint pSlot = probeLookupInParent(pKey, uint(pc.parentHashSize));
-                        if (pSlot == 0xFFFFFFFFu) continue; // parent probe not allocated
+                uint pKey = packCellKey(pCell);
+                uint pSlot = probeLookupInParent(pKey, uint(pc.parentHashSize));
+                if (pSlot == 0xFFFFFFFFu) continue; // parent probe not allocated
 
-                        float wx = (px == 0) ? (1.0 - fParent.x) : fParent.x;
-                        float wy = (py == 0) ? (1.0 - fParent.y) : fParent.y;
-                        float wz = (pz == 0) ? (1.0 - fParent.z) : fParent.z;
-                        float w = wx * wy * wz;
+                float wx = (px == 0) ? (1.0 - fParent.x) : fParent.x;
+                float wy = (py == 0) ? (1.0 - fParent.y) : fParent.y;
+                float wz = (pz == 0) ? (1.0 - fParent.z) : fParent.z;
+                float w = wx * wy * wz;
 
-                        parentAccum += sampleParentProbe(pSlot, dir) * w;
-                        weightSum += w;
-                    }
-                }
+                parentAccum += sampleParentProbe(pSlot, dir) * w;
+                weightSum += w;
             }
-
-            // Normalize (handles missing parent neighbors at volume boundaries)
-            if (weightSum > 0.001) parentAccum /= weightSum;
-            // If no parent probes found: parentAccum stays (0,0,0,1)  -  correct for a boundary region
-            // (transmittance=1 means "nothing found beyond me"; radiance=0 is safe to add)
-
-            // Load this cascade's own traced interval for this direction
-            int myIdx = storageBase + dy * cOctRes + dx;
-            vec4 myInterval = unpackRadianceTransmittance(cascadeData[myIdx]);
-
-            // Merge: my near interval + parent's far interval attenuated by my transmittance.
-            // This is volume rendering compositing:
-            //   merged.L = near.L + near.T x far.L
-            //   merged.T = near.T x far.T
-            vec4 merged = vec4(
-                myInterval.rgb + myInterval.a * parentAccum.rgb,
-                myInterval.a * parentAccum.a
-            );
-
-            cascadeData[myIdx] = packRadianceTransmittance(merged.rgb, merged.a);
         }
     }
+
+    // Normalize (handles missing parent neighbors at volume boundaries)
+    if (weightSum > 0.001) parentAccum /= weightSum;
+    // If no parent probes found: parentAccum stays (0,0,0,1)  -  correct for a boundary region
+    // (transmittance=1 means "nothing found beyond me"; radiance=0 is safe to add)
+
+    // Load this cascade's own traced interval for this direction
+    int myIdx = storageBase + dy * cOctRes + dx;
+    vec4 myInterval = unpackRadianceTransmittance(cascadeData[myIdx]);
+
+    // Merge: my near interval + parent's far interval attenuated by my transmittance.
+    // This is volume rendering compositing:
+    //   merged.L = near.L + near.T * far.L
+    //   merged.T = near.T * far.T
+    vec4 merged = vec4(
+        myInterval.rgb + myInterval.a * parentAccum.rgb,
+        myInterval.a * parentAccum.a
+    );
+
+    cascadeData[myIdx] = packRadianceTransmittance(merged.rgb, merged.a);
 }

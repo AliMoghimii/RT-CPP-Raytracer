@@ -1023,7 +1023,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.skyBottomColor  = glm::vec4(skyBottomColor, 0.0f);
         gatherPC.skyTopColor     = glm::vec4(skyTopColor, 0.0f);
         gatherPC.kIndirectScale  = kIndirectScale;
-        gatherPC.fogDensity      = fogDensity;
+        gatherPC.fogDensity      = enableFog ? fogDensity : 0.0f;
         gatherPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
 
         // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
@@ -1074,7 +1074,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         transPC.fogBlendWithSky  = fogBlendWithSky ? 1 : 0;
         transPC.hashSize         = (int)rcStorage.hashTableSize[0];
         transPC.kIndirectScale   = kIndirectScale;
-        transPC.fogDensity       = fogDensity;
+        transPC.fogDensity       = enableFog ? fogDensity : 0.0f;
 
         VkDescriptorSet transSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
         if (timestampsSupported)

@@ -48,6 +48,7 @@ public:
     // --- Render settings (wired into push constants each frame) ---
     int maxDepth = 5;
     int shadowRays = 4;
+    bool useLegacyPipeline = false;
     int primaryRaysPerPixel = 1;
     float focalDistance = 1.0f;
     float lensRadius = 0.0f;

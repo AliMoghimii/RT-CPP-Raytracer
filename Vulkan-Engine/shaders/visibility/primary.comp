@@ -102,12 +102,11 @@ void main() {
     if (hasBVH) {
         GPUMaterial mat       = materials[hit.materialIndex];
         vec2        surfaceUV = hit.uv;
-        vec3        color     = sampleAlbedo(mat, surfaceUV);
+        vec3        color     = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
         color = applyProceduralPattern(mat, color, hit.position);
 
-        // Perturb normal via normal map (tangent-space sample → world space via TBN)
         vec3 n = hit.normal;
-        if (mat.normalMapIndex >= 0) {
+        if (mat.normalMapIndex >= 0 && cam.enableTextures == 1) {
             vec3 mapN = textureLod(textures[nonuniformEXT(mat.normalMapIndex)], surfaceUV, 0.0).rgb * 2.0 - 1.0;
             n = normalize(getTBN(n) * mapN);
         }
@@ -124,12 +123,11 @@ void main() {
         // Planes tile by world XZ (matches legacy shader); quads use parametric UV from intersection
         vec2 surfaceUV = analyticalIsPlane ? pos.xz * 0.1 : analyticalUV;
 
-        vec3 color = sampleAlbedo(mat, surfaceUV);
+        vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
         color = applyProceduralPattern(mat, color, pos);
 
-        // Perturb normal via normal map
         vec3 n = analyticalNormal;
-        if (mat.normalMapIndex >= 0) {
+        if (mat.normalMapIndex >= 0 && cam.enableTextures == 1) {
             vec3 mapN = textureLod(textures[nonuniformEXT(mat.normalMapIndex)], surfaceUV, 0.0).rgb * 2.0 - 1.0;
             n = normalize(getTBN(n) * mapN);
         }
@@ -140,7 +138,9 @@ void main() {
         imageStore(gEmissive,    pixel, vec4(mat.emission, float(analyticalMat)));
         imageStore(gLinearDepth, pixel, vec4(analyticalT, 0.0, 0.0, 0.0));
     } else {
-        vec3 skyColor = mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (rayDir.y + 1.0));
+        vec3 skyColor = (cam.enableSkybox == 1)
+            ? mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (rayDir.y + 1.0))
+            : vec3(0.0);
         imageStore(gPosition,    pixel, vec4(0.0, 0.0, 0.0,  1e6));
         imageStore(gNormal,      pixel, vec4(0.0, 1.0, 0.0,  0.0));
         imageStore(gAlbedo,      pixel, vec4(0.0, 0.0, 0.0,  0.0));

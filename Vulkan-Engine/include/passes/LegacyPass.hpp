@@ -16,8 +16,8 @@ public:
                  planeBuf, quadBuf, cubeBuf, bvhBuf;
         VkSampler sampler;
         const std::vector<VkImageView>* texViews;
-        VkImageView outputView;   // ldrImage — binding 0, rgba8 write
-        VkImageView fallbackView; // hdrImage — fills unused texture slots
+        VkImageView outputView;   // ldrImage - binding 0, rgba8 write
+        VkImageView fallbackView; // hdrImage - fills unused texture slots
     };
 
     void create(const CreateInfo& info);

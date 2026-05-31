@@ -10,6 +10,7 @@
 #include "core/Swapchain.hpp"
 #include "core/CommandManager.hpp"
 #include "passes/GBuffer.hpp"
+#include "passes/LegacyPass.hpp"
 #include "resources/Buffer.hpp"
 #include "resources/Image.hpp"
 #include "scene/GPUData.hpp"
@@ -122,6 +123,8 @@ private:
     VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSet sceneDescSet = VK_NULL_HANDLE;
     VkDescriptorSet gbufDescSet = VK_NULL_HANDLE;
+
+    LegacyPass legacyPass;
 
     VkPipelineLayout twoPassPipelineLayout = VK_NULL_HANDLE;
     VkPipeline primaryPassPipeline = VK_NULL_HANDLE;

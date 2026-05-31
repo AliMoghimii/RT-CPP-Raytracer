@@ -94,6 +94,14 @@ void Renderer::initVulkan() {
     createSceneDescriptorSet();
     createGBufferDescriptorSet();
     createRCDescriptorSets();
+    legacyPass.create({
+        ctx.device, descriptorPool, sceneDescSetLayout,
+        materialBuffer.handle, sphereBuffer.handle, triangleBuffer.handle, lightBuffer.handle,
+        planeBuffer.handle, quadBuffer.handle, cubeBuffer.handle, bvhBuffer.handle,
+        textureSampler, &textureImageViews,
+        ldrImage.view,  // binding 0: rgba8 output
+        hdrImage.view   // fallback for unused texture slots
+    });
     createTimestampQueryPool();
     debugUI.init(ctx, swapchain, window);
 }
@@ -427,18 +435,18 @@ void Renderer::createDescriptorPool() {
 
     vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 9;                               // 7 existing + 2 tonemap
+    poolSizes[0].descriptorCount = 10;                               // 7 gbuf + 2 tonemap + 1 legacyPass
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(8 + N * 7 + N * 4);     // N*7: rcHash (7 bindings incl. shCoeffs)
+    poolSizes[1].descriptorCount = uint32_t(16 + N * 7 + N * 4);    // +8 for legacyPass scene SSBOs
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[2].descriptorCount = 100;
+    poolSizes[2].descriptorCount = 200;                              // 100 sceneDescSet + 100 legacyPass
 
     VkDescriptorPoolCreateInfo pi{};
     pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;   // needed by recreateCascades()
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
-    pi.maxSets = uint32_t(2 + N + N + 1);                           // 13 when N=5
+    pi.maxSets = uint32_t(3 + N + N + 1);                           // +1 for legacyPass descSet
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
         throw runtime_error("Renderer: descriptor pool creation failed.");
@@ -827,18 +835,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     uint32_t dX = swapchain.extent.width / 16;
     uint32_t dY = swapchain.extent.height / 16;
 
-    // === 1. Clear RC hash tables (transfer stage) ===
-    // Probes are fully re-allocated each frame. Reset hash keys to the empty sentinel
-    // (0xFFFFFFFF) and slot counters to 0. hashValues/slotToKey don't need clearing
-    // because they're only ever read after a valid atomicCompSwap insert wrote them.
-    for (int i = 0; i < N; i++) {
-        vkCmdFillBuffer(cmd, rcStorage.levels[i].hashKeys.handle, 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
-        vkCmdFillBuffer(cmd, rcStorage.levels[i].slotCounter.handle, 0, sizeof(uint32_t), 0);
-    }
-    emitTransferToComputeBarrier(cmd);  // fill writes visible before allocation shaders read
-
-    // === 2. Primary visibility — fills G-buffer ===
-    // primary.comp: one thread per pixel, outputs world-pos / normal / albedo / emissive.
+    // Build camera push constants — shared by both legacy and RC pipeline paths.
     CameraPushConstants pc{};
     pc.camPos = glm::vec4(cameraPos, 0.0f);
     pc.camForward = glm::vec4(cameraFront, 0.0f);
@@ -862,6 +859,31 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.enableSkybox = enableSkybox;
     pc.skyTopColor = skyTopColor;
     pc.enableTextures = enableTextures;
+
+    if (useLegacyPipeline) {
+        // Legacy monolithic raytracer: writes a fully-shaded rgba8 result directly to ldrImage,
+        // so the entire RC pipeline and tonemap are skipped.
+        legacyPass.record(cmd, pc, dX, dY);
+        emitComputeBarrier(cmd);  // ldrImage writes visible before copy to swapchain
+        // Write slots 1-15 so readbackTimestamps() (WAIT_BIT on all 16) never blocks.
+        // Total time = toMs(0,1); per-pass slots read ~0ms (all written at the same moment).
+        if (timestampsSupported)
+            for (int i = 1; i < 16; i++)
+                vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, i);
+    } else {
+
+    // === 1. Clear RC hash tables (transfer stage) ===
+    // Probes are fully re-allocated each frame. Reset hash keys to the empty sentinel
+    // (0xFFFFFFFF) and slot counters to 0. hashValues/slotToKey don't need clearing
+    // because they're only ever read after a valid atomicCompSwap insert wrote them.
+    for (int i = 0; i < N; i++) {
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].hashKeys.handle, 0, VK_WHOLE_SIZE, 0xFFFFFFFF);
+        vkCmdFillBuffer(cmd, rcStorage.levels[i].slotCounter.handle, 0, sizeof(uint32_t), 0);
+    }
+    emitTransferToComputeBarrier(cmd);  // fill writes visible before allocation shaders read
+
+    // === 2. Primary visibility — fills G-buffer ===
+    // primary.comp: one thread per pixel, outputs world-pos / normal / albedo / emissive.
 
     VkDescriptorSet primarySets[] = { sceneDescSet, gbufDescSet };
     if (timestampsSupported)
@@ -1110,6 +1132,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         // No barrier needed before the copy — image layout transitions act as execution barriers.
     }
 
+    } // end else (RC pipeline)
+
     // === 8. Copy ldrImage -> swapchain ===
     // ldrImage is R8G8B8A8_UNORM; the swapchain surface is also R8G8B8A8_UNORM, so
     // vkCmdCopyImage works directly (no format conversion, no vkCmdBlitImage needed).
@@ -1168,6 +1192,8 @@ void Renderer::cleanup() {
     gbuffer.destroy(ctx);
     hdrImage.destroy(ctx.allocator);
     ldrImage.destroy(ctx.allocator);
+
+    legacyPass.destroy(ctx.device);
 
     vkDestroyPipeline(ctx.device, rcAllocPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);

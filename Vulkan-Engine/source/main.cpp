@@ -22,6 +22,8 @@ int main() {
     vector<string> texturePaths;
 
     // --- SETTINGS ---
+	bool USE_LEGACY_PIPELINE = true; // true = raytacing using legacy shader, false = ray tracing + RC
+
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
     int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
@@ -202,6 +204,8 @@ int main() {
     lights.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
 
     Renderer engine;
+
+	engine.useLegacyPipeline = USE_LEGACY_PIPELINE;
 
     engine.maxDepth = MAX_DEPTH;
     engine.shadowRays = MAX_SHADOW_RAYS;

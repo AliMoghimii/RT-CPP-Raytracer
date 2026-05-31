@@ -42,34 +42,34 @@ void main() {
     uv *= tan(radians(60.0 * 0.5));
 
     vec3 rayDir = normalize(cam.camRight.xyz * uv.x
-                          + cam.camUp.xyz    * uv.y
+                          + cam.camUp.xyz * uv.y
                           + cam.camForward.xyz);
 
     Ray ray;
-    ray.origin    = cam.camPos.xyz;
+    ray.origin = cam.camPos.xyz;
     ray.direction = rayDir;
-    ray.tMin      = 0.001;
-    ray.tMax      = 1e6;
+    ray.tMin = 0.001;
+    ray.tMax = 1e6;
 
     // Analytical intersection for planes and quads.
     // Finding the nearest hit caps ray.tMax before the BVH call,
     // which culls most BVH nodes for wall pixels and eliminates
     // full-miss traversal across 80K+ triangles.
-    float analyticalT       = ray.tMax;
-    int   analyticalMat     = -1;
-    vec3  analyticalNormal  = vec3(0.0);
-    vec2  analyticalUV      = vec2(0.0);
-    bool  analyticalIsPlane = false;  // planes need world-pos UV tiling, quads have parametric UV
+    float analyticalT = ray.tMax;
+    int analyticalMat = -1;
+    vec3 analyticalNormal = vec3(0.0);
+    vec2 analyticalUV = vec2(0.0);
+    bool analyticalIsPlane = false; // planes need world-pos UV tiling, quads have parametric UV
 
     for (int i = 0; i < cam.planeCount; i++) {
         float denom = dot(planes[i].normal, rayDir);
         if (abs(denom) < 1e-6) continue;
         float t = dot(planes[i].center - ray.origin, planes[i].normal) / denom;
         if (t > ray.tMin && t < analyticalT) {
-            analyticalT       = t;
-            analyticalMat     = planes[i].materialIndex;
-            analyticalNormal  = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
-            analyticalUV      = vec2(0.0);  // will be recomputed from world pos below
+            analyticalT = t;
+            analyticalMat = planes[i].materialIndex;
+            analyticalNormal = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
+            analyticalUV = vec2(0.0);  // will be recomputed from world pos below
             analyticalIsPlane = true;
         }
     }
@@ -80,17 +80,17 @@ void main() {
         float t = dot(quads[i].corner - ray.origin, quads[i].normalVector) / denom;
         if (t <= ray.tMin || t >= analyticalT) continue;
 
-        vec3  p    = ray.origin + rayDir * t - quads[i].corner;
+        vec3 p = ray.origin + rayDir * t - quads[i].corner;
         float e1l2 = dot(quads[i].edge1, quads[i].edge1);
         float e2l2 = dot(quads[i].edge2, quads[i].edge2);
-        float qu   = dot(p, quads[i].edge1) / e1l2;
-        float qv   = dot(p, quads[i].edge2) / e2l2;
+        float qu = dot(p, quads[i].edge1) / e1l2;
+        float qv = dot(p, quads[i].edge2) / e2l2;
         if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
 
-        analyticalT       = t;
-        analyticalMat     = quads[i].materialIndex;
-        analyticalNormal  = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
-        analyticalUV      = vec2(qu, qv);
+        analyticalT = t;
+        analyticalMat = quads[i].materialIndex;
+        analyticalNormal = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
+        analyticalUV = vec2(qu, qv);
         analyticalIsPlane = false;
     }
 
@@ -100,9 +100,9 @@ void main() {
     bool hasBVH = traverseBVH(ray, cam.bvhCount, hit);
 
     if (hasBVH) {
-        GPUMaterial mat       = materials[hit.materialIndex];
-        vec2        surfaceUV = hit.uv;
-        vec3        color     = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
+        GPUMaterial mat = materials[hit.materialIndex];
+        vec2 surfaceUV = hit.uv;
+        vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
         color = applyProceduralPattern(mat, color, hit.position);
 
         vec3 n = hit.normal;
@@ -111,14 +111,14 @@ void main() {
             n = normalize(getTBN(n) * mapN);
         }
 
-        imageStore(gPosition,    pixel, vec4(hit.position, hit.t));
-        imageStore(gNormal,      pixel, vec4(n,            mat.roughness));
-        imageStore(gAlbedo,      pixel, vec4(color,        mat.metallic));
-        imageStore(gEmissive,    pixel, vec4(mat.emission, float(hit.materialIndex)));
+        imageStore(gPosition, pixel, vec4(hit.position, hit.t));
+        imageStore(gNormal, pixel, vec4(n, mat.roughness));
+        imageStore(gAlbedo, pixel, vec4(color, mat.metallic));
+        imageStore(gEmissive, pixel, vec4(mat.emission, float(hit.materialIndex)));
         imageStore(gLinearDepth, pixel, vec4(hit.t, 0.0, 0.0, 0.0));
     } else if (analyticalMat >= 0) {
         GPUMaterial mat = materials[analyticalMat];
-        vec3        pos = ray.origin + rayDir * analyticalT;
+        vec3 pos = ray.origin + rayDir * analyticalT;
 
         // Planes tile by world XZ (matches legacy shader); quads use parametric UV from intersection
         vec2 surfaceUV = analyticalIsPlane ? pos.xz * 0.1 : analyticalUV;
@@ -132,19 +132,19 @@ void main() {
             n = normalize(getTBN(n) * mapN);
         }
 
-        imageStore(gPosition,    pixel, vec4(pos,  analyticalT));
-        imageStore(gNormal,      pixel, vec4(n,    mat.roughness));
-        imageStore(gAlbedo,      pixel, vec4(color, mat.metallic));
-        imageStore(gEmissive,    pixel, vec4(mat.emission, float(analyticalMat)));
+        imageStore(gPosition, pixel, vec4(pos,  analyticalT));
+        imageStore(gNormal, pixel, vec4(n,    mat.roughness));
+        imageStore(gAlbedo, pixel, vec4(color, mat.metallic));
+        imageStore(gEmissive, pixel, vec4(mat.emission, float(analyticalMat)));
         imageStore(gLinearDepth, pixel, vec4(analyticalT, 0.0, 0.0, 0.0));
     } else {
         vec3 skyColor = (cam.enableSkybox == 1)
             ? mix(cam.skyBottomColor, cam.skyTopColor, 0.5 * (rayDir.y + 1.0))
             : vec3(0.0);
-        imageStore(gPosition,    pixel, vec4(0.0, 0.0, 0.0,  1e6));
-        imageStore(gNormal,      pixel, vec4(0.0, 1.0, 0.0,  0.0));
-        imageStore(gAlbedo,      pixel, vec4(0.0, 0.0, 0.0,  0.0));
-        imageStore(gEmissive,    pixel, vec4(skyColor,       -1.0));
+        imageStore(gPosition, pixel, vec4(0.0, 0.0, 0.0,  1e6));
+        imageStore(gNormal, pixel, vec4(0.0, 1.0, 0.0,  0.0));
+        imageStore(gAlbedo, pixel, vec4(0.0, 0.0, 0.0,  0.0));
+        imageStore(gEmissive, pixel, vec4(skyColor, -1.0));
         imageStore(gLinearDepth, pixel, vec4(1e6,  0.0, 0.0, 0.0));
     }
 }

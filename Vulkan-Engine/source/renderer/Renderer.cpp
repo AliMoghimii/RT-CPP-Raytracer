@@ -24,10 +24,10 @@ void Renderer::run() {
 }
 
 void Renderer::loadScene(
-    const vector<GPUMaterial>& mats, const vector<GPUSphere>&   sphs,
-    const vector<GPUTriangle>& tris, const vector<GPULight>&    lghts,
-    const vector<GPUPlane>&    plns, const vector<GPUQuad>&     quds,
-    const vector<GPUCube>&     cbs,  const vector<GPUBVHNode>&  bvh)
+    const vector<GPUMaterial>& mats, const vector<GPUSphere>& sphs,
+    const vector<GPUTriangle>& tris, const vector<GPULight>& lghts,
+    const vector<GPUPlane>& plns, const vector<GPUQuad>& quds,
+    const vector<GPUCube>& cbs, const vector<GPUBVHNode>&  bvh)
 {
     sceneMaterials = mats;
     sceneSpheres = sphs;
@@ -106,13 +106,13 @@ void Renderer::createSceneBuffers() {
     };
 
     materialBuffer = make(sizeof(GPUMaterial) * max((size_t)1, sceneMaterials.size()));
-    sphereBuffer = make(sizeof(GPUSphere)   * max((size_t)1, sceneSpheres.size()));
+    sphereBuffer = make(sizeof(GPUSphere) * max((size_t)1, sceneSpheres.size()));
     triangleBuffer = make(sizeof(GPUTriangle) * max((size_t)1, sceneTriangles.size()));
-    lightBuffer = make(sizeof(GPULight)    * max((size_t)1, sceneLights.size()));
-    planeBuffer = make(sizeof(GPUPlane)    * max((size_t)1, scenePlanes.size()));
-    quadBuffer = make(sizeof(GPUQuad)     * max((size_t)1, sceneQuads.size()));
-    cubeBuffer = make(sizeof(GPUCube)     * max((size_t)1, sceneCubes.size()));
-    bvhBuffer = make(sizeof(GPUBVHNode)  * max((size_t)1, sceneBVH.size()));
+    lightBuffer = make(sizeof(GPULight) * max((size_t)1, sceneLights.size()));
+    planeBuffer = make(sizeof(GPUPlane) * max((size_t)1, scenePlanes.size()));
+    quadBuffer = make(sizeof(GPUQuad) * max((size_t)1, sceneQuads.size()));
+    cubeBuffer = make(sizeof(GPUCube) * max((size_t)1, sceneCubes.size()));
+    bvhBuffer = make(sizeof(GPUBVHNode) * max((size_t)1, sceneBVH.size()));
 
     uploadSceneData();
 }
@@ -435,7 +435,7 @@ void Renderer::createDescriptorPool() {
 
     VkDescriptorPoolCreateInfo pi{};
     pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT; // needed by recreateCascades()
+    pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;   // needed by recreateCascades()
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
     pi.maxSets = uint32_t(2 + N + N + 1);                           // 13 when N=5
@@ -560,8 +560,8 @@ void Renderer::createRCDescriptorSets() {
 
     // --- rcHashDescSets[i]: 6 SSBOs for level i's own hash map ---
     // b0=hashKeys, b1=hashValues, b2=slotToKey, b3=slotCounter, b4=cascadeData
-    // b5=parentCascadeData - during alloc/trace, point at the next level's data as a dummy;
-    //                        during merge, the merge shader reads it as the parent's radiance.
+    // b5=parentCascadeData, during alloc/trace, point at the next level's data as a dummy;
+    //                       during merge, the merge shader reads it as the parent's radiance.
     rcHashDescSets.resize(N);
     for (int i = 0; i < N; i++) {
         VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -575,13 +575,13 @@ void Renderer::createRCDescriptorSets() {
             : lvl.cascadeData.handle; // last level: self-reference dummy
 
         VkDescriptorBufferInfo infos[7] = {
-            { lvl.hashKeys.handle,    0, VK_WHOLE_SIZE },
-            { lvl.hashValues.handle,  0, VK_WHOLE_SIZE },
-            { lvl.slotToKey.handle,   0, VK_WHOLE_SIZE },
+            { lvl.hashKeys.handle, 0, VK_WHOLE_SIZE },
+            { lvl.hashValues.handle, 0, VK_WHOLE_SIZE },
+            { lvl.slotToKey.handle, 0, VK_WHOLE_SIZE },
             { lvl.slotCounter.handle, 0, VK_WHOLE_SIZE },
             { lvl.cascadeData.handle, 0, VK_WHOLE_SIZE },
-            { parentDataHandle,       0, VK_WHOLE_SIZE },
-            { lvl.shCoeffs.handle,    0, VK_WHOLE_SIZE },
+            { parentDataHandle, 0, VK_WHOLE_SIZE },
+            { lvl.shCoeffs.handle, 0, VK_WHOLE_SIZE },
         };
         VkWriteDescriptorSet writes[7] = {};
         for (uint32_t b = 0; b < 7; b++) {
@@ -644,7 +644,7 @@ void Renderer::createRCDescriptorSets() {
 void Renderer::mainLoop() {
     lastFrame = (float)glfwGetTime();
     float fpsTimer  = 0.0f;
-    int   frameCount = 0;
+    int frameCount = 0;
     cout << "Renderer: Rendering started.\n";
     bool rcSlotChecked = false;
     while (!glfwWindowShouldClose(window)) {
@@ -756,7 +756,7 @@ void Renderer::drawFrame() {
 
     vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
 
-    // Read actual probe counts from previous frame — GPU is now idle, mapped memory is safe.
+    // Read actual probe counts from previous frame, GPU is now idle, mapped memory is safe.
     for (int lvl = 0; lvl < rcConfig.numCascades; lvl++) {
         const uint32_t* ptr = reinterpret_cast<const uint32_t*>(rcStorage.levels[lvl].slotCounter.mapped);
         if (ptr && *ptr > 0 && *ptr <= rcStorage.maxActiveSlots[lvl])
@@ -876,11 +876,11 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 3);
 
-    // === 3. Probe allocation — all cascades, bottom-up (0 → N-1) ===
+    // === 3. Probe allocation (all cascades, bottom-up (0 -> N-1)) ===
     // Cascade 0 (allocMode=0): one thread per G-buffer pixel, inserts probe cell keys
-    //   for each pixel's surface position into the level-0 hash map.
+    //                          for each pixel's surface position into the level-0 hash map.
     // Cascades 1-N-1 (allocMode=1): one thread per parent slot, propagates occupied cells
-    //   outward by one level. Each level k must complete before level k+1 reads it.
+    //                               outward by one level. Each level k must complete before level k+1 reads it.
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 4);
     for (int level = 0; level < N; level++) {
@@ -916,7 +916,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 5);
 
-    // === 4. Probe trace — all cascades ===
+    // === 4. Probe trace  (all cascades) ===
     // Each active probe fires octRes*octRes rays covering its assigned depth interval
     // [intervalStart, intervalEnd]. Results are packed (radiance, transmittance) per
     // direction and written into cascadeData for the merge step.
@@ -928,11 +928,11 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
         tracePC.intervalStart = rcConfig.intervalStart(level);
         tracePC.intervalEnd = rcConfig.intervalEnd(level);
-        tracePC.bvhCount       = (int)sceneBVH.size();
+        tracePC.bvhCount = (int)sceneBVH.size();
         tracePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];
-        tracePC.lightCount     = (int)sceneLights.size();
-        tracePC.planeCount     = (int)scenePlanes.size();
-        tracePC.quadCount      = (int)sceneQuads.size();
+        tracePC.lightCount = (int)sceneLights.size();
+        tracePC.planeCount = (int)scenePlanes.size();
+        tracePC.quadCount = (int)sceneQuads.size();
         tracePC.evaluateDirect = (level == 0) ? 1 : 0;  // only cascade-0 evaluates direct per SRC paper
 
         VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
@@ -951,7 +951,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 7);
 
-    // === 5. Cascade merge — top-down (N-2 → 0) ===
+    // === 5. Cascade merge (top-down (N-2 -> 0)) ===
     // Composites each probe's near-interval with the trilinearly-interpolated far-interval
     // from the parent level: merged.L = near.L + near.T * far.L; merged.T = near.T * far.T.
     // Top-down order is mandatory: parent must be fully merged before child reads it.
@@ -987,7 +987,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 9);
 
-    // === 5.5 SH pre-integration — cascade-0 only ===
+    // === 5.5 SH pre-integration (cascade-0 only) ===
     // Converts the 16-direction cascadeData into 4 SH coefficients (L0+L1) per probe.
     // gather/transparent then use a dot-product lookup instead of a 16-iteration inner loop,
     // reducing register pressure and improving GPU occupancy significantly.
@@ -1003,7 +1003,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         emitComputeBarrier(cmd);  // shCoeffs writes visible to gather + transparent
     }
 
-    // === 6. Final gather — replaces composite_temp ===
+    // === 6. Final gather (replaces composite_temp) ===
     // Reads cascade-0's fully merged probe data. For each G-buffer pixel: trilinearly
     // interpolates indirect irradiance from the 8 surrounding cascade-0 probes, then adds
     // direct Lambertian + BVH-shadow lighting. Writes HDR result to hdrImage (b5 of gbufDescSet).
@@ -1011,23 +1011,23 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         RCGatherPC gatherPC{};
         gatherPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
         gatherPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
-        gatherPC.camPos      = glm::vec4(cameraPos, 0.0f);
-        gatherPC.hashSize       = (int)rcStorage.hashTableSize[0];
-        gatherPC.bvhCount       = (int)sceneBVH.size();
-        gatherPC.planeCount     = (int)scenePlanes.size();
-        gatherPC.quadCount      = (int)sceneQuads.size();
-        gatherPC.lightCount     = (int)sceneLights.size();
-        gatherPC.debugMode      = debugMode;
-        gatherPC.enableDirect   = enableDirect;
+        gatherPC.camPos = glm::vec4(cameraPos, 0.0f);
+        gatherPC.hashSize = (int)rcStorage.hashTableSize[0];
+        gatherPC.bvhCount = (int)sceneBVH.size();
+        gatherPC.planeCount = (int)scenePlanes.size();
+        gatherPC.quadCount = (int)sceneQuads.size();
+        gatherPC.lightCount = (int)sceneLights.size();
+        gatherPC.debugMode = debugMode;
+        gatherPC.enableDirect = enableDirect;
         gatherPC.enableIndirect = enableIndirect;
-        gatherPC.skyBottomColor  = glm::vec4(skyBottomColor, 0.0f);
-        gatherPC.skyTopColor     = glm::vec4(skyTopColor, 0.0f);
-        gatherPC.kIndirectScale  = kIndirectScale;
-        gatherPC.fogDensity      = enableFog ? fogDensity : 0.0f;
+        gatherPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
+        gatherPC.skyTopColor = glm::vec4(skyTopColor, 0.0f);
+        gatherPC.kIndirectScale = kIndirectScale;
+        gatherPC.fogDensity = enableFog ? fogDensity : 0.0f;
         gatherPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
 
-        // set 0 = sceneDescSet    (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
-        // set 1 = gbufDescSet     (G-buffer read at b0-b4, hdrImage write at b5)
+        // set 0 = sceneDescSet (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
+        // set 1 = gbufDescSet (G-buffer read at b0-b4, hdrImage write at b5)
         // set 2 = rcHashDescSets[0] (cascade-0 hash + cascadeData read)
         VkDescriptorSet gatherSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
         if (timestampsSupported)
@@ -1040,7 +1040,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         vkCmdDispatch(cmd, dX, dY, 1);
         emitComputeBarrier(cmd);  // gather writes visible to reflection pass
 
-        // === 6.5 Reflection pass — fog + first-order reflections for all geometry pixels ===
+        // === 6.5 Reflection pass (fog + first-order reflections for all geometry pixels) ===
         // Reads outHDR (from gather_simple), applies fog to ALL geometry pixels, blends
         // reflection BVH color for reflective pixels (~30%). Reuses rcGatherPipelineLayout
         // (same 3 descriptor sets and RCGatherPC push constant) — no new layout needed.
@@ -1055,26 +1055,26 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 11);
     }
 
-    // === 7. Transparent pass — re-traces rays for transparent pixels, overwrites outHDR ===
+    // === 7. Transparent pass (re-traces rays for transparent pixels, overwrites outHDR) ===
     // Reads G-buffer to identify transparent pixels, reconstructs primary rays from camera
     // orientation, then follows the refraction/reflection chain and shades the final hit.
     // Opaque pixels in outHDR are left untouched.
     {
         TransparentPC transPC{};
-        transPC.camPos            = pc.camPos;
-        transPC.camRight          = pc.camRight;
-        transPC.camUp             = pc.camUp;
-        transPC.camForward        = pc.camForward;
+        transPC.camPos = pc.camPos;
+        transPC.camRight = pc.camRight;
+        transPC.camUp = pc.camUp;
+        transPC.camForward = pc.camForward;
         transPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
-        transPC.gridSizeOctRes    = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
-        transPC.bvhCount          = (int)sceneBVH.size();
-        transPC.lightCount        = (int)sceneLights.size();
-        transPC.planeCount        = (int)scenePlanes.size();
-        transPC.quadCount         = (int)sceneQuads.size();
-        transPC.fogBlendWithSky  = fogBlendWithSky ? 1 : 0;
-        transPC.hashSize         = (int)rcStorage.hashTableSize[0];
-        transPC.kIndirectScale   = kIndirectScale;
-        transPC.fogDensity       = enableFog ? fogDensity : 0.0f;
+        transPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
+        transPC.bvhCount = (int)sceneBVH.size();
+        transPC.lightCount = (int)sceneLights.size();
+        transPC.planeCount = (int)scenePlanes.size();
+        transPC.quadCount = (int)sceneQuads.size();
+        transPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
+        transPC.hashSize = (int)rcStorage.hashTableSize[0];
+        transPC.kIndirectScale = kIndirectScale;
+        transPC.fogDensity = enableFog ? fogDensity : 0.0f;
 
         VkDescriptorSet transSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
         if (timestampsSupported)
@@ -1090,7 +1090,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 13);
     }
 
-    // === 8. Tonemap — hdrImage (SFLOAT) → ldrImage (UNORM) ===
+    // === 8. Tonemap (hdrImage (SFLOAT) -> ldrImage (UNORM)) ===
     // ACES film curve + gamma correction. Reads hdrImage (b0 of tonemapDescSet),
     // writes ldrImage (b1). Both images must be in GENERAL layout (set at init).
     {
@@ -1110,7 +1110,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         // No barrier needed before the copy — image layout transitions act as execution barriers.
     }
 
-    // === 8. Copy ldrImage → swapchain ===
+    // === 8. Copy ldrImage -> swapchain ===
     // ldrImage is R8G8B8A8_UNORM; the swapchain surface is also R8G8B8A8_UNORM, so
     // vkCmdCopyImage works directly (no format conversion, no vkCmdBlitImage needed).
     transitionImageLayout(cmd, ldrImage.handle,

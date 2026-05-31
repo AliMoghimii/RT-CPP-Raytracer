@@ -23,24 +23,24 @@ struct CameraPushConstants {
     glm::vec4 camForward;
     glm::vec4 camRight;
     glm::vec4 camUp;
-    int  sphereCount;
-    int  triangleCount;
-    int  planeCount;
-    int  quadCount;
-    int  cubeCount;
-    int  lightCount;
-    int  bvhCount;
-    int  maxDepth;
-    int  shadowRays;
-    int  primaryRaysPerPixel;
+    int sphereCount;
+    int triangleCount;
+    int planeCount;
+    int quadCount;
+    int cubeCount;
+    int lightCount;
+    int bvhCount;
+    int maxDepth;
+    int shadowRays;
+    int primaryRaysPerPixel;
     float focalDistance;
     float lensRadius;
     glm::vec3 fogColor;
-    int  enableFog;
+    int enableFog;
     glm::vec3 skyBottomColor;
-    int  enableSkybox;
+    int enableSkybox;
     glm::vec3 skyTopColor;
-    int  enableTextures;
+    int enableTextures;
 };
 
 class Renderer {
@@ -61,14 +61,14 @@ public:
     int enableTextures = 1;
 
     // --- Debug / visualization (controlled by DebugUI) ---
-    int   debugMode       = 0;      // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
-    float exposure        = 1.0f;   // tonemap exposure
-    int   tonemapMode     = 0;      // 0=ACES Film  1=Reinhard  2=Linear
-    int   enableDirect    = 1;
-    int   enableIndirect  = 1;
-    float kIndirectScale  = 0.0005f; // GI irradiance → color scale (slider in Scene Controls)
-    float fogDensity      = 0.04f;   // exponential fog decay coefficient
-    bool  fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
+    int debugMode = 0;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    float exposure = 1.0f;          // tonemap exposure
+    int tonemapMode = 0;            // 0=ACES Film  1=Reinhard  2=Linear
+    int enableDirect = 1;
+    int enableIndirect = 1;
+    float kIndirectScale = 0.0005f; // GI irradiance -> color scale (slider in Scene Controls)
+    float fogDensity = 0.04f;       // exponential fog decay coefficient
+    bool fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
 
     // --- Cascade configuration (public so DebugUI can live-tune it) ---
     CascadeConfig rcConfig;
@@ -100,7 +100,7 @@ private:
 
     // --- Radiance Cascade state ---
     CascadeStorage rcStorage;   // populated by rcStorage.initialize(ctx, rcConfig) in initVulkan()
-    std::vector<uint32_t> prevFrameSlots; // actual probe counts read back after fence; 1-frame latency
+    std::vector<uint32_t> prevFrameSlots;   // actual probe counts read back after fence; 1-frame latency
 
     Buffer materialBuffer;
     Buffer sphereBuffer;
@@ -112,7 +112,7 @@ private:
     Buffer bvhBuffer;
 
     VkDescriptorSetLayout sceneDescSetLayout = VK_NULL_HANDLE;
-    VkDescriptorSetLayout gbufDescSetLayout  = VK_NULL_HANDLE;
+    VkDescriptorSetLayout gbufDescSetLayout = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> rcHashDescSets;                        // numCascades instances, one per cascade level
     std::vector<VkDescriptorSet> rcParentHashDescSets;                  // numCascades instances (used as "set 1" in alloc k>0 and merge)
     VkDescriptorSet tonemapDescSet = VK_NULL_HANDLE;
@@ -130,8 +130,8 @@ private:
     VkPipeline rcAllocPipeline = VK_NULL_HANDLE;
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;
     VkPipeline rcMergePipeline = VK_NULL_HANDLE;
-    VkPipeline rcSHPipeline         = VK_NULL_HANDLE;
-    VkPipeline rcGatherPipeline     = VK_NULL_HANDLE;
+    VkPipeline rcSHPipeline = VK_NULL_HANDLE;
+    VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
     VkPipeline rcReflectionPipeline = VK_NULL_HANDLE;
     VkPipeline rcTransparentPipeline = VK_NULL_HANDLE;
     VkPipeline tonemapPipeline = VK_NULL_HANDLE;
@@ -139,7 +139,7 @@ private:
     VkPipelineLayout rcAllocPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTracePipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcMergePipelineLayout = VK_NULL_HANDLE;
-    VkPipelineLayout rcSHPipelineLayout    = VK_NULL_HANDLE;
+    VkPipelineLayout rcSHPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcGatherPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTransparentPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout tonemapPipelineLayout = VK_NULL_HANDLE;
@@ -168,9 +168,9 @@ private:
     float lastFrame = 0.0f;
 
     // --- GPU timestamp queries (per-pass timing) ---
-    VkQueryPool timestampPool      = VK_NULL_HANDLE;
-    float       timestampPeriod    = 0.0f;
-    bool        timestampsSupported = false;
+    VkQueryPool timestampPool = VK_NULL_HANDLE;
+    float timestampPeriod = 0.0f;
+    bool timestampsSupported = false;
 
     // --- Stats and debug ---
     FrameStats lastFrameStats{};

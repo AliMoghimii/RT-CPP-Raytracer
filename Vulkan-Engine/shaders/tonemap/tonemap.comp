@@ -32,9 +32,9 @@ void main() {
 
     vec3 hdr = imageLoad(inHDR, pixel).rgb * pc.exposure;
     vec3 ldr;
-    if (pc.tonemapMode == 1)      ldr = Reinhard(hdr);
+    if (pc.tonemapMode == 1) ldr = Reinhard(hdr);
     else if (pc.tonemapMode == 2) ldr = clamp(hdr, 0.0, 1.0);   // linear (matches original backup)
-    else                          ldr = ACESFilm(hdr);            // default: ACES Film
+    else ldr = ACESFilm(hdr);           // default: ACES Film
     ldr = pow(ldr, vec3(1.0 / 2.2));    // linear -> sRGB gamma
 
     imageStore(outLDR, pixel, vec4(ldr, 1.0));

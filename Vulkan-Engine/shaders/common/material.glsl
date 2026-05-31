@@ -70,10 +70,10 @@ float _patternNoise(vec3 x) {
     vec3 f = fract(x);
     f = f * f * (3.0 - 2.0 * f);
     return mix(
-        mix(mix(_patternHash(i),                   _patternHash(i + vec3(1,0,0)), f.x),
-            mix(_patternHash(i + vec3(0,1,0)),     _patternHash(i + vec3(1,1,0)), f.x), f.y),
-        mix(mix(_patternHash(i + vec3(0,0,1)),     _patternHash(i + vec3(1,0,1)), f.x),
-            mix(_patternHash(i + vec3(0,1,1)),     _patternHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+        mix(mix(_patternHash(i), _patternHash(i + vec3(1,0,0)), f.x),
+            mix(_patternHash(i + vec3(0,1,0)), _patternHash(i + vec3(1,1,0)), f.x), f.y),
+        mix(mix(_patternHash(i + vec3(0,0,1)), _patternHash(i + vec3(1,0,1)), f.x),
+            mix(_patternHash(i + vec3(0,1,1)), _patternHash(i + vec3(1,1,1)), f.x), f.y), f.z);
 }
 
 float _patternFbm(vec3 x) {

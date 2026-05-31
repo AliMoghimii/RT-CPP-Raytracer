@@ -58,11 +58,11 @@ vec4 sampleParentProbe(uint parentSlot, vec3 direction) {
 }
 
 void main() {
-    int  cOctRes     = pc.currentGridOctRes.w;
+    int  cOctRes = pc.currentGridOctRes.w;
     uint dirsPerProbe = uint(cOctRes * cOctRes);
-    uint globalIdx   = gl_GlobalInvocationID.x;
-    uint slot        = globalIdx / dirsPerProbe;
-    uint dirIdx      = globalIdx % dirsPerProbe;
+    uint globalIdx = gl_GlobalInvocationID.x;
+    uint slot = globalIdx / dirsPerProbe;
+    uint dirIdx = globalIdx % dirsPerProbe;
 
     if (slot >= nextSlot || slot >= uint(pc.currentMaxSlots)) return;
 

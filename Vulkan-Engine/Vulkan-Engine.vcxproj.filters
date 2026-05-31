@@ -184,7 +184,9 @@
     <ClInclude Include="include\scene\ModelLoader.hpp">
       <Filter>Include\Scene</Filter>
     </ClInclude>
-    <ClInclude Include="include\scene\Primitive.hpp" />
+    <ClInclude Include="include\scene\Primitive.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
     <ClInclude Include="include\passes\GBuffer.hpp">
       <Filter>Include\Passes</Filter>
     </ClInclude>
@@ -263,6 +265,9 @@
     <None Include="shaders\common\cascade_layout.glsl">
       <Filter>Shader\Common</Filter>
     </None>
+    <None Include="shaders\common\shadow.glsl">
+      <Filter>Shader\Common</Filter>
+    </None>
     <None Include="shaders\rc\cascade_merge.comp">
       <Filter>Shader\RC</Filter>
     </None>
@@ -272,10 +277,19 @@
     <None Include="shaders\rc\probe_trace.comp">
       <Filter>Shader\RC</Filter>
     </None>
+    <None Include="shaders\rc\probe_sh.comp">
+      <Filter>Shader\RC</Filter>
+    </None>
     <None Include="shaders\tonemap\tonemap.comp">
       <Filter>Shader\Tonemap</Filter>
     </None>
     <None Include="shaders\shading\final_gather.comp">
+      <Filter>Shader\Shading</Filter>
+    </None>
+    <None Include="shaders\shading\reflection.comp">
+      <Filter>Shader\Shading</Filter>
+    </None>
+    <None Include="shaders\shading\transparent.comp">
       <Filter>Shader\Shading</Filter>
     </None>
     <None Include="config\imgui\imgui.ini">

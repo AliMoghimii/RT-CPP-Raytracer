@@ -2,22 +2,22 @@
 #define CASCADE_LAYOUT_GLSL
 
 // ============================================================
-// NAMING CONVENTION � enforced by convention, not the compiler.
+// NAMING CONVENTION - enforced by convention, not the compiler.
 //
 // Every shader that #includes this file MUST declare SSBOs with
 // exactly the following names (the functions below reference them):
 //
 //   Current cascade:
-//     hashKeys[]       � uint[], size = tableSize
-//     hashValues[]     � uint[], size = tableSize
-//     slotToKey[]      � uint[], size = maxActiveSlots
-//     nextSlot         � uint   (single-element buffer)
-//     cascadeData[]    � uvec2[], size = maxActiveSlots * octRes * octRes
+//     hashKeys[]         uint[], size = tableSize
+//     hashValues[]       uint[], size = tableSize
+//     slotToKey[]        uint[], size = maxActiveSlots
+//     nextSlot           uint   (single-element buffer)
+//     cascadeData[]      uvec2[], size = maxActiveSlots * octRes * octRes
 //
 //   Parent cascade (cascade_merge.comp only):
-//     parentHashKeys[]     � uint[]
-//     parentHashValues[]   � uint[]
-//     parentCascadeData[]  � uvec2[]
+//     parentHashKeys[]       uint[]
+//     parentHashValues[]     uint[]
+//     parentCascadeData[]    uvec2[]
 // ============================================================
 
 // --- Key encoding ---
@@ -56,7 +56,7 @@ int probeStorageBase(uint slot, int octRes)
 // -- Radiance packing (uvec2, no uint64_t extension needed) ---
 
 // Packs (radiance.rgb, transmittance) as two pairs of FP16 values.
-// packHalf2x16 / unpackHalf2x16 are GLSL builtins - no extension needed.
+// packHalf2x16 / unpackHalf2x16 are GLSL builtins, no extension needed.
 // Why uvec2 instead of uint64_t: 64-bit integers in GLSL require GL_ARB_gpu_shader_int64 or GL_EXT_shader_explicit_arithmetic_types_int64.
 // These extensions are not universally available and are not declared in this project. uvec2 (two 32-bit uints) stores the identical 8 bytes.
 // packHalf2x16/unpackHalf2x16 operate on plain uint and need no extension.

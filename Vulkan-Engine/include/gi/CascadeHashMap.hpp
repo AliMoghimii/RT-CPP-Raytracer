@@ -5,12 +5,12 @@
 
 struct CascadeHashMap
 {
-	Buffer hashKeys;	        // uint[tableSize] - packed cell keys, 0xFFFFFFFF = empty
-	Buffer hashValues;	        // uint[tableSize] - slot index for each key
-	Buffer slotToKey;	        // uint[maxActiveSlots] - reverse map: slot -> key
-	Buffer slotCounter;	        // uint[1] - atomic counter for active slots
-	Buffer cascadeData;	        // uvec2[maxActiveSlots x octRes^2]
-	Buffer shCoeffs;	        // vec4[maxActiveSlots x 4] - L0+L1 SH irradiance coefficients
+	Buffer hashKeys;		// uint[tableSize] - packed cell keys, 0xFFFFFFFF = empty
+	Buffer hashValues;		// uint[tableSize] - slot index for each key
+	Buffer slotToKey;		// uint[maxActiveSlots] - reverse map: slot -> key
+	Buffer slotCounter;		// uint[1] - atomic counter for active slots
+	Buffer cascadeData;		// uvec2[maxActiveSlots x octRes^2]
+	Buffer shCoeffs;		// vec4[maxActiveSlots x 4] - L0+L1 SH irradiance coefficients
 
 	uint32_t tableSize = 0;
 	uint32_t maxActiveSlots = 0;

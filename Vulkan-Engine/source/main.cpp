@@ -220,11 +220,12 @@ int main() {
     engine.enableTextures = ENABLE_TEXTURES;
 
     // Tessellate object primitives into the BVH so RC probes can see them.
-    // Quads (walls/ceiling) and planes (floor) stay analytical — their large
+    // Quads (walls/ceiling) and planes (floor) stay analytical, their large
     // triangles bloat the BVH root AABB and make shadow traversal O(N).
     for (const auto& sphere : spheres) {
         tessellateSphere(sphere, sphere.materialIndex, triangles);
     }
+
     for (const auto& cube : cubes) {
         tessellateCube(cube, cube.materialIndex, triangles);
     }

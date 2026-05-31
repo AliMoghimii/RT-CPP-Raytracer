@@ -73,7 +73,7 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 //         Metals absorb all transmission so they have no diffuse (kD *= 1-metallic).
 //   kS = F (Fresnel factor = specular fraction)
 //   NDF = microfacet normal distribution (GGX)
-//   G   = masking-shadowing (Smith)
+//   G = masking-shadowing (Smith)
 //   The denominator 4*NdotV*NdotL normalizes the microfacet solid angle.
 //   0.0001 prevents division by zero at grazing angles.
 vec3 pbrShading(GPUMaterial mat, vec3 baseColor, vec3 N, vec3 V, vec3 L, vec3 lightColor) {
@@ -81,14 +81,14 @@ vec3 pbrShading(GPUMaterial mat, vec3 baseColor, vec3 N, vec3 V, vec3 L, vec3 li
     vec3 F0 = mix(vec3(0.04), baseColor, mat.metallic); // dielectric (0.04) -> metal (albedo)
 
     float NDF = DistributionGGX(N, H, mat.roughness);
-    float G   = GeometrySmith(N, V, L, mat.roughness);
-    vec3  F   = fresnelSchlick(max(dot(H, V), 0.0), F0);
+    float G = GeometrySmith(N, V, L, mat.roughness);
+    vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
-    vec3  numerator   = NDF * G * F;
+    vec3 numerator = NDF * G * F;
     float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
-    vec3  specular    = numerator / denominator;
+    vec3 specular = numerator / denominator;
 
-    vec3  kD    = (vec3(1.0) - F) * (1.0 - mat.metallic);  // energy-conserving diffuse weight
+    vec3 kD = (vec3(1.0) - F) * (1.0 - mat.metallic);  // energy-conserving diffuse weight
     float NdotL = max(dot(N, L), 0.0);
 
     return (kD * baseColor / PI + specular) * lightColor * NdotL;

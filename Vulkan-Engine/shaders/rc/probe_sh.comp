@@ -48,8 +48,8 @@ void main() {
     uint slot = gl_GlobalInvocationID.x;
     if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
 
-    int octRes      = pc.octRes;
-    int N           = octRes * octRes;
+    int octRes = pc.octRes;
+    int N = octRes * octRes;
     int storageBase = probeStorageBase(slot, octRes);
 
     // Pre-integrated scale factors that absorb the SH basis constants and the

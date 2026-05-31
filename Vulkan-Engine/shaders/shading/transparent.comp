@@ -44,17 +44,17 @@ layout(std430, set = 0, binding = 6) readonly buffer QuadBuffer  { GPUQuad  quad
 #include "../common/cascade_layout.glsl"
 
 layout(push_constant) uniform TransparentPC {
-    vec4  camPos;
-    vec4  camRight;
-    vec4  camUp;
-    vec4  camForward;
-    vec4  worldOriginSpacing;
+    vec4 camPos;
+    vec4 camRight;
+    vec4 camUp;
+    vec4 camForward;
+    vec4 worldOriginSpacing;
     ivec4 gridSizeOctRes;
     int bvhCount;
     int lightCount;
     int planeCount;
     int quadCount;
-    int fogBlendWithSky;   // 1 = fog samples sky gradient; 0 = no fog applied
+    int fogBlendWithSky;    // 1 = fog samples sky gradient; 0 = no fog applied
     int hashSize;
     float kIndirectScale;   // GI irradiance → color scale
     float fogDensity;       // exponential fog decay coefficient
@@ -106,32 +106,32 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
 // Hybrid analytical+BVH intersection. Returns the nearest hit along (origin, dir).
 struct HitResult {
     float t;
-    int   matIdx;
-    vec3  normal;
-    vec2  uv;
-    bool  isPlane;
-    bool  hit;
+    int matIdx;
+    vec3 normal;
+    vec2 uv;
+    bool isPlane;
+    bool hit;
 };
 
 HitResult findNearestHit(vec3 origin, vec3 dir) {
     HitResult res;
-    res.t       = 1e6;
-    res.matIdx  = -1;
-    res.normal  = vec3(0.0);
-    res.uv      = vec2(0.0);
+    res.t = 1e6;
+    res.matIdx = -1;
+    res.normal = vec3(0.0);
+    res.uv = vec2(0.0);
     res.isPlane = false;
-    res.hit     = false;
+    res.hit = false;
 
     for (int i = 0; i < pc.planeCount; i++) {
         float denom = dot(planes[i].normal, dir);
         if (abs(denom) < 1e-6) continue;
         float t = dot(planes[i].center - origin, planes[i].normal) / denom;
         if (t > 0.001 && t < res.t) {
-            res.t       = t;
-            res.matIdx  = planes[i].materialIndex;
-            res.normal  = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
+            res.t = t;
+            res.matIdx = planes[i].materialIndex;
+            res.normal = (denom < 0.0) ? planes[i].normal : -planes[i].normal;
             res.isPlane = true;
-            res.hit     = true;
+            res.hit = true;
         }
     }
 
@@ -140,33 +140,33 @@ HitResult findNearestHit(vec3 origin, vec3 dir) {
         if (abs(denom) < 1e-6) continue;
         float t = dot(quads[i].corner - origin, quads[i].normalVector) / denom;
         if (t <= 0.001 || t >= res.t) continue;
-        vec3  p    = origin + dir * t - quads[i].corner;
+        vec3 p = origin + dir * t - quads[i].corner;
         float e1l2 = dot(quads[i].edge1, quads[i].edge1);
         float e2l2 = dot(quads[i].edge2, quads[i].edge2);
-        float qu   = dot(p, quads[i].edge1) / e1l2;
-        float qv   = dot(p, quads[i].edge2) / e2l2;
+        float qu = dot(p, quads[i].edge1) / e1l2;
+        float qv = dot(p, quads[i].edge2) / e2l2;
         if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
-        res.t       = t;
-        res.matIdx  = quads[i].materialIndex;
-        res.normal  = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
-        res.uv      = vec2(qu, qv);
+        res.t = t;
+        res.matIdx = quads[i].materialIndex;
+        res.normal = (denom < 0.0) ? quads[i].normalVector : -quads[i].normalVector;
+        res.uv = vec2(qu, qv);
         res.isPlane = false;
-        res.hit     = true;
+        res.hit = true;
     }
 
     Ray bvhRay;
-    bvhRay.origin    = origin;
+    bvhRay.origin = origin;
     bvhRay.direction = dir;
-    bvhRay.tMin      = 0.001;
-    bvhRay.tMax      = res.t;
+    bvhRay.tMin = 0.001;
+    bvhRay.tMax = res.t;
     HitInfo bvhHit;
     if (traverseBVH(bvhRay, pc.bvhCount, bvhHit)) {
-        res.t       = bvhHit.t;
-        res.matIdx  = bvhHit.materialIndex;
-        res.normal  = bvhHit.normal;
-        res.uv      = bvhHit.uv;
+        res.t = bvhHit.t;
+        res.matIdx = bvhHit.materialIndex;
+        res.normal = bvhHit.normal;
+        res.uv = bvhHit.uv;
         res.isPlane = false;
-        res.hit     = true;
+        res.hit = true;
     }
 
     return res;
@@ -179,15 +179,15 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
     vec3 color = mat.emission;
 
     for (int l = 0; l < pc.lightCount; l++) {
-        vec3  toLight   = lights[l].position - worldPos;
-        vec3  lightDir  = normalize(toLight);
+        vec3 toLight = lights[l].position - worldPos;
+        vec3 lightDir = normalize(toLight);
         float lightDist = length(toLight);
 
         Ray shadowRay;
-        shadowRay.origin    = worldPos + normal * 0.001;
+        shadowRay.origin = worldPos + normal * 0.001;
         shadowRay.direction = lightDir;
-        shadowRay.tMin      = 0.001;
-        shadowRay.tMax      = lightDist - 0.01;
+        shadowRay.tMin = 0.001;
+        shadowRay.tMax = lightDist - 0.01;
 
         // Analytical shadow only — no BVH shadow inside refraction chains (too expensive).
         vec3 shadowAtten = analyticalShadow(shadowRay.origin, lightDir, shadowRay.tMax);
@@ -205,11 +205,11 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
 
     // Cascade-0 indirect GI: trilinear probe interpolation at this surface position.
     // Falls back to mat.ambient when probes are unavailable (original constant-fill behavior).
-    vec3  cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
-    ivec3 base         = ivec3(floor(cascadeSpace));
-    vec3  f            = cascadeSpace - vec3(base);
-    vec3  indirect     = vec3(0.0);
-    float weightSum    = 0.0;
+    vec3 cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
+    ivec3 base = ivec3(floor(cascadeSpace));
+    vec3 f = cascadeSpace - vec3(base);
+    vec3 indirect = vec3(0.0);
+    float weightSum = 0.0;
     for (int pz = 0; pz <= 1; pz++) {
         for (int py = 0; py <= 1; py++) {
             for (int px = 0; px <= 1; px++) {
@@ -222,8 +222,8 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
                 float wx = (px == 0) ? (1.0 - f.x) : f.x;
                 float wy = (py == 0) ? (1.0 - f.y) : f.y;
                 float wz = (pz == 0) ? (1.0 - f.z) : f.z;
-                float w  = wx * wy * wz;
-                indirect  += sampleProbeIrradiance(pSlot, normal) * w;
+                float w = wx * wy * wz;
+                indirect += sampleProbeIrradiance(pSlot, normal) * w;
                 weightSum += w;
             }
         }
@@ -241,7 +241,7 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
             if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
             uint fSlot = probeLookup(packCellKey(fp), uint(pc.hashSize));
             if (fSlot == 0xFFFFFFFFu) continue;
-            indirect  += sampleProbeIrradiance(fSlot, normal);
+            indirect += sampleProbeIrradiance(fSlot, normal);
             weightSum += 1.0;
         }
         if (weightSum > 0.001) color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
@@ -250,28 +250,28 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
 
     // --- First-order reflection for reflective terminal surfaces (T6) ---
     if (mat.reflection > 0.01) {
-        vec3 reflDir    = reflect(-viewDir, normal);
+        vec3 reflDir = reflect(-viewDir, normal);
         vec3 reflOrigin = worldPos + normal * 0.002;
         HitResult reflHit = findNearestHit(reflOrigin, reflDir);
 
         vec3 reflColor;
         if (reflHit.hit) {
-            GPUMaterial reflMat  = materials[reflHit.matIdx];
-            vec3 reflWorldPos    = reflOrigin + reflDir * reflHit.t;
-            vec3 reflAlbedo      = reflHit.isPlane ? reflMat.color : sampleAlbedo(reflMat, reflHit.uv);
-                 reflAlbedo      = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos);
-            vec3 reflViewDir     = -reflDir;
+            GPUMaterial reflMat = materials[reflHit.matIdx];
+            vec3 reflWorldPos = reflOrigin + reflDir * reflHit.t;
+            vec3 reflAlbedo = reflHit.isPlane ? reflMat.color : sampleAlbedo(reflMat, reflHit.uv);
+                 reflAlbedo = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos);
+            vec3 reflViewDir = -reflDir;
             reflColor = reflMat.emission + reflAlbedo * reflMat.ambient;
 
             for (int l = 0; l < pc.lightCount; l++) {
-                vec3  toLight   = lights[l].position - reflWorldPos;
-                vec3  lightDir  = normalize(toLight);
+                vec3  toLight = lights[l].position - reflWorldPos;
+                vec3  lightDir = normalize(toLight);
                 float lightDist = length(toLight);
                 Ray shadowRay;
-                shadowRay.origin    = reflWorldPos + reflHit.normal * 0.001;
+                shadowRay.origin = reflWorldPos + reflHit.normal * 0.001;
                 shadowRay.direction = lightDir;
-                shadowRay.tMin      = 0.001;
-                shadowRay.tMax      = lightDist - 0.01;
+                shadowRay.tMin = 0.001;
+                shadowRay.tMax = lightDist - 0.01;
                 // Analytical shadow only for reflections inside glass.
                 vec3 shadowAtten = analyticalShadow(shadowRay.origin, lightDir, shadowRay.tMax);
                 if (dot(shadowAtten, shadowAtten) > 0.001) {
@@ -299,7 +299,7 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
 
 void main() {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
-    ivec2 size  = imageSize(outHDR);
+    ivec2 size = imageSize(outHDR);
     if (pixel.x >= size.x || pixel.y >= size.y) return;
 
     // Sky pixels have gEmissive.a < 0; gather already wrote them correctly.
@@ -307,17 +307,17 @@ void main() {
     if (emissiveData.a < 0.0) return;
 
     // Opaque pixels: gather already shaded them; leave outHDR untouched.
-    int         matIdx     = int(round(emissiveData.a));
+    int matIdx = int(round(emissiveData.a));
     GPUMaterial primaryMat = materials[matIdx];
     if (primaryMat.transparency <= 0.01) return;
 
     // --- Reconstruct primary ray (identical math to primary.comp) ---
     vec2 screenUV = (vec2(pixel) + 0.5) / vec2(size) * 2.0 - 1.0;
-    screenUV.y    = -screenUV.y;
-    screenUV.x   *= float(size.x) / float(size.y);
-    screenUV     *= tan(radians(30.0));  // half-FOV = 30 degrees
+    screenUV.y = -screenUV.y;
+    screenUV.x *= float(size.x) / float(size.y);
+    screenUV *= tan(radians(30.0));  // half-FOV = 30 degrees
     vec3 primaryRayDir = normalize(pc.camRight.xyz * screenUV.x
-                                 + pc.camUp.xyz    * screenUV.y
+                                 + pc.camUp.xyz * screenUV.y
                                  + pc.camForward.xyz);
 
     // --- Refraction/reflection depth loop ---
@@ -328,41 +328,41 @@ void main() {
     vec3 firstHitPos = imageLoad(gPosition, pixel).xyz;
 
     vec3 accumulatedColor = vec3(0.0);
-    vec3 attenuation      = vec3(1.0);
+    vec3 attenuation = vec3(1.0);
 
     // Pre-baked albedo/roughness/metallic for the first transparent hit.
     // primary.comp already sampled all textures and stored the results in the G-buffer.
     // We reuse them here because hitUV is vec2(0) for the first hit (G-buffer doesn't store UVs).
     vec4 firstHitAlbedoData = imageLoad(gAlbedo, pixel);
-    vec3 firstHitAlbedo     = firstHitAlbedoData.rgb;
+    vec3 firstHitAlbedo = firstHitAlbedoData.rgb;
     float firstHitMetallic  = firstHitAlbedoData.a;
     float firstHitRoughness = imageLoad(gNormal, pixel).a;  // roughness stored in gNormal.w
 
     // rayOrig/rayDir track the next ray to cast (unused on the first iteration).
     vec3 rayOrig = pc.camPos.xyz;
-    vec3 rayDir  = primaryRayDir;
+    vec3 rayDir = primaryRayDir;
     bool firstHit = true;
 
     for (int depth = 0; depth < 4; depth++) {
-        vec3        hitPos;
-        vec3        hitNormal;
+        vec3 hitPos;
+        vec3 hitNormal;
         GPUMaterial mat;
-        vec2        hitUV;
-        bool        hitIsPlane;
+        vec2 hitUV;
+        bool hitIsPlane;
 
         if (firstHit) {
             // Use G-buffer data; avoids re-tracing the primary ray through the glass.
-            hitPos    = imageLoad(gPosition, pixel).xyz;
+            hitPos = imageLoad(gPosition, pixel).xyz;
             hitNormal = normalize(imageLoad(gNormal, pixel).xyz);
-            mat       = primaryMat;
+            mat = primaryMat;
             // Override roughness/metallic with G-buffer values (sampled from texture maps by primary.comp).
             // mat.roughness defaults to the flat material value (e.g. 1.0 for ice); the texture map
             // gives the correct per-pixel roughness needed for accurate PBR specular.
             mat.roughness = firstHitRoughness;
-            mat.metallic  = firstHitMetallic;
-            hitUV     = vec2(0.0);
+            mat.metallic = firstHitMetallic;
+            hitUV = vec2(0.0);
             hitIsPlane = false;
-            firstHit  = false;
+            firstHit = false;
         } else {
             HitResult hr = findNearestHit(rayOrig, rayDir);
 
@@ -374,10 +374,10 @@ void main() {
                 break;
             }
 
-            hitPos     = rayOrig + rayDir * hr.t;
-            hitNormal  = hr.normal;
-            mat        = materials[hr.matIdx];
-            hitUV      = hr.uv;
+            hitPos = rayOrig + rayDir * hr.t;
+            hitNormal = hr.normal;
+            mat = materials[hr.matIdx];
+            hitUV = hr.uv;
             hitIsPlane = hr.isPlane;
         }
 
@@ -399,13 +399,13 @@ void main() {
         // Schlick Fresnel gives the reflection fraction; (1-fresnel) is the transmission fraction.
         // When refract() returns a zero vector, total internal reflection has occurred (critical
         // angle exceeded), so we force fresnel=1 to fall through to the reflection branch.
-        float cosI      = dot(rayDir, hitNormal);
-        float eta       = (cosI < 0.0) ? 1.0 / mat.ior : mat.ior;
-        vec3  n         = (cosI < 0.0) ? hitNormal : -hitNormal;
-        cosI            = abs(cosI);
-        float r0        = (1.0 - eta) / (1.0 + eta); r0 *= r0;  // normal-incidence reflectance
-        float fresnel   = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
-        vec3  refractDir = refract(rayDir, n, eta);
+        float cosI = dot(rayDir, hitNormal);
+        float eta = (cosI < 0.0) ? 1.0 / mat.ior : mat.ior;
+        vec3 n = (cosI < 0.0) ? hitNormal : -hitNormal;
+        cosI = abs(cosI);
+        float r0 = (1.0 - eta) / (1.0 + eta); r0 *= r0;  // normal-incidence reflectance
+        float fresnel = r0 + (1.0 - r0) * pow(1.0 - cosI, 5.0);
+        vec3 refractDir = refract(rayDir, n, eta);
         if (length(refractDir) < 0.001) fresnel = 1.0;  // total internal reflection
 
         // Surface shading bleeds through at (1 - transparency): gives textured transparent
@@ -431,12 +431,12 @@ void main() {
             // dark crystalline look; clear glass keeps mat.color = white)
             attenuation *= mat.transparency * (1.0 - fresnel) * mat.color;
             rayOrig = hitPos - n * 0.001;
-            rayDir  = normalize(refractDir);
+            rayDir = normalize(refractDir);
         } else {
             // Total internal reflection
             attenuation *= mat.reflection;
             rayOrig = hitPos + n * 0.001;
-            rayDir  = reflect(rayDir, n);
+            rayDir = reflect(rayDir, n);
         }
 
         if (dot(attenuation, attenuation) < 0.0001) break;
@@ -446,7 +446,7 @@ void main() {
     if (pc.fogBlendWithSky == 1) {
         float fogDepth = length(firstHitPos - pc.camPos.xyz);
         float fogAtten = exp(-pc.fogDensity * fogDepth);
-        vec3  fogDir   = (fogDepth > 0.0001) ? normalize(firstHitPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
+        vec3 fogDir = (fogDepth > 0.0001) ? normalize(firstHitPos - pc.camPos.xyz) : vec3(0.0, 0.0, 1.0);
         // Sky colors hardcoded to match main.cpp defaults (TransparentPC is at 128-byte limit).
         vec3  fogColor = mix(vec3(1.0, 1.0, 1.0), vec3(0.1, 0.3, 0.7),
                              clamp(0.5 * (fogDir.y + 1.0), 0.0, 1.0));

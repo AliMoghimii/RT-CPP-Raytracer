@@ -29,9 +29,9 @@ layout(std430, set = 2, binding = 3) readonly buffer PSC  { uint parentNextSlot;
 
 layout(push_constant) uniform AllocPC {
     ivec4 gridSizeHashSize;     // xyz = gridSize of this cascade, w = hashTableSize
-    vec4  worldOriginSpacing;   // xyz = worldOrigin, w = spacing of this cascade
-    int   allocMode;            // 0 = G-buffer pixels -> cascade 0 cells; 1 = parent slots -> this cascade's cells
-    int   pad[3];
+    vec4 worldOriginSpacing;   // xyz = worldOrigin, w = spacing of this cascade
+    int allocMode;            // 0 = G-buffer pixels -> cascade 0 cells; 1 = parent slots -> this cascade's cells
+    int pad[3];
 } pc;
 
 // Probe allocation: decides which grid cells need probes this frame.

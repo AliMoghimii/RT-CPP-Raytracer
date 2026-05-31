@@ -28,8 +28,8 @@ void tessellateSphere(
 			vertices.push_back(vertex);
 			normals.push_back(normal);
 			// Spherical UV matching the legacy shader formula:
-			//   u = 0.5 + atan2(nz,nx)/(2π)  →  0.5 + theta/(2π)
-			//   v = 0.5 - asin(ny)/π          →  phi/π
+			//   u = 0.5 + atan2(nz,nx)/(2π) -> 0.5 + theta/(2π)
+			//   v = 0.5 - asin(ny)/π -> phi/π
 			uvCoords.push_back(glm::vec2(
 				0.5f + theta / (2.0f * glm::pi<float>()),
 				phi / glm::pi<float>()

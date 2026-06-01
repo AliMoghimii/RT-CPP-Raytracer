@@ -59,11 +59,11 @@ struct RCGatherPC {                         // 128 bytes
 
 struct TransparentPC {                      // 128 bytes
     glm::vec4 camPos;                       // xyz = camera position
-    glm::vec4 camRight;                     // xyz = right direction
-    glm::vec4 camUp;                        // xyz = up direction
-    glm::vec4 camForward;                   // xyz = forward direction
+    glm::vec4 camForward;                   // xyz = forward direction; camRight/camUp reconstructed in shader
     glm::vec4 worldOriginSpacing;           // xyz = cascade-0 origin, w = spacing
     glm::ivec4 gridSizeOctRes;              // xyz = cascade-0 grid, w = octRes
+    glm::vec4 skyBottomColor;              // xyz = horizon sky colour (was hardcoded in shader)
+    glm::vec4 skyTopColor;                 // xyz = zenith sky colour  (was hardcoded in shader)
     int bvhCount;
     int lightCount;
     int planeCount;

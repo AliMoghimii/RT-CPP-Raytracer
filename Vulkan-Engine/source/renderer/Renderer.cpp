@@ -1095,10 +1095,10 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     // Opaque pixels in outHDR are left untouched.
     {
         TransparentPC transPC{};
-        transPC.camPos = pc.camPos;
-        transPC.camRight = pc.camRight;
-        transPC.camUp = pc.camUp;
-        transPC.camForward = pc.camForward;
+        transPC.camPos        = pc.camPos;
+        transPC.camForward    = pc.camForward;
+        transPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
+        transPC.skyTopColor    = glm::vec4(skyTopColor,    0.0f);
         transPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
         transPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
         transPC.bvhCount = (int)sceneBVH.size();

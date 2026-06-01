@@ -322,10 +322,21 @@ void main() {
             }
         }
 
+        // Fog for reflected content: the reflected ray travels an additional reflT units
+        // beyond the primary surface. Apply the extra fog attenuation to reflColor alone;
+        // the primary surface fog block below then handles the camera→primary-surface segment.
+        // Combined result = exp(-density * (primaryDepth + reflT)) for the reflected content. ✓
+        if (pc.fogBlendWithSky == 1 && reflMatIdx >= 0) {
+            float addFogAtten = exp(-pc.fogDensity * reflT);
+            vec3  reflFogColor = mix(pc.skyBottomColor.rgb, pc.skyTopColor.rgb,
+                                     clamp(0.5 * (reflDir.y + 1.0), 0.0, 1.0));
+            reflColor = mix(reflFogColor, reflColor, addFogAtten);
+        }
+
         color = color * (1.0 - mat.reflection) + reflColor * mat.reflection;
     }
 
-    // Exponential distance fog (applied AFTER reflection blend to preserve original order).
+    // Exponential distance fog for the primary surface (camera → worldPos segment).
     if (pc.fogBlendWithSky == 1) {
         float fogDepth  = length(worldPos - pc.camPos.xyz);
         float fogAtten  = exp(-pc.fogDensity * fogDepth);

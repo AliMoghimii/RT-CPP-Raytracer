@@ -63,7 +63,7 @@ public:
 
     // --- Debug / visualization (controlled by DebugUI) ---
     int probeSoftShadowSamples = 1; // 1=hard shadow (original), >1=area-light jitter per probe BVH shadow ray
-    int debugMode = 0;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    int debugMode = 0;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive 5=IndirectOnly 6=Probes
     float exposure = 1.0f;          // tonemap exposure
     int tonemapMode = 0;            // 0=ACES Film  1=Reinhard  2=Linear
     int enableDirect = 1;
@@ -71,6 +71,12 @@ public:
     float kIndirectScale = 0.02f;   // GI irradiance -> color scale (slider in Scene Controls)
     float fogDensity = 0.04f;       // exponential fog decay coefficient
     bool fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
+
+    // --- Probe debug visualization (mode 6) ---
+    int   probeVizLevel   = 0;      // which cascade level to visualize
+    float probeVizRadius  = 0.09f;  // octahedron body half-extent (world units)
+    float probeVizRayLen  = 0.40f;  // ray stub end distance from probe center
+    float probeVizRayRad  = 0.012f; // ray stub capsule radius
 
     // --- Cascade configuration (public so DebugUI can live-tune it) ---
     CascadeConfig rcConfig;
@@ -138,6 +144,7 @@ private:
     VkPipeline rcGatherPipeline = VK_NULL_HANDLE;
     VkPipeline rcReflectionPipeline = VK_NULL_HANDLE;
     VkPipeline rcTransparentPipeline = VK_NULL_HANDLE;
+    VkPipeline rcProbeDebugPipeline = VK_NULL_HANDLE;
     VkPipeline tonemapPipeline = VK_NULL_HANDLE;
 
     VkPipelineLayout rcAllocPipelineLayout = VK_NULL_HANDLE;
@@ -146,6 +153,7 @@ private:
     VkPipelineLayout rcSHPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcGatherPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout rcTransparentPipelineLayout = VK_NULL_HANDLE;
+    VkPipelineLayout rcProbeDebugPipelineLayout = VK_NULL_HANDLE;
     VkPipelineLayout tonemapPipelineLayout = VK_NULL_HANDLE;
 
     VkSampler textureSampler = VK_NULL_HANDLE;

@@ -79,3 +79,16 @@ struct TonemapPC {                          // 16 bytes
     int tonemapMode;                        // 0=ACES Film  1=Reinhard  2=Linear
     int pad[2];
 };
+
+struct ProbeDebugPC {                       // 112 bytes (< 128 minimum guarantee)
+    glm::vec4  worldOriginSpacing;          // xyz = worldOrigin, w = level spacing
+    glm::ivec4 gridSizeOctRes;             // xyz = level gridSize, w = level octRes
+    glm::vec4  camPos;                     // xyz = camera position
+    glm::vec4  camRight;                   // xyz = right direction
+    glm::vec4  camUp;                      // xyz = up direction
+    glm::vec4  camForward;                 // xyz = forward direction
+    int   hashSize;                        // selected level's hash table size
+    float probeRadius;                     // octahedron body half-extent (world units)
+    float rayLength;                       // ray stub end distance from probe center (world units)
+    float rayRadius;                       // ray stub capsule radius (world units)
+};

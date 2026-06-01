@@ -383,6 +383,12 @@ void Renderer::createRCPipelineLayouts() {
         { sceneDescSetLayout, gbufDescSetLayout, rcHashDescSetLayout },
         sizeof(TransparentPC));
 
+    // ProbeDebug: set0=gbufDescSetLayout (gPosition b0 + hdrImage b5),
+    //             set1=rcHashDescSetLayout (cascade-k hash + cascadeData)
+    rcProbeDebugPipelineLayout = makeLayout(
+        { gbufDescSetLayout, rcHashDescSetLayout },
+        sizeof(ProbeDebugPC));
+
     // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
     tonemapPipelineLayout = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
 
@@ -401,6 +407,8 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/shading/reflection.comp.spv", rcGatherPipelineLayout);
     rcTransparentPipeline = createComputePipelineFromSpv(
         "shaders/shading/transparent.comp.spv", rcTransparentPipelineLayout);
+    rcProbeDebugPipeline = createComputePipelineFromSpv(
+        "shaders/debug/probe_debug.comp.spv", rcProbeDebugPipelineLayout);
     tonemapPipeline = createComputePipelineFromSpv(
         "shaders/tonemap/tonemap.comp.spv", tonemapPipelineLayout);
 }
@@ -1043,7 +1051,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.planeCount = (int)scenePlanes.size();
         gatherPC.quadCount = (int)sceneQuads.size();
         gatherPC.lightCount = (int)sceneLights.size();
-        gatherPC.debugMode = debugMode;
+        gatherPC.debugMode = (debugMode == 6) ? 5 : debugMode;  // mode 6 uses indirect-only background
         gatherPC.enableDirect = enableDirect;
         gatherPC.enableIndirect = enableIndirect;
         gatherPC.skyBottomColor = glm::vec4(skyBottomColor, 0.0f);
@@ -1114,6 +1122,33 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         emitComputeBarrier(cmd);  // hdrImage writes visible to tonemap
         if (timestampsSupported)
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 13);
+    }
+
+    // === 7.5. Probe debug overlay (mode 6 only) ===
+    // Fires rays from camera and tests against active cascade-k probe octahedra + ray stubs.
+    // Each octahedron face is colored by the actual stored directional radiance. Capsule ray
+    // stubs are colored per-direction. Writes over hdrImage only at hit pixels.
+    if (debugMode == 6) {
+        int lvl = probeVizLevel;
+        ProbeDebugPC dbgPC{};
+        dbgPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(lvl));
+        dbgPC.gridSizeOctRes     = glm::ivec4(rcConfig.gridSize(lvl), rcConfig.octRes(lvl));
+        dbgPC.camPos             = pc.camPos;
+        dbgPC.camRight           = pc.camRight;
+        dbgPC.camUp              = pc.camUp;
+        dbgPC.camForward         = pc.camForward;
+        dbgPC.hashSize           = (int)rcStorage.hashTableSize[lvl];
+        dbgPC.probeRadius        = probeVizRadius;
+        dbgPC.rayLength          = probeVizRayLen;
+        dbgPC.rayRadius          = probeVizRayRad;
+        VkDescriptorSet dbgSets[] = { gbufDescSet, rcHashDescSets[lvl] };
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcProbeDebugPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+            rcProbeDebugPipelineLayout, 0, 2, dbgSets, 0, nullptr);
+        vkCmdPushConstants(cmd, rcProbeDebugPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+            0, sizeof(ProbeDebugPC), &dbgPC);
+        vkCmdDispatch(cmd, dX, dY, 1);
+        emitComputeBarrier(cmd);
     }
 
     // === 8. Tonemap (hdrImage (SFLOAT) -> ldrImage (UNORM)) ===
@@ -1206,6 +1241,7 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, rcGatherPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcReflectionPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTransparentPipeline, nullptr);
+    vkDestroyPipeline(ctx.device, rcProbeDebugPipeline, nullptr);
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
     vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);
     vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
@@ -1216,6 +1252,7 @@ void Renderer::cleanup() {
     vkDestroyPipelineLayout(ctx.device, rcSHPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcGatherPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTransparentPipelineLayout, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcProbeDebugPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, tonemapPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, twoPassPipelineLayout, nullptr);
 
@@ -1449,4 +1486,5 @@ void Renderer::recreateCascades() {
     for (int i = 0; i < rcConfig.numCascades; i++)
         prevFrameSlots[i] = rcStorage.maxActiveSlots[i];
     createRCDescriptorSets();
+    probeVizLevel = std::min(probeVizLevel, rcConfig.numCascades - 1);
 }

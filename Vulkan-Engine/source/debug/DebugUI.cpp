@@ -178,8 +178,18 @@ void DebugUI::panelVisualization(Renderer& renderer) {
         ImGui::BeginDisabled();
     }
 
-    const char* modes[] = { "Final", "Albedo", "Normal", "Depth", "Emissive", "Indirect Only" };
+    const char* modes[] = { "Final", "Albedo", "Normal", "Depth", "Emissive", "Indirect Only", "Probes" };
     ImGui::Combo("Debug mode", &renderer.debugMode, modes, IM_ARRAYSIZE(modes));
+
+    if (renderer.debugMode == 6) {
+        ImGui::SeparatorText("Probe visualization");
+        int maxLvl = renderer.rcConfig.numCascades - 1;
+        ImGui::SliderInt("Cascade level", &renderer.probeVizLevel, 0, maxLvl);
+        ImGui::SliderFloat("Body radius",  &renderer.probeVizRadius,  0.02f, 0.5f,  "%.3f wu");
+        ImGui::SliderFloat("Ray length",   &renderer.probeVizRayLen,  0.05f, 3.0f,  "%.3f wu");
+        ImGui::SliderFloat("Ray radius",   &renderer.probeVizRayRad,  0.003f, 0.1f, "%.3f wu");
+        ImGui::Separator();
+    }
 
     bool direct   = renderer.enableDirect   != 0;
     bool indirect = renderer.enableIndirect != 0;

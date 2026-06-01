@@ -52,10 +52,13 @@ void main() {
     int N = octRes * octRes;
     int storageBase = probeStorageBase(slot, octRes);
 
-    // Pre-integrated scale factors that absorb the SH basis constants and the
-    // Monte Carlo weight (4*PI/N) and the cosine-lobe normalization (1/PI).
-    float K0 = 3.14159265 / (2.0 * float(N));        // L0 band: Y_0 integral
-    float K1 = 3.0 * 3.14159265 / (2.0 * float(N));  // L1 band: Y_1 integral
+    // Scale factors for unnormalized projection (c0 = SUM L, cx = SUM L*d.x — no SH basis weighting).
+    // Derivation: for uniform L=1, E(n) must equal PI (Lambertian hemisphere integral).
+    //   c0 = N  =>  K0 * N = PI  =>  K0 = PI/N
+    //   K1 = 2*PI/N  (from A1=2PI/3 Lambertian convolution × Y1 normalization × 4PI/N weight)
+    //   K1/K0 = 2  (not 3 — the previous value entangled the SH basis normalization incorrectly)
+    float K0 = 3.14159265 / float(N);          // L0: isotropic Lambertian irradiance
+    float K1 = 2.0 * 3.14159265 / float(N);   // L1: directional gradient
 
     // Accumulate weighted projections: c_i += L(d) * Y_i(d)
     // For L0 the basis function is constant (1), so c0 is just the sum of radiance.

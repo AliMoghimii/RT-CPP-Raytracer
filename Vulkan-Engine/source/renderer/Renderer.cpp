@@ -966,7 +966,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.lightCount = (int)sceneLights.size();
         tracePC.planeCount = (int)scenePlanes.size();
         tracePC.quadCount = (int)sceneQuads.size();
-        tracePC.evaluateDirect    = (level == 0) ? 1 : 0;  // only cascade-0 evaluates direct per SRC paper
+        tracePC.evaluateDirect    = 1;  // all cascade levels evaluate direct: each interval stores full outgoing radiance per RC theory
         tracePC.softShadowSamples = (level == 0) ? probeSoftShadowSamples : 1;
 
         VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };

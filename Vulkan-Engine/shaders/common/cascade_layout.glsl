@@ -99,8 +99,14 @@ bool probeInsert(uint key, uint tableSize)
         if (prev == 0xFFFFFFFFu) {
             // This thread won the CAS: slot was empty and is now ours.
             uint slot = atomicAdd(nextSlot, 1u);  // get the next available dense slot
-            hashValues[idx] = slot;               // map hash slot -> dense slot
-            slotToKey[slot] = key;                // map dense slot -> cell key (for trace dispatch)
+            if (slot < tableSize / 2u) {
+                hashValues[idx] = slot;           // map hash slot -> dense slot
+                slotToKey[slot] = key;            // map dense slot -> cell key (for trace dispatch)
+            } else {
+                // Probe budget exceeded — write sentinel so gather skips this entry safely.
+                // tableSize/2 == maxActiveSlots (CascadeStorage: tableSize = maxSlots * 2).
+                hashValues[idx] = 0xFFFFFFFFu;
+            }
             return true;
         }
 

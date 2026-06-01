@@ -68,7 +68,7 @@ public:
     int tonemapMode = 0;            // 0=ACES Film  1=Reinhard  2=Linear
     int enableDirect = 1;
     int enableIndirect = 1;
-    float kIndirectScale = 0.02f;   // GI irradiance -> color scale (slider in Scene Controls)
+    float kIndirectScale = 0.01f;   // GI irradiance -> color scale (slider in Scene Controls); halved after K0 fix (was 2x too small)
     float fogDensity = 0.04f;       // exponential fog decay coefficient
     bool fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
 

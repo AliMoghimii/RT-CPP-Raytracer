@@ -5,7 +5,7 @@
 
 struct CascadeConfig
 {
-	int numCascades = 3;
+	int numCascades = 5;
 	int branchingFactor = 2;	// a in the interval formula -> d_end(k) = spacing0 x 2^(a � k) = 0.5 x 4^k
 
 	glm::vec3 worldOrigin = glm::vec3(-16.0f, -4.0f, -16.0f);

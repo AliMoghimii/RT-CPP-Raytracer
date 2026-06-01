@@ -13,7 +13,7 @@ glm::ivec4 gridSizeHashSize;        // xyz = gridSize, w = hashTableSize
     int pad[2];
 };
 
-struct RCTracePC {                          // 64 bytes
+struct RCTracePC {                          // 68 bytes
     glm::ivec4 gridSizeOctRes;              // xyz = gridSize (unused in trace -- only w used), w = octRes
     glm::vec4 worldOriginSpacing;           // xyz = worldOrigin, w = spacing
     float intervalStart;
@@ -24,6 +24,7 @@ struct RCTracePC {                          // 64 bytes
     int planeCount;
     int quadCount;
     int evaluateDirect;                     // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
+    int softShadowSamples;                  // 1 = hard shadow (original), >1 = area-light jitter in BVH shadow
 };
 
 struct RCMergePC {                          // 64 bytes

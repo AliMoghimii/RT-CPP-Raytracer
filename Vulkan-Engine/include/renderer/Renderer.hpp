@@ -62,12 +62,13 @@ public:
     int enableTextures = 1;
 
     // --- Debug / visualization (controlled by DebugUI) ---
+    int probeSoftShadowSamples = 1; // 1=hard shadow (original), >1=area-light jitter per probe BVH shadow ray
     int debugMode = 0;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
     float exposure = 1.0f;          // tonemap exposure
     int tonemapMode = 0;            // 0=ACES Film  1=Reinhard  2=Linear
     int enableDirect = 1;
     int enableIndirect = 1;
-    float kIndirectScale = 0.0005f; // GI irradiance -> color scale (slider in Scene Controls)
+    float kIndirectScale = 0.02f;   // GI irradiance -> color scale (slider in Scene Controls)
     float fogDensity = 0.04f;       // exponential fog decay coefficient
     bool fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
 

@@ -13,6 +13,7 @@ layout(local_size_x = 256) in;
 #include "../common/lighting.glsl"
 #include "../common/shadow.glsl"
 #include "../common/octahedral.glsl"
+#include "../common/random.glsl"
 
 // Plane and quad geometry (room walls — not in BVH)
 struct GPUPlane {
@@ -50,6 +51,7 @@ layout(push_constant) uniform TracePC {
     int planeCount;
     int quadCount;
     int evaluateDirect;         // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
+    int softShadowSamples;      // 1 = hard shadow (original path), >1 = area-light jitter for BVH shadow
 } pc;
 
 void main()
@@ -149,46 +151,103 @@ void main()
                 vec3 shadowOrigin = hitPos + hitN * 0.001;
                 float shadowMaxT = lightDist - 0.01;
 
-                // Analytical shadow: planes and quads are NOT in the BVH, so walls
-                // must be tested here or lights will bleed through them into probes.
-                vec3 shadowAtten = vec3(1.0);
-                for (int i = 0; i < pc.planeCount; i++) {
-                    float denom = dot(planes[i].normal, lightDir);
-                    if (abs(denom) < 1e-6) continue;
-                    float t = dot(planes[i].center - shadowOrigin, planes[i].normal) / denom;
-                    if (t <= 0.001 || t >= shadowMaxT) continue;
-                    GPUMaterial smat = materials[planes[i].materialIndex];
-                    if (smat.castShadows == 0) continue;
-                    if (smat.transparency > 0.01) { shadowAtten *= smat.color * smat.transparency; }
-                    else { shadowAtten = vec3(0.0); break; }
-                }
-                if (dot(shadowAtten, shadowAtten) > 0.001) {
-                    for (int i = 0; i < pc.quadCount; i++) {
-                        float denom = dot(quads[i].normalVector, lightDir);
+                // Shadow evaluation — two paths sharing the same condition.
+                // Backup: set softShadowSamples = 1 (slider) to restore original hard-shadow behavior exactly.
+                vec3 shadowAtten;
+                if (pc.softShadowSamples <= 1 || lights[l].radius < 0.0001) {
+                    // --- Original hard shadow path (unchanged) ---
+                    shadowAtten = vec3(1.0);
+                    for (int i = 0; i < pc.planeCount; i++) {
+                        float denom = dot(planes[i].normal, lightDir);
                         if (abs(denom) < 1e-6) continue;
-                        float t = dot(quads[i].corner - shadowOrigin, quads[i].normalVector) / denom;
+                        float t = dot(planes[i].center - shadowOrigin, planes[i].normal) / denom;
                         if (t <= 0.001 || t >= shadowMaxT) continue;
-                        vec3  p    = shadowOrigin + lightDir * t - quads[i].corner;
-                        float e1l2 = dot(quads[i].edge1, quads[i].edge1);
-                        float e2l2 = dot(quads[i].edge2, quads[i].edge2);
-                        float qu   = dot(p, quads[i].edge1) / e1l2;
-                        float qv   = dot(p, quads[i].edge2) / e2l2;
-                        if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
-                        GPUMaterial smat = materials[quads[i].materialIndex];
+                        GPUMaterial smat = materials[planes[i].materialIndex];
                         if (smat.castShadows == 0) continue;
                         if (smat.transparency > 0.01) { shadowAtten *= smat.color * smat.transparency; }
                         else { shadowAtten = vec3(0.0); break; }
                     }
-                }
+                    if (dot(shadowAtten, shadowAtten) > 0.001) {
+                        for (int i = 0; i < pc.quadCount; i++) {
+                            float denom = dot(quads[i].normalVector, lightDir);
+                            if (abs(denom) < 1e-6) continue;
+                            float t = dot(quads[i].corner - shadowOrigin, quads[i].normalVector) / denom;
+                            if (t <= 0.001 || t >= shadowMaxT) continue;
+                            vec3  p    = shadowOrigin + lightDir * t - quads[i].corner;
+                            float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+                            float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+                            float qu   = dot(p, quads[i].edge1) / e1l2;
+                            float qv   = dot(p, quads[i].edge2) / e2l2;
+                            if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+                            GPUMaterial smat = materials[quads[i].materialIndex];
+                            if (smat.castShadows == 0) continue;
+                            if (smat.transparency > 0.01) { shadowAtten *= smat.color * smat.transparency; }
+                            else { shadowAtten = vec3(0.0); break; }
+                        }
+                    }
+                    if (dot(shadowAtten, shadowAtten) > 0.001) {
+                        Ray sr;
+                        sr.origin    = shadowOrigin;
+                        sr.direction = lightDir;
+                        sr.tMin      = 0.001;
+                        sr.tMax      = shadowMaxT;
+                        shadowAtten *= traverseBVHShadow(sr, pc.bvhCount);
+                    }
+                } else {
+                    // --- Unified soft shadow: N samples test the same jittered direction for
+                    // planes, quads, and BVH — consistent penumbras across all occluder types.
+                    // Seeded from stable cell key: same probe/direction/light/sample = same jitter
+                    // every frame, so soft shadows are baked with no temporal flicker.
+                    shadowAtten = vec3(0.0);
+                    for (int s = 0; s < pc.softShadowSamples; s++) {
+                        randState = key * 97u + uint(localRay) * 53u + uint(l) * 17u + uint(s) * 7u;
+                        vec3  jitter  = vec3(rand() * 2.0 - 1.0, rand() * 2.0 - 1.0, rand() * 2.0 - 1.0)
+                                        * lights[l].radius;
+                        vec3  jitToL  = toLight + jitter;
+                        float jitDist = length(jitToL);
+                        vec3  jitDir  = jitToL / jitDist;
+                        float jitMaxT = jitDist - 0.01;
 
-                // BVH shadow: tessellated meshes (spheres, doughnut, etc.)
-                if (dot(shadowAtten, shadowAtten) > 0.001) {
-                    Ray shadowRay;
-                    shadowRay.origin = shadowOrigin;
-                    shadowRay.direction = lightDir;
-                    shadowRay.tMin = 0.001;
-                    shadowRay.tMax = shadowMaxT;
-                    shadowAtten *= traverseBVHShadow(shadowRay, pc.bvhCount);
+                        vec3 sampleAtten = vec3(1.0);
+                        for (int i = 0; i < pc.planeCount; i++) {
+                            float denom = dot(planes[i].normal, jitDir);
+                            if (abs(denom) < 1e-6) continue;
+                            float t = dot(planes[i].center - shadowOrigin, planes[i].normal) / denom;
+                            if (t <= 0.001 || t >= jitMaxT) continue;
+                            GPUMaterial smat = materials[planes[i].materialIndex];
+                            if (smat.castShadows == 0) continue;
+                            if (smat.transparency > 0.01) { sampleAtten *= smat.color * smat.transparency; }
+                            else { sampleAtten = vec3(0.0); break; }
+                        }
+                        if (dot(sampleAtten, sampleAtten) > 0.001) {
+                            for (int i = 0; i < pc.quadCount; i++) {
+                                float denom = dot(quads[i].normalVector, jitDir);
+                                if (abs(denom) < 1e-6) continue;
+                                float t = dot(quads[i].corner - shadowOrigin, quads[i].normalVector) / denom;
+                                if (t <= 0.001 || t >= jitMaxT) continue;
+                                vec3  p    = shadowOrigin + jitDir * t - quads[i].corner;
+                                float e1l2 = dot(quads[i].edge1, quads[i].edge1);
+                                float e2l2 = dot(quads[i].edge2, quads[i].edge2);
+                                float qu   = dot(p, quads[i].edge1) / e1l2;
+                                float qv   = dot(p, quads[i].edge2) / e2l2;
+                                if (qu < 0.0 || qu > 1.0 || qv < 0.0 || qv > 1.0) continue;
+                                GPUMaterial smat = materials[quads[i].materialIndex];
+                                if (smat.castShadows == 0) continue;
+                                if (smat.transparency > 0.01) { sampleAtten *= smat.color * smat.transparency; }
+                                else { sampleAtten = vec3(0.0); break; }
+                            }
+                        }
+                        if (dot(sampleAtten, sampleAtten) > 0.001) {
+                            Ray sr;
+                            sr.origin    = shadowOrigin;
+                            sr.direction = jitDir;
+                            sr.tMin      = 0.001;
+                            sr.tMax      = jitMaxT;
+                            sampleAtten *= traverseBVHShadow(sr, pc.bvhCount);
+                        }
+                        shadowAtten += sampleAtten;
+                    }
+                    shadowAtten /= float(pc.softShadowSamples);
                 }
 
                 if (dot(shadowAtten, shadowAtten) < 0.001) continue;

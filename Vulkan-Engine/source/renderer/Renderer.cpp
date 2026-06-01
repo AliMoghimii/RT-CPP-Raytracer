@@ -431,22 +431,25 @@ VkPipeline Renderer::createComputePipelineFromSpv(const string& path, VkPipeline
 // ---- Descriptor Pool ----
 
 void Renderer::createDescriptorPool() {
-    int N = rcConfig.numCascades;  // typically 5
+    // Size the pool for the maximum cascade count the slider allows (8), not the current
+    // startup value. recreateCascades() frees and re-allocates 2*N+1 RC descriptor sets;
+    // if the pool was sized for N=3 and the user applies N=5, allocation fails.
+    constexpr int kMaxCascades = 8;
 
     vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    poolSizes[0].descriptorCount = 10;                               // 7 gbuf + 2 tonemap + 1 legacyPass
+    poolSizes[0].descriptorCount = 10;                                          // 7 gbuf + 2 tonemap + 1 legacyPass
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(16 + N * 7 + N * 4);    // +8 for legacyPass scene SSBOs
+    poolSizes[1].descriptorCount = uint32_t(16 + kMaxCascades * 7 + kMaxCascades * 4);  // +8 for legacyPass scene SSBOs
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[2].descriptorCount = 200;                              // 100 sceneDescSet + 100 legacyPass
+    poolSizes[2].descriptorCount = 200;                                         // 100 sceneDescSet + 100 legacyPass
 
     VkDescriptorPoolCreateInfo pi{};
     pi.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;   // needed by recreateCascades()
+    pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;              // needed by recreateCascades()
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
-    pi.maxSets = uint32_t(3 + N + N + 1);                           // +1 for legacyPass descSet
+    pi.maxSets = uint32_t(3 + kMaxCascades + kMaxCascades + 1);               // +1 for legacyPass descSet
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
         throw runtime_error("Renderer: descriptor pool creation failed.");
@@ -831,7 +834,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestampPool, 0);
 
-    int      N = rcConfig.numCascades;
+    int      N = (int)rcStorage.levels.size();  // use allocated count; rcConfig.numCascades may lag a frame after Apply
     uint32_t dX = swapchain.extent.width / 16;
     uint32_t dY = swapchain.extent.height / 16;
 
@@ -955,7 +958,8 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.lightCount = (int)sceneLights.size();
         tracePC.planeCount = (int)scenePlanes.size();
         tracePC.quadCount = (int)sceneQuads.size();
-        tracePC.evaluateDirect = (level == 0) ? 1 : 0;  // only cascade-0 evaluates direct per SRC paper
+        tracePC.evaluateDirect    = (level == 0) ? 1 : 0;  // only cascade-0 evaluates direct per SRC paper
+        tracePC.softShadowSamples = (level == 0) ? probeSoftShadowSamples : 1;
 
         VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);

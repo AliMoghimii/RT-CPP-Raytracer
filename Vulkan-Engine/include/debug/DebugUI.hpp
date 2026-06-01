@@ -29,6 +29,7 @@ public:
 private:
     static constexpr int kHistorySize = 240;
     std::deque<float> frameTimeHistory;
+    int pendingNumCascades = 0;  // 0 = uninitialized; staged separately from rcConfig to avoid mid-frame OOB
 
     void panelPerformance(Renderer& renderer, const FrameStats& stats);
     void panelCascadeConfig(Renderer& renderer);

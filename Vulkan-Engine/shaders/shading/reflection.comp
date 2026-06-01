@@ -113,6 +113,7 @@ void main() {
 
     vec4 emissiveData = imageLoad(gEmissive, pixel);
     if (emissiveData.a < 0.0) return;  // sky — gather already wrote it correctly
+    if (pc.debugMode == 5)   return;  // indirect-only: pass through gather output untouched
 
     int         matIdx = int(round(emissiveData.a));
     GPUMaterial mat    = materials[matIdx];

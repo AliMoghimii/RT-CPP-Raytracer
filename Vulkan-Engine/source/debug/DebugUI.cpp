@@ -145,13 +145,22 @@ void DebugUI::panelCascadeConfig(Renderer& renderer) {
         ImGui::BeginDisabled();
     }
 
-    ImGui::SliderInt("Cascades", &renderer.rcConfig.numCascades, 1, 8);
+    if (pendingNumCascades == 0)
+        pendingNumCascades = renderer.rcConfig.numCascades;
+
+    ImGui::SliderInt("Cascades", &pendingNumCascades, 1, 8);
     ImGui::SliderInt("Branching factor", &renderer.rcConfig.branchingFactor, 1, 4);
     ImGui::SliderFloat("Spacing 0", &renderer.rcConfig.spacing0, 0.1f, 5.0f);
     ImGui::SliderInt("Oct Res 0", &renderer.rcConfig.octRes0, 1, 16);
+    ImGui::SliderInt("Probe shadow rays", &renderer.probeSoftShadowSamples, 1, 8);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("1 = hard shadow (original). >1 = area-light jitter baked into probe irradiance.\nOnly affects cascade-0. Revert to 1 to restore original behavior.");
 
-    if (ImGui::Button("Apply"))
+
+    if (ImGui::Button("Apply")) {
+        renderer.rcConfig.numCascades = pendingNumCascades;
         renderer.recreateCascades();
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("(changes take effect on Apply)");
 
@@ -169,7 +178,7 @@ void DebugUI::panelVisualization(Renderer& renderer) {
         ImGui::BeginDisabled();
     }
 
-    const char* modes[] = { "Final", "Albedo", "Normal", "Depth", "Emissive" };
+    const char* modes[] = { "Final", "Albedo", "Normal", "Depth", "Emissive", "Indirect Only" };
     ImGui::Combo("Debug mode", &renderer.debugMode, modes, IM_ARRAYSIZE(modes));
 
     bool direct   = renderer.enableDirect   != 0;
@@ -190,7 +199,7 @@ void DebugUI::panelSceneControls(Renderer& renderer) {
 
     // kIndirectScale and fogDensity feed RC gather/transparent push constants only.
     if (legacy) ImGui::BeginDisabled();
-    ImGui::SliderFloat("Indirect Scale", &renderer.kIndirectScale, 0.0f, 0.005f, "%.4f");
+    ImGui::SliderFloat("Indirect Scale", &renderer.kIndirectScale, 0.0f, 0.1f, "%.4f");
     ImGui::SliderFloat("Fog Density", &renderer.fogDensity, 0.0f, 0.1f, "%.3f");
     if (legacy) ImGui::EndDisabled();
 

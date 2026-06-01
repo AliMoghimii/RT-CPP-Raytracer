@@ -57,7 +57,7 @@ layout(push_constant) uniform GatherPC {
     int lightCount;
     int planeCount;
     int quadCount;
-    int debugMode;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive
+    int debugMode;              // 0=Final 1=Albedo 2=Normal 3=Depth 4=Emissive 5=IndirectOnly
     int enableDirect;
     int enableIndirect;
     vec4 skyBottomColor;        // xyz = horizon sky color
@@ -215,6 +215,17 @@ void main() {
         }
     }
 
+    vec3 indirectContrib = hasProbes
+        ? albedo * max(indirect * pc.kIndirectScale, vec3(mat.ambient))
+        : albedo * mat.ambient;
+    // Mode 5: raw probe irradiance bypassing the ambient clamp.
+    // Black = no probe allocated here. Use this + Indirect Scale slider to diagnose GI.
+    if (pc.debugMode == 5) {
+        vec3 rawGI = hasProbes ? albedo * indirect * pc.kIndirectScale : vec3(0.0);
+        imageStore(outHDR, pixel, vec4(rawGI, 1.0));
+        return;
+    }
+
     // --- Direct lighting: emissive + PBR/Blinn-Phong per light ---
     vec3 directLight = emissiveData.rgb;
 
@@ -249,12 +260,6 @@ void main() {
     }
     } // enableDirect
 
-    // Final color: direct + indirect.
-    // With probe data: albedo × probeIrradiance × kIndirectScale (GI path).
-    // Without probe data: albedo × mat.ambient (original constant-fill fallback).
-    vec3 indirectContrib = hasProbes
-        ? albedo * max(indirect * pc.kIndirectScale, vec3(mat.ambient))
-        : albedo * mat.ambient;
     vec3 color = directLight + indirectContrib;
 
     // Fog and first-order reflections are handled by reflection.comp (next pass).

@@ -22,11 +22,11 @@ int main() {
     vector<string> texturePaths;
 
     // --- SETTINGS ---
-	bool USE_LEGACY_PIPELINE = true; // true = raytacing using legacy shader, false = ray tracing + RC
+	bool USE_LEGACY_PIPELINE = false; // true = raytacing using legacy shader, false = ray tracing + RC
 
-    int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
+    int GLOBAL_SHADING_MODEL = 1; // 0 = Blinn-Phong, 1 = PBR
 
-    int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
+    int ENABLE_SOFT_SHADOWS = 1; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
     int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
 

@@ -36,6 +36,17 @@ struct CameraPushConstants {
 
     glm::vec3 skyTopColor;
     int enableTextures;
+
+    int totalEmittedPhotons;
+    int enableCaustics;
+    float causticIntensity;
+
+    float padding;
+
+    glm::vec4 gridMin;
+    glm::vec4 gridMax;
+    int gridRes;
+    float gatherRadius;
 };
 
 class VulkanCore {
@@ -53,7 +64,16 @@ public:
     glm::vec3 skyBottomColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 skyTopColor = glm::vec3(0.1f, 0.3f, 0.7f);
 
-    int enableTextures = 1;
+    int enableTextures = 0;
+
+    int enableCaustics = 1;
+    uint32_t totalEmittedPhotons = 1000000;
+    float causticIntensity = 15.0f;
+
+    glm::vec3 gridMin = glm::vec3(-40.0f);
+    glm::vec3 gridMax = glm::vec3(40.0f);
+    int gridRes = 256;
+    float gatherRadius = 0.2f;
 
     void run();
     void loadScene(
@@ -84,6 +104,19 @@ private:
     std::vector<VkImageView> swapChainImageViews;
 
     VkPipeline computePipeline;
+
+    VkPipeline photonPipeline;
+
+    VkBuffer photonBuffer;
+    VkDeviceMemory photonMemory;
+    VkBuffer photonCounterBuffer;
+    VkDeviceMemory photonCounterMemory;
+
+    VkBuffer gridHeadBuffer;
+    VkDeviceMemory gridHeadMemory;
+    VkBuffer photonNextBuffer;
+    VkDeviceMemory photonNextMemory;
+
     VkPipelineLayout pipelineLayout;
     VkDescriptorSetLayout descriptorSetLayout;
     VkDescriptorPool descriptorPool;

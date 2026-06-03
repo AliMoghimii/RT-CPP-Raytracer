@@ -31,7 +31,35 @@ layout(push_constant) uniform CameraData {
     
     vec3 skyTopColor;
     int enableTextures;
+
+    int totalEmittedPhotons;
+    int enableCaustics;
+    float causticIntensity;
+
+    float padding;
+
+    vec4 gridMin;
+    vec4 gridMax;
+    int gridRes;
+    float gatherRadius;
 } cam;
+
+struct GPUPhoton {
+    vec4 position;
+    vec4 direction;
+    vec4 energy;
+};
+
+layout(std430, binding = 10) readonly buffer PhotonBuffer {
+    GPUPhoton photons[];
+};
+
+layout(std430, binding = 11) readonly buffer PhotonCounter {
+    uint globalPhotonCount;
+};
+
+layout(std430, binding = 12) readonly buffer GridHeadBuffer { int gridHeads[]; };
+layout(std430, binding = 13) readonly buffer PhotonNextBuffer { int photonNexts[]; };
 
 struct GPUMaterial {
     vec3 color;
@@ -167,6 +195,15 @@ struct Ray {
 };
 
 const float PI = 3.14159265359;
+
+ivec3 getGridCoords(vec3 pos) {
+    vec3 norm = (pos - cam.gridMin.xyz) / (cam.gridMax.xyz - cam.gridMin.xyz);
+    return ivec3(clamp(norm * vec3(cam.gridRes), vec3(0.0), vec3(cam.gridRes - 1)));
+}
+
+int getGridIndex(ivec3 coords) {
+    return coords.x + coords.y * cam.gridRes + coords.z * cam.gridRes * cam.gridRes;
+}
 
 uint randState;
 float rand() {
@@ -451,6 +488,49 @@ vec3 pbrShading(GPUMaterial mat, vec3 baseColor, vec3 N, vec3 V, vec3 L, vec3 li
     float NdotL = max(dot(N, L), 0.0);        
 
     return (kD * baseColor / PI + specular) * lightColor * NdotL;
+}
+
+vec3 gatherPhotons(vec3 hitPos, vec3 hitNormal) {
+    vec3 gatheredEnergy = vec3(0.0);
+    float radiusSquared = cam.gatherRadius * cam.gatherRadius;
+    ivec3 centerCoords = getGridCoords(hitPos);
+    int maxListDepth = 800 + min(0, cam.totalEmittedPhotons);
+    
+    for (int i = 0; i < 125; i++) {
+        int xOff = (i % 5) - 2;
+        int yOff = ((i / 5) % 5) - 2;
+        int zOff = (i / 25) - 2;
+        
+        ivec3 searchCoords = centerCoords + ivec3(xOff, yOff, zOff);
+        
+        if (searchCoords.x >= 0 && searchCoords.x < cam.gridRes &&
+            searchCoords.y >= 0 && searchCoords.y < cam.gridRes &&
+            searchCoords.z >= 0 && searchCoords.z < cam.gridRes) {
+            
+            int gridIdx = getGridIndex(searchCoords);
+            int currentPhotonIdx = gridHeads[gridIdx];
+            
+            for (int step = 0; step < maxListDepth; step++) {
+                if (currentPhotonIdx == -1) break;
+                
+                vec3 photonPos = photons[currentPhotonIdx].position.xyz;
+                vec3 distVec = photonPos - hitPos;
+                float d2 = dot(distVec, distVec);
+                
+                if (d2 < radiusSquared) {
+                    if (dot(photons[currentPhotonIdx].direction.xyz, hitNormal) < 0.0) {
+                        float weight = 1.0 - (sqrt(d2) / cam.gatherRadius);
+                        gatheredEnergy += photons[currentPhotonIdx].energy.xyz * weight;
+                    }
+                }
+                
+                currentPhotonIdx = photonNexts[currentPhotonIdx];
+            }
+        }
+    }
+    
+    float area = PI * radiusSquared;
+    return (gatheredEnergy / area) * cam.causticIntensity; 
 }
 
 const float MIN_DISPLACEMENT = 0.0001;
@@ -920,6 +1000,11 @@ void main() {
                         localColor += blingPhongShading(mat, attenuatedLightColor, hitNormal, baseLightDir, rayToCameraDir, 50.0);
                     }
                 }
+            }
+
+            if (cam.enableCaustics == 1 && mat.transparency == 0.0 && mat.reflection == 0.0) {
+                vec3 caustics = gatherPhotons(hitPos, hitNormal);
+                localColor += caustics * baseColor * mat.diffuse; 
             }
 
             if (mat.transparency > 0.0) {

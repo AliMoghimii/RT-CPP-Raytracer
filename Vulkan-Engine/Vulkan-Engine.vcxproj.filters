@@ -48,5 +48,8 @@
     <None Include="shaders\raytracer.comp">
       <Filter>Source Files</Filter>
     </None>
+    <None Include="shaders\photonpass.comp">
+      <Filter>Source Files</Filter>
+    </None>
   </ItemGroup>
 </Project>

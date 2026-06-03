@@ -486,14 +486,22 @@ void VulkanCore::loadScene(
 }
 
 void VulkanCore::createSceneBuffers() {
-    VkDeviceSize matBufferSize = sizeof(GPUMaterial) * max((size_t)1, sceneMaterials.size());
-    VkDeviceSize sphBufferSize = sizeof(GPUSphere) * max((size_t)1, sceneSpheres.size());
-    VkDeviceSize triBufferSize = sizeof(GPUTriangle) * max((size_t)1, sceneTriangles.size());
-    VkDeviceSize lgtBufferSize = sizeof(GPULight) * max((size_t)1, sceneLights.size());
-    VkDeviceSize plnBufferSize = sizeof(GPUPlane) * max((size_t)1, scenePlanes.size());
-    VkDeviceSize qudBufferSize = sizeof(GPUQuad) * max((size_t)1, sceneQuads.size());
-    VkDeviceSize cubBufferSize = sizeof(GPUCube) * max((size_t)1, sceneCubes.size());
-    VkDeviceSize bvhBufferSize = sizeof(GPUBVHNode) * max((size_t)1, sceneBVH.size());
+    VkDeviceSize matBufferSize = sizeof(GPUMaterial) * std::max((size_t)1, sceneMaterials.size());
+    VkDeviceSize sphBufferSize = sizeof(GPUSphere) * std::max((size_t)1, sceneSpheres.size());
+    VkDeviceSize triBufferSize = sizeof(GPUTriangle) * std::max((size_t)1, sceneTriangles.size());
+    VkDeviceSize lgtBufferSize = sizeof(GPULight) * std::max((size_t)1, sceneLights.size());
+    VkDeviceSize plnBufferSize = sizeof(GPUPlane) * std::max((size_t)1, scenePlanes.size());
+    VkDeviceSize qudBufferSize = sizeof(GPUQuad) * std::max((size_t)1, sceneQuads.size());
+    VkDeviceSize cubBufferSize = sizeof(GPUCube) * std::max((size_t)1, sceneCubes.size());
+    VkDeviceSize bvhBufferSize = sizeof(GPUBVHNode) * std::max((size_t)1, sceneBVH.size());
+
+    uint32_t maxPhotons = 5000000;
+    uint32_t gridCells = 256 * 256 * 256;
+
+    VkDeviceSize photonBufferSize = sizeof(GPUPhoton) * maxPhotons;
+    VkDeviceSize counterBufferSize = sizeof(uint32_t);
+    VkDeviceSize gridHeadSize = sizeof(int) * gridCells;
+    VkDeviceSize nextBufferSize = sizeof(int) * maxPhotons;
 
     createBuffer(matBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, materialBuffer, materialMemory);
     createBuffer(sphBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sphereBuffer, sphereMemory);
@@ -504,61 +512,29 @@ void VulkanCore::createSceneBuffers() {
     createBuffer(cubBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, cubeBuffer, cubeMemory);
     createBuffer(bvhBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, bvhBuffer, bvhMemory);
 
+    createBuffer(photonBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, photonBuffer, photonMemory);
+    createBuffer(counterBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, photonCounterBuffer, photonCounterMemory);
+    createBuffer(gridHeadSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, gridHeadBuffer, gridHeadMemory);
+    createBuffer(nextBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, photonNextBuffer, photonNextMemory);
+
     void* data;
 
-    if (!sceneMaterials.empty()) {
-        vkMapMemory(device, materialMemory, 0, matBufferSize, 0, &data);
-        memcpy(data, sceneMaterials.data(), (size_t)matBufferSize);
-        vkUnmapMemory(device, materialMemory);
-    }
-    if (!sceneSpheres.empty()) {
-        vkMapMemory(device, sphereMemory, 0, sphBufferSize, 0, &data);
-        memcpy(data, sceneSpheres.data(), (size_t)sphBufferSize);
-        vkUnmapMemory(device, sphereMemory);
-    }
-    if (!sceneTriangles.empty()) {
-        vkMapMemory(device, triangleMemory, 0, triBufferSize, 0, &data);
-        memcpy(data, sceneTriangles.data(), (size_t)triBufferSize);
-        vkUnmapMemory(device, triangleMemory);
-    }
-    if (!sceneLights.empty()) {
-        vkMapMemory(device, lightMemory, 0, lgtBufferSize, 0, &data);
-        memcpy(data, sceneLights.data(), (size_t)lgtBufferSize);
-        vkUnmapMemory(device, lightMemory);
-    }
-    if (!scenePlanes.empty()) {
-        vkMapMemory(device, planeMemory, 0, plnBufferSize, 0, &data);
-        memcpy(data, scenePlanes.data(), (size_t)plnBufferSize);
-        vkUnmapMemory(device, planeMemory);
-    }
-    if (!sceneQuads.empty()) {
-        vkMapMemory(device, quadMemory, 0, qudBufferSize, 0, &data);
-        memcpy(data, sceneQuads.data(), (size_t)qudBufferSize);
-        vkUnmapMemory(device, quadMemory);
-    }
-    if (!sceneCubes.empty()) {
-        vkMapMemory(device, cubeMemory, 0, cubBufferSize, 0, &data);
-        memcpy(data, sceneCubes.data(), (size_t)cubBufferSize);
-        vkUnmapMemory(device, cubeMemory);
-    }
-    if (!sceneBVH.empty()) {
-        vkMapMemory(device, bvhMemory, 0, bvhBufferSize, 0, &data);
-        memcpy(data, sceneBVH.data(), (size_t)bvhBufferSize);
-        vkUnmapMemory(device, bvhMemory);
-    }
+    if (!sceneMaterials.empty()) { vkMapMemory(device, materialMemory, 0, matBufferSize, 0, &data); memcpy(data, sceneMaterials.data(), (size_t)matBufferSize); vkUnmapMemory(device, materialMemory); }
+    if (!sceneSpheres.empty()) { vkMapMemory(device, sphereMemory, 0, sphBufferSize, 0, &data); memcpy(data, sceneSpheres.data(), (size_t)sphBufferSize); vkUnmapMemory(device, sphereMemory); }
+    if (!sceneTriangles.empty()) { vkMapMemory(device, triangleMemory, 0, triBufferSize, 0, &data); memcpy(data, sceneTriangles.data(), (size_t)triBufferSize); vkUnmapMemory(device, triangleMemory); }
+    if (!sceneLights.empty()) { vkMapMemory(device, lightMemory, 0, lgtBufferSize, 0, &data); memcpy(data, sceneLights.data(), (size_t)lgtBufferSize); vkUnmapMemory(device, lightMemory); }
+    if (!scenePlanes.empty()) { vkMapMemory(device, planeMemory, 0, plnBufferSize, 0, &data); memcpy(data, scenePlanes.data(), (size_t)plnBufferSize); vkUnmapMemory(device, planeMemory); }
+    if (!sceneQuads.empty()) { vkMapMemory(device, quadMemory, 0, qudBufferSize, 0, &data); memcpy(data, sceneQuads.data(), (size_t)qudBufferSize); vkUnmapMemory(device, quadMemory); }
+    if (!sceneCubes.empty()) { vkMapMemory(device, cubeMemory, 0, cubBufferSize, 0, &data); memcpy(data, sceneCubes.data(), (size_t)cubBufferSize); vkUnmapMemory(device, cubeMemory); }
+    if (!sceneBVH.empty()) { vkMapMemory(device, bvhMemory, 0, bvhBufferSize, 0, &data); memcpy(data, sceneBVH.data(), (size_t)bvhBufferSize); vkUnmapMemory(device, bvhMemory); }
 }
 
 void VulkanCore::createDescriptorSetLayout() {
-    vector<VkDescriptorSetLayoutBinding> bindings(10);
+    std::vector<VkDescriptorSetLayoutBinding> bindings(14);
 
     for (int i = 0; i < 9; i++) {
         bindings[i].binding = i;
-        if (i == 0) {
-            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        }
-        else {
-            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        }
+        bindings[i].descriptorType = (i == 0) ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         bindings[i].descriptorCount = 1;
         bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
@@ -569,26 +545,37 @@ void VulkanCore::createDescriptorSetLayout() {
     bindings[9].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     bindings[9].pImmutableSamplers = nullptr;
 
+    bindings[10].binding = 10;
+    bindings[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[10].descriptorCount = 1;
+    bindings[10].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[11].binding = 11;
+    bindings[11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[11].descriptorCount = 1;
+    bindings[11].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[12].binding = 12;
+    bindings[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[12].descriptorCount = 1;
+    bindings[12].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    bindings[13].binding = 13;
+    bindings[13].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    bindings[13].descriptorCount = 1;
+    bindings[13].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
     layoutInfo.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to create descriptor set layout.");
+        throw std::runtime_error("Vulkan: Failed to create descriptor set layout.");
     }
 }
 
 void VulkanCore::createComputePipeline() {
-    auto compShaderCode = readFile("shaders/raytracer.comp.spv");
-    VkShaderModule compShaderModule = createShaderModule(compShaderCode);
-
-    VkPipelineShaderStageCreateInfo shaderStageInfo{};
-    shaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    shaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    shaderStageInfo.module = compShaderModule;
-    shaderStageInfo.pName = "main";
-
     VkPushConstantRange pushConstantRange{};
     pushConstantRange.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     pushConstantRange.offset = 0;
@@ -602,8 +589,36 @@ void VulkanCore::createComputePipeline() {
     pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
     if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to create layout.");
+        throw std::runtime_error("Vulkan: Failed to create layout.");
     }
+
+    auto photonShaderCode = readFile("shaders/photonpass.comp.spv");
+    VkShaderModule photonShaderModule = createShaderModule(photonShaderCode);
+    
+    VkPipelineShaderStageCreateInfo photonStageInfo{};
+    photonStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    photonStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    photonStageInfo.module = photonShaderModule;
+    photonStageInfo.pName = "main";
+
+    VkComputePipelineCreateInfo photonPipelineInfo{};
+    photonPipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    photonPipelineInfo.layout = pipelineLayout;
+    photonPipelineInfo.stage = photonStageInfo;
+
+    if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &photonPipelineInfo, nullptr, &photonPipeline) != VK_SUCCESS) {
+        throw std::runtime_error("Vulkan: Failed to create photon pipeline.");
+    }
+    vkDestroyShaderModule(device, photonShaderModule, nullptr);
+
+    auto compShaderCode = readFile("shaders/raytracer.comp.spv");
+    VkShaderModule compShaderModule = createShaderModule(compShaderCode);
+
+    VkPipelineShaderStageCreateInfo shaderStageInfo{};
+    shaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    shaderStageInfo.module = compShaderModule;
+    shaderStageInfo.pName = "main";
 
     VkComputePipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
@@ -611,18 +626,17 @@ void VulkanCore::createComputePipeline() {
     pipelineInfo.stage = shaderStageInfo;
 
     if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &computePipeline) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to create pipeline.");
+        throw std::runtime_error("Vulkan: Failed to create raytrace pipeline.");
     }
-
     vkDestroyShaderModule(device, compShaderModule, nullptr);
 }
 
 void VulkanCore::createDescriptorPool() {
-    vector<VkDescriptorPoolSize> poolSizes(3);
+    std::vector<VkDescriptorPoolSize> poolSizes(3);
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 1;
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = 8;
+    poolSizes[1].descriptorCount = 12;
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 100;
 
@@ -633,7 +647,7 @@ void VulkanCore::createDescriptorPool() {
     poolInfo.maxSets = 1;
 
     if (vkCreateDescriptorPool(device, &poolInfo, nullptr, &descriptorPool) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to create pool.");
+        throw std::runtime_error("Vulkan: Failed to create pool.");
     }
 }
 
@@ -645,146 +659,76 @@ void VulkanCore::createDescriptorSets() {
     allocInfo.pSetLayouts = &descriptorSetLayout;
 
     if (vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet) != VK_SUCCESS) {
-        throw runtime_error("Vulkan: Failed to allocate descriptor sets.");
+        throw std::runtime_error("Vulkan: Failed to allocate descriptor sets.");
     }
 
     VkDescriptorImageInfo imageInfo{};
     imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
     imageInfo.imageView = computeImageView;
 
-    VkDescriptorBufferInfo matBufferInfo{};
-    matBufferInfo.buffer = materialBuffer;
-    matBufferInfo.offset = 0;
-    matBufferInfo.range = VK_WHOLE_SIZE;
+    auto makeBufferInfo = [](VkBuffer buffer) {
+        VkDescriptorBufferInfo info{};
+        info.buffer = buffer;
+        info.offset = 0;
+        info.range = VK_WHOLE_SIZE;
+        return info;
+        };
 
-    VkDescriptorBufferInfo sphBufferInfo{};
-    sphBufferInfo.buffer = sphereBuffer;
-    sphBufferInfo.offset = 0;
-    sphBufferInfo.range = VK_WHOLE_SIZE;
+    VkDescriptorBufferInfo matBufferInfo = makeBufferInfo(materialBuffer);
+    VkDescriptorBufferInfo sphBufferInfo = makeBufferInfo(sphereBuffer);
+    VkDescriptorBufferInfo triBufferInfo = makeBufferInfo(triangleBuffer);
+    VkDescriptorBufferInfo lgtBufferInfo = makeBufferInfo(lightBuffer);
+    VkDescriptorBufferInfo plnBufferInfo = makeBufferInfo(planeBuffer);
+    VkDescriptorBufferInfo qudBufferInfo = makeBufferInfo(quadBuffer);
+    VkDescriptorBufferInfo cubBufferInfo = makeBufferInfo(cubeBuffer);
+    VkDescriptorBufferInfo bvhBufferInfo = makeBufferInfo(bvhBuffer);
+    VkDescriptorBufferInfo photonBufInfo = makeBufferInfo(photonBuffer);
+    VkDescriptorBufferInfo counterBufInfo = makeBufferInfo(photonCounterBuffer);
 
-    VkDescriptorBufferInfo triBufferInfo{};
-    triBufferInfo.buffer = triangleBuffer;
-    triBufferInfo.offset = 0;
-    triBufferInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo lgtBufferInfo{};
-    lgtBufferInfo.buffer = lightBuffer;
-    lgtBufferInfo.offset = 0;
-    lgtBufferInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo plnBufferInfo{};
-    plnBufferInfo.buffer = planeBuffer;
-    plnBufferInfo.offset = 0;
-    plnBufferInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo qudBufferInfo{};
-    qudBufferInfo.buffer = quadBuffer;
-    qudBufferInfo.offset = 0;
-    qudBufferInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo cubBufferInfo{};
-    cubBufferInfo.buffer = cubeBuffer;
-    cubBufferInfo.offset = 0;
-    cubBufferInfo.range = VK_WHOLE_SIZE;
-
-    VkDescriptorBufferInfo bvhBufferInfo{};
-    bvhBufferInfo.buffer = bvhBuffer;
-    bvhBufferInfo.offset = 0;
-    bvhBufferInfo.range = VK_WHOLE_SIZE;
-
-    vector<VkDescriptorImageInfo> textureInfos(100);
+    std::vector<VkDescriptorImageInfo> textureInfos(100);
     for (size_t i = 0; i < 100; i++) {
         textureInfos[i].sampler = textureSampler;
-        if (i < textureImageViews.size()) {
-            textureInfos[i].imageView = textureImageViews[i];
-        }
-        else {
-            textureInfos[i].imageView = computeImageView;
-        }
+        textureInfos[i].imageView = (i < textureImageViews.size()) ? textureImageViews[i] : computeImageView;
         textureInfos[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     }
 
-    vector<VkWriteDescriptorSet> descriptorWrites(10);
+    std::vector<VkWriteDescriptorSet> descriptorWrites(14);
 
-    descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[0].dstSet = descriptorSet;
-    descriptorWrites[0].dstBinding = 0;
-    descriptorWrites[0].dstArrayElement = 0;
+    VkDescriptorBufferInfo headBufInfo = makeBufferInfo(gridHeadBuffer);
+    VkDescriptorBufferInfo nextBufInfo = makeBufferInfo(photonNextBuffer);
+
+    for (int i = 0; i < 14; i++) {
+        descriptorWrites[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[i].dstSet = descriptorSet;
+        descriptorWrites[i].dstBinding = i;
+        descriptorWrites[i].dstArrayElement = 0;
+        descriptorWrites[i].descriptorCount = 1;
+    }
+
     descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    descriptorWrites[0].descriptorCount = 1;
     descriptorWrites[0].pImageInfo = &imageInfo;
 
-    descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[1].dstSet = descriptorSet;
-    descriptorWrites[1].dstBinding = 1;
-    descriptorWrites[1].dstArrayElement = 0;
-    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[1].descriptorCount = 1;
-    descriptorWrites[1].pBufferInfo = &matBufferInfo;
+    descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[1].pBufferInfo = &matBufferInfo;
+    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[2].pBufferInfo = &sphBufferInfo;
+    descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[3].pBufferInfo = &triBufferInfo;
+    descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[4].pBufferInfo = &lgtBufferInfo;
+    descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[5].pBufferInfo = &plnBufferInfo;
+    descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[6].pBufferInfo = &qudBufferInfo;
+    descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[7].pBufferInfo = &cubBufferInfo;
+    descriptorWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[8].pBufferInfo = &bvhBufferInfo;
 
-    descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[2].dstSet = descriptorSet;
-    descriptorWrites[2].dstBinding = 2;
-    descriptorWrites[2].dstArrayElement = 0;
-    descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[2].descriptorCount = 1;
-    descriptorWrites[2].pBufferInfo = &sphBufferInfo;
-
-    descriptorWrites[3].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[3].dstSet = descriptorSet;
-    descriptorWrites[3].dstBinding = 3;
-    descriptorWrites[3].dstArrayElement = 0;
-    descriptorWrites[3].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[3].descriptorCount = 1;
-    descriptorWrites[3].pBufferInfo = &triBufferInfo;
-
-    descriptorWrites[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[4].dstSet = descriptorSet;
-    descriptorWrites[4].dstBinding = 4;
-    descriptorWrites[4].dstArrayElement = 0;
-    descriptorWrites[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[4].descriptorCount = 1;
-    descriptorWrites[4].pBufferInfo = &lgtBufferInfo;
-
-    descriptorWrites[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[5].dstSet = descriptorSet;
-    descriptorWrites[5].dstBinding = 5;
-    descriptorWrites[5].dstArrayElement = 0;
-    descriptorWrites[5].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[5].descriptorCount = 1;
-    descriptorWrites[5].pBufferInfo = &plnBufferInfo;
-
-    descriptorWrites[6].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[6].dstSet = descriptorSet;
-    descriptorWrites[6].dstBinding = 6;
-    descriptorWrites[6].dstArrayElement = 0;
-    descriptorWrites[6].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[6].descriptorCount = 1;
-    descriptorWrites[6].pBufferInfo = &qudBufferInfo;
-
-    descriptorWrites[7].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[7].dstSet = descriptorSet;
-    descriptorWrites[7].dstBinding = 7;
-    descriptorWrites[7].dstArrayElement = 0;
-    descriptorWrites[7].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[7].descriptorCount = 1;
-    descriptorWrites[7].pBufferInfo = &cubBufferInfo;
-
-    descriptorWrites[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[8].dstSet = descriptorSet;
-    descriptorWrites[8].dstBinding = 8;
-    descriptorWrites[8].dstArrayElement = 0;
-    descriptorWrites[8].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    descriptorWrites[8].descriptorCount = 1;
-    descriptorWrites[8].pBufferInfo = &bvhBufferInfo;
-
-    descriptorWrites[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    descriptorWrites[9].dstSet = descriptorSet;
-    descriptorWrites[9].dstBinding = 9;
-    descriptorWrites[9].dstArrayElement = 0;
     descriptorWrites[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     descriptorWrites[9].descriptorCount = 100;
     descriptorWrites[9].pImageInfo = textureInfos.data();
+
+    descriptorWrites[10].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[10].pBufferInfo = &photonBufInfo;
+    descriptorWrites[11].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; descriptorWrites[11].pBufferInfo = &counterBufInfo;
+
+    descriptorWrites[12].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[12].pBufferInfo = &headBufInfo;
+
+    descriptorWrites[13].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorWrites[13].pBufferInfo = &nextBufInfo;
 
     vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
 }
@@ -946,9 +890,6 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     vkBeginCommandBuffer(cmd, &beginInfo);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-
     CameraPushConstants pc{};
     pc.camPos = glm::vec4(cameraPos, 0.0f);
     pc.camForward = glm::vec4(cameraFront, 0.0f);
@@ -966,18 +907,51 @@ void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.samplesPerPixel = samplesPerPixel;
     pc.focalDistance = focalDistance;
     pc.lensRadius = lensRadius;
-
     pc.fogColor = fogColor;
     pc.enableFog = enableFog;
-
     pc.skyBottomColor = skyBottomColor;
     pc.enableSkybox = enableSkybox;
-
     pc.skyTopColor = skyTopColor;
     pc.enableTextures = enableTextures;
 
-    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+    pc.totalEmittedPhotons = totalEmittedPhotons;
+    pc.enableCaustics = enableCaustics;
+    pc.causticIntensity = causticIntensity;
 
+    pc.padding = 0.0f;
+
+    pc.gridMin = glm::vec4(gridMin, 0.0f);
+    pc.gridMax = glm::vec4(gridMax, 0.0f);
+    pc.gridRes = gridRes;
+    pc.gatherRadius = gatherRadius;
+
+    if (enableCaustics == 1) {
+        vkCmdFillBuffer(cmd, photonCounterBuffer, 0, sizeof(uint32_t), 0);
+        vkCmdFillBuffer(cmd, gridHeadBuffer, 0, sizeof(int) * 256 * 256 * 256, 0xFFFFFFFF);
+
+        VkMemoryBarrier fillBarrier{};
+        fillBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        fillBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fillBarrier, 0, nullptr, 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, photonPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, (pc.totalEmittedPhotons + 255) / 256, 1, 1);
+
+        VkMemoryBarrier pass1Barrier{};
+        pass1Barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        pass1Barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        pass1Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &pass1Barrier, 0, nullptr, 0, nullptr);
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, computePipeline);
+
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+
+    vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
     vkCmdDispatch(cmd, 1280 / 16, 720 / 16, 1);
 
     transitionImageLayout(cmd, computeImage, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1063,10 +1037,15 @@ void VulkanCore::transitionImageLayout(VkCommandBuffer cmd, VkImage image, VkIma
 vector<char> VulkanCore::readFile(const string& filename) {
     ifstream file(filename, ios::ate | ios::binary);
     if (!file.is_open()) {
-        throw runtime_error("Vulkan: Failed to open file.");
+        throw runtime_error("Vulkan: Failed to open file: " + filename);
     }
 
     size_t fileSize = (size_t)file.tellg();
+
+    if (fileSize == 0) {
+        throw runtime_error("Vulkan: Shader file is 0 bytes! glslc compilation failed for: " + filename);
+    }
+
     vector<char> buffer(fileSize);
 
     file.seekg(0);
@@ -1155,32 +1134,24 @@ void VulkanCore::cleanup() {
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
-    vkDestroyBuffer(device, materialBuffer, nullptr);
-    vkFreeMemory(device, materialMemory, nullptr);
+    vkDestroyBuffer(device, materialBuffer, nullptr); vkFreeMemory(device, materialMemory, nullptr);
+    vkDestroyBuffer(device, sphereBuffer, nullptr); vkFreeMemory(device, sphereMemory, nullptr);
+    vkDestroyBuffer(device, triangleBuffer, nullptr); vkFreeMemory(device, triangleMemory, nullptr);
+    vkDestroyBuffer(device, lightBuffer, nullptr); vkFreeMemory(device, lightMemory, nullptr);
+    vkDestroyBuffer(device, planeBuffer, nullptr); vkFreeMemory(device, planeMemory, nullptr);
+    vkDestroyBuffer(device, quadBuffer, nullptr); vkFreeMemory(device, quadMemory, nullptr);
+    vkDestroyBuffer(device, cubeBuffer, nullptr); vkFreeMemory(device, cubeMemory, nullptr);
+    vkDestroyBuffer(device, bvhBuffer, nullptr); vkFreeMemory(device, bvhMemory, nullptr);
 
-    vkDestroyBuffer(device, sphereBuffer, nullptr);
-    vkFreeMemory(device, sphereMemory, nullptr);
-
-    vkDestroyBuffer(device, triangleBuffer, nullptr);
-    vkFreeMemory(device, triangleMemory, nullptr);
-
-    vkDestroyBuffer(device, lightBuffer, nullptr);
-    vkFreeMemory(device, lightMemory, nullptr);
-
-    vkDestroyBuffer(device, planeBuffer, nullptr);
-    vkFreeMemory(device, planeMemory, nullptr);
-
-    vkDestroyBuffer(device, quadBuffer, nullptr);
-    vkFreeMemory(device, quadMemory, nullptr);
-
-    vkDestroyBuffer(device, cubeBuffer, nullptr);
-    vkFreeMemory(device, cubeMemory, nullptr);
-
-    vkDestroyBuffer(device, bvhBuffer, nullptr);
-    vkFreeMemory(device, bvhMemory, nullptr);
+    vkDestroyBuffer(device, photonBuffer, nullptr); vkFreeMemory(device, photonMemory, nullptr);
+    vkDestroyBuffer(device, photonCounterBuffer, nullptr); vkFreeMemory(device, photonCounterMemory, nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
+    vkDestroyPipeline(device, photonPipeline, nullptr);
     vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+    vkDestroyBuffer(device, gridHeadBuffer, nullptr); vkFreeMemory(device, gridHeadMemory, nullptr);
+    vkDestroyBuffer(device, photonNextBuffer, nullptr); vkFreeMemory(device, photonNextMemory, nullptr);
 
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);

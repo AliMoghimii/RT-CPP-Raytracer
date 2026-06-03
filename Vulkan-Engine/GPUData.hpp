@@ -70,6 +70,12 @@ struct GPULight {
     float p2;
 };
 
+struct GPUPhoton {
+    glm::vec4 position;
+    glm::vec4 direction;
+    glm::vec4 energy;
+};
+
 struct GPUPlane {
     glm::vec3 center;
     float p1;

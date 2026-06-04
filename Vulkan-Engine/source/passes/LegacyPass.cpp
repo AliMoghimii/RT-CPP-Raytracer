@@ -102,7 +102,18 @@ void LegacyPass::create(const CreateInfo& info) {
         }
     }
 
-    VkWriteDescriptorSet writes[10] = {};
+    // bindings 10-13 (Caustics SSBOs)
+    VkBuffer causticBuffers[4] = {
+        info.photonBuf, info.photonCounterBuf, info.gridHeadBuf, info.photonNextBuf
+    };
+    VkDescriptorBufferInfo causticBufInfos[4];
+    for (int i = 0; i < 4; i++) {
+        causticBufInfos[i].buffer = causticBuffers[i];
+        causticBufInfos[i].offset = 0;
+        causticBufInfos[i].range = VK_WHOLE_SIZE;
+    }
+
+    VkWriteDescriptorSet writes[14] = {};
 
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descSet;
@@ -127,7 +138,16 @@ void LegacyPass::create(const CreateInfo& info) {
     writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[9].pImageInfo = texInfos.data();
 
-    vkUpdateDescriptorSets(info.device, 10, writes, 0, nullptr);
+    for (int i = 0; i < 4; i++) {
+        writes[10 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[10 + i].dstSet = descSet;
+        writes[10 + i].dstBinding = (uint32_t)(10 + i);
+        writes[10 + i].descriptorCount = 1;
+        writes[10 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[10 + i].pBufferInfo = &causticBufInfos[i];
+    }
+
+    vkUpdateDescriptorSets(info.device, 14, writes, 0, nullptr);
 }
 
 void LegacyPass::record(VkCommandBuffer cmd, const CameraPushConstants& pc,

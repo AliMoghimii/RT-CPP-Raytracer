@@ -98,6 +98,7 @@ void Renderer::initVulkan() {
         ctx.device, descriptorPool, sceneDescSetLayout,
         materialBuffer.handle, sphereBuffer.handle, triangleBuffer.handle, lightBuffer.handle,
         planeBuffer.handle, quadBuffer.handle, cubeBuffer.handle, bvhBuffer.handle,
+        photonBuffer.handle, photonCounterBuffer.handle, gridHeadBuffer.handle, photonNextBuffer.handle,
         textureSampler, &textureImageViews,
         ldrImage.view,  // binding 0: rgba8 output
         hdrImage.view   // fallback for unused texture slots
@@ -121,6 +122,22 @@ void Renderer::createSceneBuffers() {
     quadBuffer = make(sizeof(GPUQuad) * max((size_t)1, sceneQuads.size()));
     cubeBuffer = make(sizeof(GPUCube) * max((size_t)1, sceneCubes.size()));
     bvhBuffer = make(sizeof(GPUBVHNode) * max((size_t)1, sceneBVH.size()));
+
+    // --- Caustics Buffers ---
+    uint32_t maxPhotons = 5000000;
+    uint32_t gridCells = 256 * 256 * 256;
+
+    photonBuffer = Buffer(ctx.allocator, sizeof(GPUPhoton) * maxPhotons,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
+    photonCounterBuffer = Buffer(ctx.allocator, sizeof(uint32_t),
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
+    gridHeadBuffer = Buffer(ctx.allocator, sizeof(int) * gridCells,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
+    photonNextBuffer = Buffer(ctx.allocator, sizeof(int) * maxPhotons,
+        VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 
     uploadSceneData();
 }
@@ -216,7 +233,7 @@ void Renderer::createTextureResources() {
 // ---- Descriptor Set Layouts ----
 
 void Renderer::createSceneDescriptorSetLayout() {
-    vector<VkDescriptorSetLayoutBinding> bindings(10);
+    vector<VkDescriptorSetLayoutBinding> bindings(14);
 
     // binding 0: placeholder storage image (the two-pass shaders don't declare it but the layout must match)
     bindings[0].binding = 0;
@@ -238,9 +255,17 @@ void Renderer::createSceneDescriptorSetLayout() {
     bindings[9].descriptorCount = 100;
     bindings[9].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
 
+    // bindings 10-13: Caustic Buffers
+    for (uint32_t i = 10; i <= 13; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
     VkDescriptorSetLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    ci.bindingCount = 10;
+    ci.bindingCount = 14;
     ci.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &sceneDescSetLayout) != VK_SUCCESS)
@@ -328,6 +353,7 @@ void Renderer::createPipelines() {
         throw runtime_error("Renderer: pipeline layout creation failed.");
 
     primaryPassPipeline = createComputePipelineFromSpv("shaders/visibility/primary.comp.spv", twoPassPipelineLayout);
+    photonPipeline = createComputePipelineFromSpv("shaders/photon-mapping/photonpass.comp.spv", twoPassPipelineLayout);
     compositePassPipeline = createComputePipelineFromSpv("shaders/shading/composite_temp.comp.spv", twoPassPipelineLayout);
 }
 
@@ -448,7 +474,7 @@ void Renderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 10;                                          // 7 gbuf + 2 tonemap + 1 legacyPass
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(16 + kMaxCascades * 7 + kMaxCascades * 4);  // +8 for legacyPass scene SSBOs
+    poolSizes[1].descriptorCount = uint32_t(24 + kMaxCascades * 7 + kMaxCascades * 4);  // +8 (+4 caustics SSBOs) for both Scene and LegacyPass
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 200;                                         // 100 sceneDescSet + 100 legacyPass
 
@@ -482,10 +508,10 @@ void Renderer::createSceneDescriptorSet() {
 
     // bindings 1-8: scene SSBOs
     Buffer* bufs[] = {
-    	&materialBuffer,
-    	&sphereBuffer,
-    	&triangleBuffer,
-    	&lightBuffer,
+        &materialBuffer,
+        &sphereBuffer,
+        &triangleBuffer,
+        &lightBuffer,
         &planeBuffer,
         &quadBuffer,
         &cubeBuffer,
@@ -512,7 +538,22 @@ void Renderer::createSceneDescriptorSet() {
         }
     }
 
-    vector<VkWriteDescriptorSet> writes(10);
+    // bindings 10-13: Caustics SSBOs
+    Buffer* causticBufs[] = {
+        &photonBuffer,
+        &photonCounterBuffer,
+        &gridHeadBuffer,
+        &photonNextBuffer
+    };
+
+    vector<VkDescriptorBufferInfo> causticBufInfos(4);
+    for (int i = 0; i < 4; i++) {
+        causticBufInfos[i].buffer = causticBufs[i]->handle;
+        causticBufInfos[i].offset = 0;
+        causticBufInfos[i].range = VK_WHOLE_SIZE;
+    }
+
+    vector<VkWriteDescriptorSet> writes(14);
 
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = sceneDescSet;
@@ -537,7 +578,16 @@ void Renderer::createSceneDescriptorSet() {
     writes[9].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     writes[9].pImageInfo = texInfos.data();
 
-    vkUpdateDescriptorSets(ctx.device, 10, writes.data(), 0, nullptr);
+    for (int i = 0; i < 4; i++) {
+        writes[10 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[10 + i].dstSet = sceneDescSet;
+        writes[10 + i].dstBinding = (uint32_t)(10 + i);
+        writes[10 + i].descriptorCount = 1;
+        writes[10 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[10 + i].pBufferInfo = &causticBufInfos[i];
+    }
+
+    vkUpdateDescriptorSets(ctx.device, 14, writes.data(), 0, nullptr);
 }
 
 void Renderer::createGBufferDescriptorSet() {
@@ -870,6 +920,41 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.enableSkybox = enableSkybox;
     pc.skyTopColor = skyTopColor;
     pc.enableTextures = enableTextures;
+    pc.totalEmittedPhotons = totalEmittedPhotons;
+    pc.enableCaustics = enableCaustics;
+    pc.causticIntensity = causticIntensity;
+    pc.padding = 0.0f;
+    pc.gridMin = glm::vec4(gridMin, 0.0f);
+    pc.gridMax = glm::vec4(gridMax, 0.0f);
+    pc.gridRes = gridRes;
+    pc.gatherRadius = gatherRadius;
+
+    // === 0. Photon mapping and caustics ===
+    // This runs for both Legacy and RC pipelines.
+    if (enableCaustics == 1) {
+        vkCmdFillBuffer(cmd, photonCounterBuffer.handle, 0, sizeof(uint32_t), 0);
+        vkCmdFillBuffer(cmd, gridHeadBuffer.handle, 0, sizeof(int) * 256 * 256 * 256, 0xFFFFFFFF);
+
+        VkMemoryBarrier fillBarrier{};
+        fillBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        fillBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fillBarrier, 0, nullptr, 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, photonPipeline);
+
+        VkDescriptorSet photonSets[] = { sceneDescSet, gbufDescSet };
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, twoPassPipelineLayout, 0, 2, photonSets, 0, nullptr);
+
+        vkCmdPushConstants(cmd, twoPassPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+        vkCmdDispatch(cmd, (pc.totalEmittedPhotons + 255) / 256, 1, 1);
+
+        VkMemoryBarrier pass1Barrier{};
+        pass1Barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        pass1Barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        pass1Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &pass1Barrier, 0, nullptr, 0, nullptr);
+    }
 
     if (useLegacyPipeline) {
         // Legacy monolithic raytracer: writes a fully-shaded rgba8 result directly to ldrImage,
@@ -1219,6 +1304,12 @@ void Renderer::cleanup() {
     cubeBuffer = Buffer();
     bvhBuffer = Buffer();
 
+    // Destroy Caustics VMA buffers
+    photonBuffer = Buffer();
+    photonCounterBuffer = Buffer();
+    gridHeadBuffer = Buffer();
+    photonNextBuffer = Buffer();
+
     // RC cascade storage (must come before ctx.shutdown destroys the VMA allocator)
     rcStorage.destroy();
 
@@ -1245,7 +1336,7 @@ void Renderer::cleanup() {
     vkDestroyPipeline(ctx.device, tonemapPipeline, nullptr);
     vkDestroyPipeline(ctx.device, primaryPassPipeline, nullptr);
     vkDestroyPipeline(ctx.device, compositePassPipeline, nullptr);
-
+    vkDestroyPipeline(ctx.device, photonPipeline, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcAllocPipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcTracePipelineLayout, nullptr);
     vkDestroyPipelineLayout(ctx.device, rcMergePipelineLayout, nullptr);

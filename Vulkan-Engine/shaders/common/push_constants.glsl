@@ -27,6 +27,15 @@ layout(push_constant) uniform CameraData {
 
     vec3 skyTopColor;
     int enableTextures;
-} cam;
 
+int totalEmittedPhotons;
+    int enableCaustics;
+    float causticIntensity;
+    float padding;
+
+    vec4 gridMin;
+    vec4 gridMax;
+    int gridRes;
+    float gatherRadius;
+} cam;
 #endif

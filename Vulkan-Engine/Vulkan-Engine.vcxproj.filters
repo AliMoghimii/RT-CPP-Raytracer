@@ -93,6 +93,9 @@
     <Filter Include="Config\Scenarios">
       <UniqueIdentifier>{1bd1c73c-5174-4720-8052-b1c4a46c2d3c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Shader\Photon-Mapping">
+      <UniqueIdentifier>{488f2598-6bd8-4304-87d9-60956d1b970e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\passes\LegacyPass.cpp">
@@ -294,6 +297,13 @@
     </None>
     <None Include="config\imgui\imgui.ini">
       <Filter>Config\ImGUI</Filter>
+    </None>
+    <None Include="caustics.glsl" />
+    <None Include="shaders\legacy\photonpass.comp">
+      <Filter>Shader\Legacy</Filter>
+    </None>
+    <None Include="shaders\photon-mapping\photonpass.comp">
+      <Filter>Shader\Photon-Mapping</Filter>
     </None>
   </ItemGroup>
 </Project>

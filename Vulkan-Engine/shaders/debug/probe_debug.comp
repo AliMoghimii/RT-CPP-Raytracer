@@ -1,0 +1,184 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 16, local_size_y = 16) in;
+
+#include "../common/octahedral.glsl"
+
+// set 0: G-buffer + HDR image (reuses gbufDescSet — gPosition at b0, hdrImage at b5)
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D gPosition;
+layout(set = 0, binding = 5, rgba16f) uniform image2D hdrImage;
+
+// set 1: selected cascade level hash + probe data (rcHashDescSets[probeVizLevel]).
+// Buffer member names must match the names expected by cascade_layout.glsl's probeLookup().
+layout(std430, set = 1, binding = 0) readonly buffer HK  { uint hashKeys[]; };
+layout(std430, set = 1, binding = 1) readonly buffer HV  { uint hashValues[]; };
+layout(std430, set = 1, binding = 2) readonly buffer STK { uint slotToKey[]; };
+layout(std430, set = 1, binding = 3) readonly buffer SC  { uint nextSlot; };
+layout(std430, set = 1, binding = 4) readonly buffer CD  { uvec2 cascadeData[]; };
+
+// Must come after buffer declarations: probeLookup() references hashKeys/hashValues by name.
+#include "../common/cascade_layout.glsl"
+
+layout(push_constant) uniform PC {
+    vec4  worldOriginSpacing;  // xyz = worldOrigin, w = level spacing
+    ivec4 gridSizeOctRes;      // xyz = level gridSize, w = level octRes
+    vec4  camPos;              // xyz = camera position
+    vec4  camRight;            // xyz = right
+    vec4  camUp;               // xyz = up
+    vec4  camForward;          // xyz = forward
+    int   hashSize;
+    float probeRadius;         // octahedron body half-extent (world units)
+    float rayLength;           // ray stub end distance from probe center (world units)
+    float rayRadius;           // ray stub capsule radius (world units)
+} pc;
+
+// --- Ray-octahedron intersection (L1 ball: |x|+|y|+|z| <= r, 4-slab convex test) ---
+// Returns entry t, or -1.0 if no hit.
+float rayOctahedron(vec3 ro, vec3 rd, vec3 center, float r) {
+    vec3 o = ro - center;
+    float tNear = -1e30, tFar = 1e30;
+
+    float offsets[4]; float slopes[4];
+    offsets[0] =  o.x + o.y + o.z;  slopes[0] =  rd.x + rd.y + rd.z;
+    offsets[1] =  o.x + o.y - o.z;  slopes[1] =  rd.x + rd.y - rd.z;
+    offsets[2] =  o.x - o.y + o.z;  slopes[2] =  rd.x - rd.y + rd.z;
+    offsets[3] = -o.x + o.y + o.z;  slopes[3] = -rd.x + rd.y + rd.z;
+
+    for (int i = 0; i < 4; ++i) {
+        float s = slopes[i];
+        if (abs(s) < 1e-7) {
+            if (abs(offsets[i]) > r) return -1.0;
+        } else {
+            float ta = (-r - offsets[i]) / s;
+            float tb = ( r - offsets[i]) / s;
+            if (ta > tb) { float tmp = ta; ta = tb; tb = tmp; }
+            tNear = max(tNear, ta);
+            tFar  = min(tFar,  tb);
+        }
+    }
+    if (tNear > tFar || tFar <= 0.001) return -1.0;
+    return max(tNear, 0.001);
+}
+
+// --- Ray-capsule intersection (infinite cylinder + hemispherical end caps) ---
+// Returns entry t, or 1e30 if no hit.
+// Based on the formulation by Inigo Quilez.
+float rayCapsule(vec3 ro, vec3 rd, vec3 pa, vec3 pb, float r) {
+    vec3  ba   = pb - pa;
+    vec3  oa   = ro - pa;
+    float baba = dot(ba, ba);
+    float bard = dot(ba, rd);
+    float baoa = dot(ba, oa);
+    float rdoa = dot(rd, oa);
+    float oaoa = dot(oa, oa);
+
+    float A = baba - bard * bard;
+    float B = baba * rdoa - baoa * bard;
+    float C = baba * oaoa - baoa * baoa - r * r * baba;
+    float H = B * B - A * C;
+
+    if (A > 1e-7 && H >= 0.0) {
+        float t = (-B - sqrt(H)) / A;
+        float y = baoa + t * bard;
+        if (t > 0.001 && y > 0.0 && y < baba) return t;
+    }
+
+    // End cap at pa
+    float bpa = dot(rd, oa);
+    float cpa = dot(oa, oa) - r * r;
+    float hpa = bpa * bpa - cpa;
+    if (hpa > 0.0) {
+        float t0 = -bpa - sqrt(hpa);
+        if (t0 > 0.001) return t0;
+    }
+
+    // End cap at pb
+    vec3  ob  = ro - pb;
+    float bpb = dot(rd, ob);
+    float cpb = dot(ob, ob) - r * r;
+    float hpb = bpb * bpb - cpb;
+    if (hpb > 0.0) {
+        float t1 = -bpb - sqrt(hpb);
+        if (t1 > 0.001) return t1;
+    }
+
+    return 1e30;
+}
+
+void main() {
+    ivec2 pixel   = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 imgSize = imageSize(hdrImage);
+    if (pixel.x >= imgSize.x || pixel.y >= imgSize.y) return;
+
+    // Reconstruct camera ray (matches primary.comp).
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(imgSize) * 2.0 - 1.0;
+    uv.y  = -uv.y;
+    uv.x *= float(imgSize.x) / float(imgSize.y);
+    uv   *= tan(radians(60.0 * 0.5));
+
+    vec3 rayDir    = normalize(pc.camRight.xyz * uv.x + pc.camUp.xyz * uv.y + pc.camForward.xyz);
+    vec3 rayOrigin = pc.camPos.xyz;
+
+    // G-buffer surface distance (gPosition.w = hit.t along the ray; 1e6 for sky pixels).
+    float surfaceT = imageLoad(gPosition, pixel).w;
+
+    vec3  wOrigin = pc.worldOriginSpacing.xyz;
+    float spacing = pc.worldOriginSpacing.w;
+    int   octRes  = pc.gridSizeOctRes.w;
+    ivec3 gridSz  = pc.gridSizeOctRes.xyz;
+
+    ivec3 camCell = ivec3(floor((rayOrigin - wOrigin) / spacing));
+
+    float bestT     = min(surfaceT, 1e19);
+    vec3  bestColor = vec3(0.0);
+    bool  hasHit    = false;
+
+    const int RADIUS = 5;
+    for (int dz = -RADIUS; dz <= RADIUS; ++dz) {
+    for (int dy = -RADIUS; dy <= RADIUS; ++dy) {
+    for (int dx = -RADIUS; dx <= RADIUS; ++dx) {
+        ivec3 cell = camCell + ivec3(dx, dy, dz);
+        if (any(lessThan(cell, ivec3(0))) || any(greaterThanEqual(cell, gridSz))) continue;
+
+        uint slot = probeLookup(packCellKey(cell), uint(pc.hashSize));
+        if (slot == 0xFFFFFFFFu) continue;
+
+        vec3 probePos = probeWorldPos(cell, wOrigin, spacing);
+
+        // --- Octahedron body: each face colored by the radiance stored in that direction ---
+        float tBody = rayOctahedron(rayOrigin, rayDir, probePos, pc.probeRadius);
+        if (tBody > 0.0 && tBody < bestT) {
+            vec3  hitPt  = rayOrigin + tBody * rayDir - probePos;  // local-space hit point
+            vec3  hitDir = normalize(hitPt);
+            vec2  octUV  = octEncode(hitDir);
+            ivec2 octIdx = ivec2(clamp(int(octUV.x * float(octRes)), 0, octRes - 1),
+                                  clamp(int(octUV.y * float(octRes)), 0, octRes - 1));
+            int   dIdx   = probeStorageBase(slot, octRes) + octIdx.y * octRes + octIdx.x;
+            vec3  rad    = unpackRadianceTransmittance(cascadeData[dIdx]).xyz;
+            bestColor = rad * 3.0;
+            bestT     = tBody;
+            hasHit    = true;
+        }
+
+        // --- Directional ray stubs: thin capsules colored by stored radiance ---
+        int totalDirs = octRes * octRes;
+        for (int di = 0; di < totalDirs; ++di) {
+            ivec2 octIdx = ivec2(di % octRes, di / octRes);
+            vec3  dir    = octDecode(octIndexToUV(octIdx, octRes));
+            vec3  segA   = probePos + dir * pc.probeRadius;   // starts at octahedron surface
+            vec3  segB   = probePos + dir * pc.rayLength;     // ends at ray stub length
+            float tRay   = rayCapsule(rayOrigin, rayDir, segA, segB, pc.rayRadius);
+            if (tRay < bestT) {
+                int  dIdx = probeStorageBase(slot, octRes) + octIdx.y * octRes + octIdx.x;
+                vec3 rad  = unpackRadianceTransmittance(cascadeData[dIdx]).xyz;
+                bestColor = rad * 5.0;
+                bestT     = tRay;
+                hasHit    = true;
+            }
+        }
+    }}}
+
+    if (hasHit) {
+        imageStore(hdrImage, pixel, vec4(bestColor, 1.0));
+    }
+}

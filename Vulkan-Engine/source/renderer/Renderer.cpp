@@ -1145,7 +1145,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.kIndirectScale = kIndirectScale;
         gatherPC.fogDensity = enableFog ? fogDensity : 0.0f;
         gatherPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
-
+        gatherPC.shadowRays = shadowRays;
         gatherPC.enableCaustics = enableCaustics;
         gatherPC.totalEmittedPhotons = totalEmittedPhotons;
         gatherPC.causticIntensity = causticIntensity;

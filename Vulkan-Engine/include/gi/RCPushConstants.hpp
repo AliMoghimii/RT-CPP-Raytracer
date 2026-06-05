@@ -54,7 +54,8 @@ struct RCGatherPC {                         // 128 bytes
     float kIndirectScale;                   // GI irradiance → color scale (probe path only)
     float fogDensity;                       // exponential fog decay coefficient
     int fogBlendWithSky;                    // 1 = fog samples sky gradient; 0 = no fog applied
-    int pad;
+
+    int shadowRays;
 
     int enableCaustics;
     int totalEmittedPhotons;

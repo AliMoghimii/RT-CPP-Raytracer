@@ -55,6 +55,14 @@ struct RCGatherPC {                         // 128 bytes
     float fogDensity;                       // exponential fog decay coefficient
     int fogBlendWithSky;                    // 1 = fog samples sky gradient; 0 = no fog applied
     int pad;
+
+    int enableCaustics;
+    int totalEmittedPhotons;
+    float causticIntensity;
+    float gatherRadius;
+    glm::vec4 gridMin;
+    glm::vec4 gridMax;
+    int gridRes;
 };
 
 struct TransparentPC {                      // 128 bytes

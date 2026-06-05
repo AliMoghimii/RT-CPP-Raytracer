@@ -114,6 +114,7 @@ void Renderer::createSceneBuffers() {
         return Buffer(ctx.allocator, sz, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
     };
 
+    // Base Scene Buffers
     materialBuffer = make(sizeof(GPUMaterial) * max((size_t)1, sceneMaterials.size()));
     sphereBuffer = make(sizeof(GPUSphere) * max((size_t)1, sceneSpheres.size()));
     triangleBuffer = make(sizeof(GPUTriangle) * max((size_t)1, sceneTriangles.size()));
@@ -123,8 +124,8 @@ void Renderer::createSceneBuffers() {
     cubeBuffer = make(sizeof(GPUCube) * max((size_t)1, sceneCubes.size()));
     bvhBuffer = make(sizeof(GPUBVHNode) * max((size_t)1, sceneBVH.size()));
 
-    // --- Caustics Buffers ---
-    uint32_t maxPhotons = 5000000;
+    // Caustics Buffers
+    uint32_t maxPhotons = 1000000;
     uint32_t gridCells = 256 * 256 * 256;
 
     photonBuffer = Buffer(ctx.allocator, sizeof(GPUPhoton) * maxPhotons,
@@ -1144,6 +1145,14 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.kIndirectScale = kIndirectScale;
         gatherPC.fogDensity = enableFog ? fogDensity : 0.0f;
         gatherPC.fogBlendWithSky = fogBlendWithSky ? 1 : 0;
+
+        gatherPC.enableCaustics = enableCaustics;
+        gatherPC.totalEmittedPhotons = totalEmittedPhotons;
+        gatherPC.causticIntensity = causticIntensity;
+        gatherPC.gatherRadius = gatherRadius;
+        gatherPC.gridMin = glm::vec4(gridMin, 0.0f);
+        gatherPC.gridMax = glm::vec4(gridMax, 0.0f);
+        gatherPC.gridRes = gridRes;
 
         // set 0 = sceneDescSet (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
         // set 1 = gbufDescSet (G-buffer read at b0-b4, hdrImage write at b5)

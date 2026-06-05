@@ -20,7 +20,7 @@ int main() {
     vector<string> texturePaths;
 
     // --- SETTINGS ---
-    int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
+    int GLOBAL_SHADING_MODEL = 1; // 0 = Blinn-Phong, 1 = PBR
 
     int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
@@ -37,7 +37,7 @@ int main() {
     glm::vec3 SKY_BOTTOM_COLOR = glm::vec3(1.0f, 1.0f, 1.0f); // White at the horizon
     glm::vec3 SKY_TOP_COLOR = glm::vec3(0.1f, 0.3f, 0.7f); // Deep blue at the top
 
-    int ENABLE_TEXTURES = 0; // 0 = Off, 1 = On
+    int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
     int SAMPLES_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
 
@@ -48,7 +48,7 @@ int main() {
     glm::vec3 GRID_MIN = glm::vec3(-40.0f); // -10.0f, ~ -40.0f 
     glm::vec3 GRID_MAX = glm::vec3(40.0f); // 10.0f, ~ 40.0f 
     int GRID_RESOLUTION = 256; // 64 ~ 256
-    float GATHER_RADIUS = 0.2f; // 0.2f ~ 0.6f
+    float GATHER_RADIUS = 0.6f; // 0.2f ~ 0.6f
 
     // --- TEXTURES ---
     // Format: ImageLoader::load("path", vector) - If a material lacks a map pass -1 to the material constructor.
@@ -147,9 +147,9 @@ int main() {
     spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
     spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere
     spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
-    spheres.push_back({ glm::vec3(1.0f, 0.75f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
+    spheres.push_back({ glm::vec3(0.75f, 0.5f, 0.1f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
-    spheres.push_back({ glm::vec3(10.0f, 2.0f, 20.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
+    spheres.push_back({ glm::vec3(9.0f, 11.0f, 19.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
     spheres.push_back({ glm::vec3(-7.0f, 1.0f, -13.0f), 1.0f, 20, 0.0f, 0.0f, 0.0f }); // Material 20: Paving Stone
     spheres.push_back({ glm::vec3(-7.0f, 1.0f, -10.5f), 1.0f, 21, 0.0f, 0.0f, 0.0f }); // Material 21: Ice
     spheres.push_back({ glm::vec3(-7.0f, 1.0f, -8.0f), 1.0f, 22, 0.0f, 0.0f, 0.0f }); // Material 22: Pool Tiles
@@ -164,7 +164,7 @@ int main() {
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.0f, -0.2f), 0.0f, glm::vec3(0.0f, 20.0f, 0.0f), 11, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Glass Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.3f, -0.2f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 16, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Wood Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.6f, -0.2f), 0.0f, glm::vec3(0.0f, 10.0f, 0.0f), 17, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Marble Cube
-    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-13.0f, 1.5f, 25.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
+    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-12.0f, 8.5f, 24.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
 
     // --- PYRAMID ---
     glm::vec3 pts[4] = {
@@ -196,7 +196,7 @@ int main() {
     //ModelLoader::load("assets/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
     //ModelLoader::load("assets/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
     ModelLoader::load("assets/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
-    ModelLoader::load("assets/model_shotGlass.obj", triangles, bvhNodes, 26, glm::vec3(8.0f, 0.1f, -8.0f), glm::vec3(0.0f, 0.0f, 0.0f), 1.0f); // Material 26: Model Glass
+    ModelLoader::load("assets/model_shotGlass.obj", triangles, bvhNodes, 26, glm::vec3(-1.0f, 14.0f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), 1.0f); // Material 26: Model Glass
 
     // --- LIGHTS ---
     glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -210,7 +210,6 @@ int main() {
     lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), lightRadius, topLightColor * lightIntensity, 0.0f });
     lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), lightRadius, backLightColor * lightIntensity, 0.0f });
     lights.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
-	//lights.push_back({ glm::vec3(0.0f, 5.5f, -5.0f), 0.0f, glm::vec3(1.0f, 1.0f, 1.0f) * 50.0f, 0.0f }); // Point Light for better demo of caustics
 
     VulkanCore engine;
 

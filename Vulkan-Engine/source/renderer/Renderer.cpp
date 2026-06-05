@@ -1162,20 +1162,24 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 9);
 
-    // === 5.5 SH pre-integration (cascade-0 only) ===
-    // Converts the 16-direction cascadeData into 4 SH coefficients (L0+L1) per probe.
-    // gather/transparent then use a dot-product lookup instead of a 16-iteration inner loop,
-    // reducing register pressure and improving GPU occupancy significantly.
+    // === 5.5 SH pre-integration (all cascade levels) ===
+    // Bakes merged cascadeData into L0+L1 SH coefficients for every level so that
+    // probe_shcache can ingest colored radiance from all scales.
+    // Cascade 0 shCoeffs are also read by gather/transparent for final shading.
+    // Running for all N levels is cheap (higher cascades have very few allocated probes)
+    // and ensures the full cascade hierarchy contributes to the worldSHCache.
     {
-        struct RCSHPushConstants { int octRes; int maxActiveSlots; } shPC{
-            rcConfig.octRes(0), (int)rcStorage.maxActiveSlots[0] };
+        struct RCSHPushConstants { int octRes; int maxActiveSlots; };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcSHPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-            rcSHPipelineLayout, 0, 1, &rcHashDescSets[0], 0, nullptr);
-        vkCmdPushConstants(cmd, rcSHPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, sizeof(shPC), &shPC);
-        vkCmdDispatch(cmd, (prevFrameSlots[0] + 255) / 256, 1, 1);
-        emitComputeBarrier(cmd);  // shCoeffs writes visible to probe_shcache + gather + transparent
+        for (int level = 0; level < N; level++) {
+            RCSHPushConstants shPC{ rcConfig.octRes(level), (int)rcStorage.maxActiveSlots[level] };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                rcSHPipelineLayout, 0, 1, &rcHashDescSets[level], 0, nullptr);
+            vkCmdPushConstants(cmd, rcSHPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, sizeof(shPC), &shPC);
+            vkCmdDispatch(cmd, (prevFrameSlots[level] + 255) / 256, 1, 1);
+            emitComputeBarrier(cmd);
+        }
     }
 
     // === 5.6 World SH cache bake (all cascade levels) ===
@@ -1186,8 +1190,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     {
         auto gs0 = rcConfig.gridSize(0);
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcSHCachePipeline);
-        int numCacheLevels = std::min(N, 3);  // ingest up to 3 levels
-        for (int level = 0; level < numCacheLevels; level++) {
+        for (int level = 0; level < N; level++) {
             RCSHCachePC cachePC{};
             cachePC.gridSize       = glm::ivec4(gs0, 0);
             cachePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];

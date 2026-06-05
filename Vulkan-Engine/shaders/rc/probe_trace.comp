@@ -332,11 +332,14 @@ void main()
             }
 
             // Second bounce: read the EMA-stable world SH cache at the hit surface position.
-            // No kIndirectScale here — worldSHCache is in direct-radiance units, same as the
-            // direct light above. final_gather applies kIndirectScale once when reading shCoeffs.
+            // worldSHCache stores SH irradiance (L0 = π × mean_radiance). Dividing by π converts
+            // back to a raw radiance estimate before adding to cascadeData. Without this correction
+            // the feedback loop gains a factor of π per cycle (coefficient 1.045 per frame → diverges
+            // in ~70 frames, producing Inf/NaN and a black scene).
             if (pc.bounceWeight > 0.0) {
+                const float INV_PI = 0.31830988;
                 vec3 bounce = lookupBounceIrradiance(hitPos, hitN);
-                radiance += albedo * mat.diffuse * bounce * pc.bounceWeight;
+                radiance += albedo * mat.diffuse * bounce * pc.bounceWeight * INV_PI;
             }
         }
     }

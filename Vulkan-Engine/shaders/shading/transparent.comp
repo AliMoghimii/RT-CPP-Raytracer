@@ -400,6 +400,7 @@ void main() {
         // --- Opaque terminal surface: full shading + cascade GI ---
         if (mat.transparency <= 0.01) {
             vec2 surfUV = hitIsPlane ? (hitPos.xz * 0.1) : hitUV;
+            surfUV *= (mat.proceduralScale > 0.0) ? mat.proceduralScale : 1.0;
             vec3 albedo = sampleAlbedo(mat, surfUV);
                  albedo = applyProceduralPattern(mat, albedo, hitPos);
             vec3 viewDir = -rayDir;
@@ -435,6 +436,7 @@ void main() {
                 surfAlbedo = firstHitAlbedo;
             } else {
                 vec2 sUV = hitIsPlane ? (hitPos.xz * 0.1) : hitUV;
+                sUV *= (mat.proceduralScale > 0.0) ? mat.proceduralScale : 1.0;
                 surfAlbedo = applyProceduralPattern(mat, sampleAlbedo(mat, sUV), hitPos);
             }
             accumulatedColor += attenuation

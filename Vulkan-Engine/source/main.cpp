@@ -22,9 +22,9 @@ int main() {
     vector<string> texturePaths;
 
     // --- SETTINGS ---
-	bool USE_LEGACY_PIPELINE = false; // true = raytacing using legacy shader, false = ray tracing + RC
+	bool USE_LEGACY_PIPELINE = true; // true = raytacing using legacy shader, false = ray tracing + RC
 
-    int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
+    int GLOBAL_SHADING_MODEL = 1; // 0 = Blinn-Phong, 1 = PBR
 
     int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
@@ -34,12 +34,12 @@ int main() {
     float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
     float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
-    int ENABLE_FOG = 0; // 0 = Off, 1 = On
+    int ENABLE_FOG = 1; // 0 = Off, 1 = On
     glm::vec3 FOG_COLOR = glm::vec3(1.0, 1.0, 1.0); // Grey: glm::vec3(0.05, 0.05, 0.05); Blue: glm::vec3(0.1, 0.2, 0.5);  White: glm::vec3(1.0, 1.0, 1.0); Green: glm::vec3(0.2, 0.8, 0.2);
 
-    int ENABLE_SKYBOX = 0; // 0 = Off, 1 = On
+    int ENABLE_SKYBOX = 1; // 0 = Off, 1 = On
     glm::vec3 SKY_BOTTOM_COLOR = glm::vec3(1.0f, 1.0f, 1.0f); // White at the horizon
-    glm::vec3 SKY_TOP_COLOR = glm::vec3(0.1f, 0.3f, 0.7f); // Deep blue at the top
+    glm::vec3 SKY_TOP_COLOR = glm::vec3(0.35f, 0.55f, 0.95f); // bright blue at the top
 
     int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
@@ -47,7 +47,7 @@ int main() {
 
     int ENABLE_CAUSTICS = 0; // 0 = Off, 1 = On
     int PHOTON_COUNT = 1000000; // Max 5,000,000
-    float CAUSTIC_INTENSITY = 15.0f; // 5.0f, 10.0f, 15.0f, 30.0f
+    float CAUSTIC_INTENSITY = 4.0f; // 5.0f, 10.0f, 4.0f, 30.0f
 
     glm::vec3 GRID_MIN = glm::vec3(-40.0f); // -10.0f, ~ -40.0f 
     glm::vec3 GRID_MAX = glm::vec3(40.0f); // 10.0f, ~ 40.0f 
@@ -64,156 +64,81 @@ int main() {
     int pavingAO = ImageLoader::load("assets/Textures/PavingStone/AmbientOcclusion.jpg", texturePaths);
     int pavingDisp = ImageLoader::load("assets/Textures/PavingStone/Displacement.jpg", texturePaths);
 
-    // Ice Textures
-    int iceColor = ImageLoader::load("assets/Textures/Ice/Color.jpg", texturePaths);
-    int iceNormal = ImageLoader::load("assets/Textures/Ice/Normal.jpg", texturePaths);
-    int iceRoughness = ImageLoader::load("assets/Textures/Ice/Roughness.jpg", texturePaths);
-    int iceDisp = ImageLoader::load("assets/Textures/Ice/Displacement.jpg", texturePaths);
+    int stoneColor = ImageLoader::load("assets/Textures/StoneWall/Color.png", texturePaths);
+    int stoneNormal = ImageLoader::load("assets/Textures/StoneWall/Normal.png", texturePaths);
+    int stoneRoughness = ImageLoader::load("assets/Textures/StoneWall/Roughness.png", texturePaths);
+    int stoneAO = ImageLoader::load("assets/Textures/StoneWall/AmbientOcclusion.png", texturePaths);
+    int stoneDisp = ImageLoader::load("assets/Textures/StoneWall/Displacement.png", texturePaths);
 
-    // Pool Tiles Textures
-    int tilesColor = ImageLoader::load("assets/Textures/Tiles/Color.jpg", texturePaths);
-    int tilesNormal = ImageLoader::load("assets/Textures/Tiles/Normal.jpg", texturePaths);
-    int tilesRoughness = ImageLoader::load("assets/Textures/Tiles/Roughness.jpg", texturePaths);
-    int tilesAO = ImageLoader::load("assets/Textures/Tiles/AmbientOcclusion.jpg", texturePaths);
-    int tilesDisp = ImageLoader::load("assets/Textures/Tiles/Displacement.jpg", texturePaths);
-
-    // Wood Textures
-    int woodColor = ImageLoader::load("assets/Textures/Wood/Color.jpg", texturePaths);
-    int woodNormal = ImageLoader::load("assets/Textures/Wood/Normal.jpg", texturePaths);
-    int woodRoughness = ImageLoader::load("assets/Textures/Wood/Roughness.jpg", texturePaths);
-    int woodAO = ImageLoader::load("assets/Textures/Wood/AmbientOcclusion.jpg", texturePaths);
-    int woodDisp = ImageLoader::load("assets/Textures/Wood/Displacement.jpg", texturePaths);
-
-    // Ground Textures
-    int groundColor = ImageLoader::load("assets/Textures/Ground/Color.jpg", texturePaths);
-    int groundNormal = ImageLoader::load("assets/Textures/Ground/Normal.jpg", texturePaths);
-    int groundRoughness = ImageLoader::load("assets/Textures/Ground/Roughness.jpg", texturePaths);
-    int groundAO = ImageLoader::load("assets/Textures/Ground/AmbientOcclusion.jpg", texturePaths);
-    int groundDisp = ImageLoader::load("assets/Textures/Ground/Displacement.jpg", texturePaths);
-
-    // Sand Textures
-    int sandColor = ImageLoader::load("assets/Textures/Sand/Color.jpg", texturePaths);
-    int sandNormal = ImageLoader::load("assets/Textures/Sand/Normal.jpg", texturePaths);
-    int sandRoughness = ImageLoader::load("assets/Textures/Sand/Roughness.jpg", texturePaths);
-    int sandAO = ImageLoader::load("assets/Textures/Sand/AmbientOcclusion.jpg", texturePaths);
-    int sandDisp = ImageLoader::load("assets/Textures/Sand/Displacement.jpg", texturePaths);
+    int concreteColor = ImageLoader::load("assets/Textures/Concrete/Color.png", texturePaths);
+    int concreteNormal = ImageLoader::load("assets/Textures/Concrete/Normal.png", texturePaths);
+    int concreteRoughness = ImageLoader::load("assets/Textures/Concrete/Roughness.png", texturePaths);
+    int concreteAO = ImageLoader::load("assets/Textures/Concrete/AmbientOcclusion.png", texturePaths);
+    int concreteDisp = ImageLoader::load("assets/Textures/Concrete/Displacement.png", texturePaths);
 
     // --- MATERIALS ---
     // Format: { color, ambient, emission, diffuse, color2, specular, reflection, transparency, ior, shadingModel, patternType, roughness, metallic, castShadows, useTexture, albedoIdx, normalIdx, roughIdx, aoIdx, heightIdx, procScale, procWobble, bumpStr, parallax, p5, p6 }
     materials.push_back({ glm::vec3(0.067f, 0.067f, 0.067f), 0.2f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Mirror (#111111)
-    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 1: Red Mirror (#FF0000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: White Shiny (#FFFFFF)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.01f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 3: Black Shiny (#000000)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.5f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror (#FFFF00)
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 5: Green Mirror (#00FF00)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Blue and White
-    materials.push_back({ glm::vec3(0.0f, 1.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Cyan Mirror (#00FFFF)
-    materials.push_back({ glm::vec3(1.0f, 0.647f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 8: Orange Mirror (#FFA500)
-    materials.push_back({ glm::vec3(0.5f, 0.0f, 0.5f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Purple Mirror (#800080)
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 1.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.2f, 0.1f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 1: Blue Mirror (#FF0000)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.75f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 2: Solid Glass (IOR 1.5)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 3: Matte White
+    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 4.0f, 4.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 4: Emissive Cyan (Cast Shadows = 0)
+    materials.push_back({ glm::vec3(1.0f), 0.5f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, pavingColor, pavingNormal, pavingRoughness, pavingAO, pavingDisp, 1.5f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 5: Paving (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f), 0.5f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, stoneColor, stoneNormal, stoneRoughness, stoneAO, stoneDisp, 1.5f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 6: Stone (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f), 0.5f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, concreteColor, concreteNormal, concreteRoughness, concreteAO, concreteDisp, 1.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 7: Concrete (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f), 0.0f, glm::vec3(0.0f), 1.0f, 0.1f, 0.95f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 8: Caustics Glass Suited
+    materials.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 1, 0.0f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 9: Checkered Red and White
     materials.push_back({ glm::vec3(0.54f, 0.17f, 0.886f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.2f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.3f, 0.8f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 10: Purple Mirror (#8A2BE2)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.75f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass (IOR 1.5)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 12: Matte White
-    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 13: Matte Red
-    materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 14: Matte Green
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 15.0f, 15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 0, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 15: Emissive Cyan (Cast Shadows = 0)
-    materials.push_back({ glm::vec3(1.0f, 0.8f, 0.2f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.4f, 0.32f, 0.08f), 0.1f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 2, 0.8f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 16.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Matte Procedural Texture Wood
-    materials.push_back({ glm::vec3(0.0f, 0.8f, 0.3f), 0.05f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(1.0f, 1.0f, 1.0f), 1.0f, 0.05f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 3, 0.8f, 0.0f, 1, 1, -1, -1, -1, -1, -1, 2.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Shiny Procedural Texture Marble
-    materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass
-    materials.push_back({ glm::vec3(0.1f, 0.1f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass
-    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, pavingColor, pavingNormal, pavingRoughness, pavingAO, pavingDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 20: Paving (Tiled 4x)
-    materials.push_back({ glm::vec3(0.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.5f, 1.31f, 1, 0, 1.0f, 0.0f, 1, 1, iceColor, iceNormal, iceRoughness, -1, iceDisp, 2.0f, 0.0f, 1.5f, 0.03f, 0.0f, 0.0f }); // Material 21: Ice (Tiled 2x)
-    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, tilesColor, tilesNormal, tilesRoughness, tilesAO, tilesDisp, 4.0f, 0.0f, 2.0f, 0.04f, 0.0f, 0.0f }); // Material 22: Tiles (Tiled 4x)
-    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, woodColor, woodNormal, woodRoughness, woodAO, woodDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 23: Wood (Tiled 4x)
-    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, groundColor, groundNormal, groundRoughness, groundAO, groundDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 24: Ground (Tiled 4x)
-    materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, sandColor, sandNormal, sandRoughness, sandAO, sandDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 25: Sand (Tiled 4x)
-    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f), 0.0f, glm::vec3(0.0f), 1.0f, 0.1f, 0.95f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 26: Caustics Glass Suited
 
-    // --- PLANES ---
-    // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
-    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0 /*12*/, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Floor (Dark Mirror)
+
 
     // --- QUADS ---
     // Format: { corner(x,y,z), p1, edge1(x,y,z), p2, edge2(x,y,z), p3, normalVector(x,y,z), materialIndex, p4, p5, p6, p7 }
-    quads.push_back({ glm::vec3(-15.0f, 25.0f, -15.0f), 0.0f, glm::vec3(30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 45.0f), 0.0f, glm::vec3(0.0f, -1.0f, 0.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Ceiling (Matte White)
-    quads.push_back({ glm::vec3(-15.0f, -0.5f, -15.0f), 0.0f, glm::vec3(0.0f, 0.0f, 45.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(1.0f, 0.0f, 0.0f), 13, 0.0f, 0.0f, 0.0f, 0.0f }); // Left Wall (Matte Red)
-    quads.push_back({ glm::vec3(15.0f, -0.5f, 30.0f), 0.0f, glm::vec3(0.0f, 0.0f, -45.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(-1.0f, 0.0f, 0.0f), 14, 0.0f, 0.0f, 0.0f, 0.0f }); // Right Wall (Matte Green)
-    quads.push_back({ glm::vec3(15.0f, -0.5f, 30.0f), 0.0f, glm::vec3(-30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, -1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Back Wall (Matte White)
-    quads.push_back({ glm::vec3(-15.0f, -0.5f, -15.0f), 0.0f, glm::vec3(30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Front Wall (Matte White)
+
+    float roomWidth = 9.75f;
+    float roomLength = 21.9f;
+    float wallHeight = 7.0f;
+
+    float halfW = roomWidth / 2.0f;
+    float halfL = roomLength / 2.0f;
+
+    glm::vec3 roomOffset = glm::vec3(0.0f, 0.0f, 0.0f);
+
+    quads.push_back({ roomOffset + glm::vec3(-halfW, 0.0f, -halfL), 0.0f, glm::vec3(roomWidth, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, roomLength), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 5, 0.0f, 0.0f, 0.0f, 0.0f });     // Floor
+    quads.push_back({ roomOffset + glm::vec3(-halfW, 0.0f, -halfL), 0.0f, glm::vec3(0.0f, 0.0f, roomLength), 0.0f, glm::vec3(0.0f, wallHeight, 0.0f), 0.0f, glm::vec3(1.0f, 0.0f, 0.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f });    // Left Wall
+    quads.push_back({ roomOffset + glm::vec3(halfW, 0.0f, halfL), 0.0f, glm::vec3(0.0f, 0.0f, -roomLength), 0.0f, glm::vec3(0.0f, wallHeight, 0.0f), 0.0f, glm::vec3(-1.0f, 0.0f, 0.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f });    // Right Wall
+    quads.push_back({ roomOffset + glm::vec3(halfW, 0.0f, halfL), 0.0f, glm::vec3(-roomWidth, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, wallHeight, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, -1.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f });    // Back Wall
+    quads.push_back({ roomOffset + glm::vec3(-halfW, 0.0f, -halfL), 0.0f, glm::vec3(roomWidth, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, wallHeight, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 1.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f });    // Front Wall
+
 
     // --- SPHERES ---
     // Format: { center(x,y,z), radius, materialIndex, padding1, padding2, padding3 }
-    spheres.push_back({ glm::vec3(-0.25f, 0.0f, 0.6f), 0.5f, 1, 0.0f, 0.0f, 0.0f }); // Material 1: Red Sphere
-    spheres.push_back({ glm::vec3(-0.15f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
-    spheres.push_back({ glm::vec3(-0.12f, 0.12f, 0.05f), 0.05f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Black Pupils
-    spheres.push_back({ glm::vec3(-0.4f, 0.1f, 0.15f), 0.1f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: White Eyes
-    spheres.push_back({ glm::vec3(-0.37f, 0.12f, 0.05f), 0.05f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Black Pupils
-    spheres.push_back({ glm::vec3(1.3f, 0.15f, 1.5f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Yellow Mirror Sphere
-    spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
-    spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere
-    spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
-    spheres.push_back({ glm::vec3(0.75f, 0.5f, 0.1f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
-    spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
-    spheres.push_back({ glm::vec3(9.0f, 11.0f, 19.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
-    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -13.0f), 1.0f, 20, 0.0f, 0.0f, 0.0f }); // Material 20: Paving Stone
-    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -10.5f), 1.0f, 21, 0.0f, 0.0f, 0.0f }); // Material 21: Ice
-    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -8.0f), 1.0f, 22, 0.0f, 0.0f, 0.0f }); // Material 22: Pool Tiles
-    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -13.0f), 1.0f, 23, 0.0f, 0.0f, 0.0f }); // Material 23: Wood
-    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -10.5f), 1.0f, 24, 0.0f, 0.0f, 0.0f }); // Material 24: Ground
-    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -8.0f), 1.0f, 25, 0.0f, 0.0f, 0.0f }); // Material 25: Sand
-    spheres.push_back({ glm::vec3(10.0f, 7.0f, -10.0f),2.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 26: Solid Glass Sphere
 
-    // --- CUBES ---
-    // Format: { boundsMin(x,y,z), padding1, boundsMax(x,y,z), padding2, center(x,y,z), padding3, rotation(pitch,yaw,roll), materialIndex, padding4, padding5, padding6, padding7 }
-    cubes.push_back({ glm::vec3(-0.125f, -0.125f, -0.125f), 0.0f, glm::vec3(0.125f, 0.125f, 0.125f), 0.0f, glm::vec3(0.375f, -0.375f, 0.375f), 0.0f, glm::vec3(0.0f, 35.0f, 0.0f), 7, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 7: Cyan Cube
-    cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.0f, -0.2f), 0.0f, glm::vec3(0.0f, 20.0f, 0.0f), 11, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Glass Cube
-    cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.3f, -0.2f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 16, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Wood Cube
-    cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.6f, -0.2f), 0.0f, glm::vec3(0.0f, 10.0f, 0.0f), 17, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Marble Cube
-    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-12.0f, 8.5f, 24.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
-
-    // --- PYRAMID ---
-    glm::vec3 pts[4] = {
-        glm::vec3(0.0f, 1.0f, 0.0f),
-        glm::vec3(-1.0f, -1.0f, 1.0f),
-        glm::vec3(1.0f, -1.0f, 1.0f),
-        glm::vec3(0.0f, -1.0f, -1.0f)
-    };
-
-    for (int i = 0; i < 4; i++) {
-        pts[i] = pts[i] * 0.1f;
-        pts[i] = MathUtils::rotateVec(pts[i], glm::vec3(0.0f, 125.0f, 0.0f));
-        pts[i] = pts[i] + glm::vec3(0.35f, 0.0f, 0.35f);
-    }
-
-    // Format: { vertex0(vec3), pad, vertex1(vec3), pad, vertex2(vec3), pad, normal0(vec3), pad, normal1(vec3), pad, normal2(vec3), isSmooth, materialIndex, pad, pad, pad }
-    auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
-        glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-        triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
-        };
-
-    pushTri(pts[0], pts[1], pts[2], 8); // Material 8: Orange Triangle
-    pushTri(pts[0], pts[2], pts[3], 9); // Material 9: Purple Triangle
-    pushTri(pts[0], pts[3], pts[1], 7); // Material 7: Cyan Triangle
-    pushTri(pts[1], pts[3], pts[2], 5); // Material 5: Green Triangle
+    spheres.push_back({ glm::vec3(0.0f, 1.5f, 6.0f), 0.75f, 1, 0.0f, 0.0f, 0.0f }); // Material 1: Red Mirror Sphere
+    spheres.push_back({ glm::vec3(-5.0f, -3.0f, 11.0f), 4.0f, 9, 0.0f, 0.0f, 0.0f }); // Material 9: Checkered Sphere
+    spheres.push_back({ glm::vec3(0.0f, 1.5f, -6.0f), 0.75f, 2, 0.0f, 0.0f, 0.0f }); // Material 2: Solid Glass Sphere
+    spheres.push_back({ glm::vec3(3.5f, 1.5f, 9.0f), 0.75f, 4, 0.0f, 0.0f, 0.0f }); // Material 4: Glowing Orb
 
     // --- MODELS ---
     // Format: ModelLoader::load("filepath", trianglesVector, bvhNodesVector, materialIndex, position(x,y,z), rotation(pitch,yaw,roll), scale)
-    //ModelLoader::load("assets/models/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
-    //ModelLoader::load("assets/models/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
-    ModelLoader::load("assets/models/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
-    ModelLoader::load("assets/models/model_shotGlass.obj", triangles, bvhNodes, 26, glm::vec3(-1.0f, 14.0f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), 1.0f); // Material 26: Model Glass
-
+    //ModelLoader::load("assets/models/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-3.5f, 1.0f, -3.0f), glm::vec3(-30.0f, 0.0f, 5.0f), 20.0f); // Material 10: Model Purple
+    //ModelLoader::load("assets/models/model_shotGlass.obj", triangles, bvhNodes, 8, glm::vec3(-3.5f, 0.0f, -8.0f), glm::vec3(0.0f, 90.0f, 0.0f), 0.5f);
+    ModelLoader::load("assets/models/model_atrium.obj", triangles, bvhNodes, 6, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 90.0f, 0.0f), 1.0f);
+    
     // --- LIGHTS ---
-    glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
-    glm::vec3 backLightColor = glm::vec3(1.0f, 0.674f, 0.957f);
+    glm::vec3 lightColor = glm::vec3(1.0f, 0.674f, 0.957f); 
+    glm::vec3 sunColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 emissionLightColor = glm::vec3(0.0f, 1.0f, 1.0f);
 
     float lightRadius = (ENABLE_SOFT_SHADOWS == 1) ? 5.0f : 0.0f;
     float lightIntensity = (GLOBAL_SHADING_MODEL == 1) ? 200.0f : 100.0f;
 
     // Format: { position(x,y,z), radius, color(r,g,b), padding }  // radius 0.0 = Point Light, > 0.0 = Area Light
-    lights.push_back({ glm::vec3(-1.0f, 15.0f, -1.0f), lightRadius, topLightColor * lightIntensity, 0.0f });
-    lights.push_back({ glm::vec3(2.0f, 1.0f, -10.0f), lightRadius, backLightColor * lightIntensity, 0.0f });
-    lights.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), lightRadius, emissionLightColor * glm::vec3(0.5f, 0.5f, 0.5f), 0.0f });
+    lights.push_back({ glm::vec3(-4.0f, 0.5f, -10.0f), lightRadius, lightColor * (lightIntensity / 7), 0.0f });
+    lights.push_back({ glm::vec3(0.0f, 8.0f, 5.0f), lightRadius, sunColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(0.0f, 8.0f, 0.0f), lightRadius, sunColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(0.0f, 8.0f, -5.0f), lightRadius, sunColor * lightIntensity, 0.0f });
+    lights.push_back({ glm::vec3(3.5f, 1.5f, 9.0f), lightRadius, emissionLightColor * (lightIntensity / 15), 0.0f });
 
     Renderer engine;
 

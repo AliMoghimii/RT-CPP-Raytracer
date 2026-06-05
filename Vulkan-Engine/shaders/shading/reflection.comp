@@ -189,7 +189,7 @@ void main() {
         if (reflMatIdx >= 0) {
             vec3 reflWorldPos = worldPos + reflDir * reflT;
             GPUMaterial reflMat = materials[reflMatIdx];
-
+            reflUV *= (reflMat.proceduralScale > 0.0) ? reflMat.proceduralScale : 1.0;
             vec3 reflAlbedo = reflIsBVH ? sampleAlbedo(reflMat, reflUV) : reflMat.color;
             reflAlbedo = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos);
 

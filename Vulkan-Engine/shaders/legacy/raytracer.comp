@@ -703,6 +703,7 @@ void main() {
                 mat = materials[cubes[hitObjIndex].materialIndex];
                 hitUV = hitPos.xy;
             }
+            hitUV *= (mat.proceduralScale > 0.0) ? mat.proceduralScale : 1.0;
 
             vec3 baseColor = mat.color;
             if (cam.enableTextures == 1 && mat.useTexture == 1) {

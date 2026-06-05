@@ -100,7 +100,8 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
     vec3 sh1 = shCoeffs[base4 + 1].rgb;
     vec3 sh2 = shCoeffs[base4 + 2].rgb;
     vec3 sh3 = shCoeffs[base4 + 3].rgb;
-    return max(vec3(0.0), sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z);
+    vec3 result = sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z;
+    return max(result, sh0 * 0.1);
 }
 
 // Hybrid analytical+BVH intersection. Returns the nearest hit along (origin, dir).
@@ -222,7 +223,10 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
                 float wx = (px == 0) ? (1.0 - f.x) : f.x;
                 float wy = (py == 0) ? (1.0 - f.y) : f.y;
                 float wz = (pz == 0) ? (1.0 - f.z) : f.z;
-                float w = wx * wy * wz;
+                vec3 toProbe = (vec3(probe) + 0.5) * pc.worldOriginSpacing.w
+                             + pc.worldOriginSpacing.xyz - worldPos;
+                float wrapShading = (dot(normalize(toProbe), normal) + 1.0) * 0.5;
+                float w = wx * wy * wz * (wrapShading * wrapShading + 0.2);
                 indirect += sampleProbeIrradiance(pSlot, normal) * w;
                 weightSum += w;
             }
@@ -232,7 +236,7 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
     // (e.g. back-face normals of spheres not in the G-buffer) don't create darker patches
     // than positions where no probe was found at all. mat.ambient is the minimum floor.
     if (weightSum > 0.001) {
-        color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
+        color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient * 0.05));
     } else {
         for (int fz = -1; fz <= 1; fz++)
         for (int fy = -1; fy <= 1; fy++)
@@ -244,7 +248,7 @@ vec3 shadeOpaque(GPUMaterial mat, vec3 worldPos, vec3 normal, vec3 albedo, vec3 
             indirect += sampleProbeIrradiance(fSlot, normal);
             weightSum += 1.0;
         }
-        if (weightSum > 0.001) color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient));
+        if (weightSum > 0.001) color += albedo * max((indirect / weightSum) * pc.kIndirectScale, vec3(mat.ambient * 0.05));
         else                    color += albedo * mat.ambient;
     }
 

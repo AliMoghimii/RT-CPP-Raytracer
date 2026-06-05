@@ -103,7 +103,8 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
     vec3 sh1 = shCoeffs[base4 + 1].rgb;
     vec3 sh2 = shCoeffs[base4 + 2].rgb;
     vec3 sh3 = shCoeffs[base4 + 3].rgb;
-    return max(vec3(0.0), sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z);
+    vec3 result = sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z;
+    return max(result, sh0 * 0.1);
 }
 
 void main() {
@@ -213,7 +214,10 @@ void main() {
                         float wx2 = (px2 == 0) ? (1.0 - reflF.x) : reflF.x;
                         float wy2 = (py2 == 0) ? (1.0 - reflF.y) : reflF.y;
                         float wz2 = (pz2 == 0) ? (1.0 - reflF.z) : reflF.z;
-                        float w2  = wx2 * wy2 * wz2;
+                        vec3 toProbeR = (vec3(rp) + 0.5) * pc.worldOriginSpacing.w
+                                      + pc.worldOriginSpacing.xyz - reflWorldPos;
+                        float wrapShadingR = (dot(normalize(toProbeR), reflNormal) + 1.0) * 0.5;
+                        float w2  = wx2 * wy2 * wz2 * (wrapShadingR * wrapShadingR + 0.2);
                         reflIndirect += sampleProbeIrradiance(rSlot, reflNormal) * w2;
                         reflWtSum    += w2;
                     }

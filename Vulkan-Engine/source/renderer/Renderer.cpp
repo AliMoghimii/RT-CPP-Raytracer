@@ -85,6 +85,19 @@ void Renderer::initVulkan() {
     prevFrameSlots.assign(rcConfig.numCascades, 0);
     for (int i = 0; i < rcConfig.numCascades; i++)
         prevFrameSlots[i] = rcStorage.maxActiveSlots[i];  // fallback for frame 0
+
+    // World-space SH cache: dense buffer covering all possible cascade-0 cells.
+    // 4 vec4s per cell (L0, L1x, L1y, L1z). Indexed by flat grid cell, not hash slot.
+    // Persists across frames — written by probe_shcache.comp with EMA blending.
+    {
+        auto gs = rcConfig.gridSize(0);
+        uint32_t numCells = uint32_t(gs.x) * uint32_t(gs.y) * uint32_t(gs.z);
+        VkDeviceSize cacheSize = VkDeviceSize(numCells) * 4 * sizeof(float) * 4;
+        constexpr VkBufferUsageFlags flags =
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        worldSHCache = Buffer(ctx.allocator, cacheSize, flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    }
+
     createSceneDescriptorSetLayout();
     createGBufferDescriptorSetLayout();
     createRCDescriptorSetLayouts();
@@ -320,6 +333,16 @@ void Renderer::createRCDescriptorSetLayouts() {
             throw std::runtime_error("Renderer: rcParentHashDescSetLayout creation failed.");
     }
 
+    // World SH cache set: 1 SSBO — dense cell-indexed irradiance cache for stable second bounce
+    {
+        VkDescriptorSetLayoutBinding bind{ 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                           VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
+        VkDescriptorSetLayoutCreateInfo ci{
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, nullptr, 0, 1, &bind };
+        if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &rcSHCacheDescSetLayout) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcSHCacheDescSetLayout creation failed.");
+    }
+
     // Tonemap set: 2 storage images - b0 = inHDR (read), b1 = outLDR (write)
     {
         VkDescriptorSetLayoutBinding binds[2] = {};
@@ -383,9 +406,10 @@ void Renderer::createRCPipelineLayouts() {
         sizeof(RCAllocPC));
 
     // Trace: set0=sceneDescSetLayout (BVH + materials + textures),
-    //        set1=rcHashDescSetLayout (reads slotToKey, writes cascadeData)
+    //        set1=rcHashDescSetLayout (reads slotToKey, writes cascadeData),
+    //        set2=rcSHCacheDescSetLayout (world SH cache — read-only for second bounce)
     rcTracePipelineLayout = makeLayout(
-        { sceneDescSetLayout, rcHashDescSetLayout },
+        { sceneDescSetLayout, rcHashDescSetLayout, rcSHCacheDescSetLayout },
         sizeof(RCTracePC));
 
     // Merge: set0=rcHashDescSetLayout (current level, read+write cascadeData),
@@ -419,6 +443,12 @@ void Renderer::createRCPipelineLayouts() {
     // Tonemap: set0=tonemapDescSetLayout (b0=inHDR read, b1=outLDR write)
     tonemapPipelineLayout = makeLayout({ tonemapDescSetLayout }, sizeof(TonemapPC));
 
+    // SH cache bake: set0=rcHashDescSetLayout (reads slotToKey/shCoeffs from cascade-0),
+    //                set1=rcSHCacheDescSetLayout (write worldSHCache with EMA)
+    rcSHCachePipelineLayout = makeLayout(
+        { rcHashDescSetLayout, rcSHCacheDescSetLayout },
+        sizeof(RCSHCachePC));
+
     rcAllocPipeline = createComputePipelineFromSpv(
         "shaders/rc/probe_alloc.comp.spv", rcAllocPipelineLayout);
     rcTracePipeline = createComputePipelineFromSpv(
@@ -427,6 +457,8 @@ void Renderer::createRCPipelineLayouts() {
         "shaders/rc/cascade_merge.comp.spv", rcMergePipelineLayout);
     rcSHPipeline = createComputePipelineFromSpv(
         "shaders/rc/probe_sh.comp.spv", rcSHPipelineLayout);
+    rcSHCachePipeline = createComputePipelineFromSpv(
+        "shaders/rc/probe_shcache.comp.spv", rcSHCachePipelineLayout);
     rcGatherPipeline = createComputePipelineFromSpv(
         "shaders/shading/final_gather.comp.spv", rcGatherPipelineLayout);
     // Reflection pass: reuses rcGatherPipelineLayout (same 3 desc sets + RCGatherPC push constant).
@@ -475,7 +507,7 @@ void Renderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 10;                                          // 7 gbuf + 2 tonemap + 1 legacyPass
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(24 + kMaxCascades * 7 + kMaxCascades * 4);  // +8 (+4 caustics SSBOs) for both Scene and LegacyPass
+    poolSizes[1].descriptorCount = uint32_t(24 + kMaxCascades * 7 + kMaxCascades * 4 + 1);  // +1 for worldSHCache
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 200;                                         // 100 sceneDescSet + 100 legacyPass
 
@@ -484,7 +516,7 @@ void Renderer::createDescriptorPool() {
     pi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;              // needed by recreateCascades()
     pi.poolSizeCount = 3;
     pi.pPoolSizes = poolSizes.data();
-    pi.maxSets = uint32_t(3 + kMaxCascades + kMaxCascades + 1);               // +1 for legacyPass descSet
+    pi.maxSets = uint32_t(3 + kMaxCascades + kMaxCascades + 1 + 1);           // +1 legacyPass, +1 worldSHCache
 
     if (vkCreateDescriptorPool(ctx.device, &pi, nullptr, &descriptorPool) != VK_SUCCESS)
         throw runtime_error("Renderer: descriptor pool creation failed.");
@@ -686,6 +718,19 @@ void Renderer::createRCDescriptorSets() {
                 VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &infos[b], nullptr };
         }
         vkUpdateDescriptorSets(ctx.device, 4, writes, 0, nullptr);
+    }
+
+    // --- rcSHCacheDescSet: b0=worldSHCache (read-write from probe_shcache; read-only in probe_trace) ---
+    {
+        VkDescriptorSetAllocateInfo ai{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            nullptr, descriptorPool, 1, &rcSHCacheDescSetLayout };
+        if (vkAllocateDescriptorSets(ctx.device, &ai, &rcSHCacheDescSet) != VK_SUCCESS)
+            throw std::runtime_error("Renderer: rcSHCacheDescSet allocation failed.");
+
+        VkDescriptorBufferInfo info{ worldSHCache.handle, 0, VK_WHOLE_SIZE };
+        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+            rcSHCacheDescSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &info, nullptr };
+        vkUpdateDescriptorSets(ctx.device, 1, &write, 0, nullptr);
     }
 
     // --- tonemapDescSet: b0=inHDR (hdrImage, read), b1=outLDR (ldrImage, write) ---
@@ -969,6 +1014,12 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
                 vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, i);
     } else {
 
+    // === 0.5. First-frame init: zero the world SH cache so the w=0 "uninitialised" flag is set ===
+    if (!worldSHCacheInitialized) {
+        vkCmdFillBuffer(cmd, worldSHCache.handle, 0, VK_WHOLE_SIZE, 0);
+        worldSHCacheInitialized = true;
+    }
+
     // === 1. Clear RC hash tables (transfer stage) ===
     // Probes are fully re-allocated each frame. Reset hash keys to the empty sentinel
     // (0xFFFFFFFF) and slot counters to 0. hashValues/slotToKey don't need clearing
@@ -1052,13 +1103,17 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.lightCount = (int)sceneLights.size();
         tracePC.planeCount = (int)scenePlanes.size();
         tracePC.quadCount = (int)sceneQuads.size();
-        tracePC.evaluateDirect    = 1;  // all cascade levels evaluate direct: each interval stores full outgoing radiance per RC theory
+        tracePC.evaluateDirect    = 1;  // all cascade levels evaluate direct
         tracePC.softShadowSamples = (level == 0) ? probeSoftShadowSamples : 1;
+        tracePC.hashSize          = (int)rcStorage.hashTableSize[level];   // kept for layout compat
+        tracePC.bounceWeight      = bounceWeight;   // enabled for all levels; world cache lookup is O(1)
+        tracePC.kIndirectScale    = kIndirectScale; // keeps bounce in same unit as direct radiance
+        tracePC.pad               = 0.0f;
 
-        VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level] };
+        VkDescriptorSet traceSets[] = { sceneDescSet, rcHashDescSets[level], rcSHCacheDescSet };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcTracePipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-            rcTracePipelineLayout, 0, 2, traceSets, 0, nullptr);
+            rcTracePipelineLayout, 0, 3, traceSets, 0, nullptr);
         vkCmdPushConstants(cmd, rcTracePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
             0, sizeof(RCTracePC), &tracePC);
         {
@@ -1107,20 +1162,50 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     if (timestampsSupported)
         vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 9);
 
-    // === 5.5 SH pre-integration (cascade-0 only) ===
-    // Converts the 16-direction cascadeData into 4 SH coefficients (L0+L1) per probe.
-    // gather/transparent then use a dot-product lookup instead of a 16-iteration inner loop,
-    // reducing register pressure and improving GPU occupancy significantly.
+    // === 5.5 SH pre-integration (all cascade levels) ===
+    // Bakes merged cascadeData into L0+L1 SH coefficients for every level so that
+    // probe_shcache can ingest colored radiance from all scales.
+    // Cascade 0 shCoeffs are also read by gather/transparent for final shading.
+    // Running for all N levels is cheap (higher cascades have very few allocated probes)
+    // and ensures the full cascade hierarchy contributes to the worldSHCache.
     {
-        struct RCSHPushConstants { int octRes; int maxActiveSlots; } shPC{
-            rcConfig.octRes(0), (int)rcStorage.maxActiveSlots[0] };
+        struct RCSHPushConstants { int octRes; int maxActiveSlots; };
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcSHPipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
-            rcSHPipelineLayout, 0, 1, &rcHashDescSets[0], 0, nullptr);
-        vkCmdPushConstants(cmd, rcSHPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
-            0, sizeof(shPC), &shPC);
-        vkCmdDispatch(cmd, (prevFrameSlots[0] + 255) / 256, 1, 1);
-        emitComputeBarrier(cmd);  // shCoeffs writes visible to gather + transparent
+        for (int level = 0; level < N; level++) {
+            RCSHPushConstants shPC{ rcConfig.octRes(level), (int)rcStorage.maxActiveSlots[level] };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                rcSHPipelineLayout, 0, 1, &rcHashDescSets[level], 0, nullptr);
+            vkCmdPushConstants(cmd, rcSHPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, sizeof(shPC), &shPC);
+            vkCmdDispatch(cmd, (prevFrameSlots[level] + 255) / 256, 1, 1);
+            emitComputeBarrier(cmd);
+        }
+    }
+
+    // === 5.6 World SH cache bake (all cascade levels) ===
+    // Ingests shCoeffs from cascade 0, 1, and 2 into a dense worldSHCache buffer indexed by
+    // cascade-0 flat cell. Coarser levels write at scaled positions (levelScale = 2^level).
+    // Cascade 1/2 capture longer-range colored radiance (cube sides/top) that cascade 0
+    // can't reach with its 0.5-unit interval, so their data must also populate the cache.
+    {
+        auto gs0 = rcConfig.gridSize(0);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcSHCachePipeline);
+        for (int level = 0; level < N; level++) {
+            RCSHCachePC cachePC{};
+            cachePC.gridSize       = glm::ivec4(gs0, 0);
+            cachePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];
+            cachePC.emaAlpha       = bounceEmaAlpha;
+            cachePC.levelScale     = (1 << level);  // 1, 2, 4
+            VkDescriptorSet cacheSets[] = { rcHashDescSets[level], rcSHCacheDescSet };
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
+                rcSHCachePipelineLayout, 0, 2, cacheSets, 0, nullptr);
+            vkCmdPushConstants(cmd, rcSHCachePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                0, sizeof(cachePC), &cachePC);
+            uint32_t slots = prevFrameSlots[level];
+            vkCmdDispatch(cmd, (slots + 255) / 256, 1, 1);
+            emitComputeBarrier(cmd);
+        }
+        // worldSHCache now has cascade-merged color from all levels; visible to next frame's probe_trace
     }
 
     // === 6. Final gather (replaces composite_temp) ===
@@ -1334,6 +1419,9 @@ void Renderer::cleanup() {
 
     legacyPass.destroy(ctx.device);
 
+    vkDestroyPipeline(ctx.device, rcSHCachePipeline, nullptr);
+    vkDestroyPipelineLayout(ctx.device, rcSHCachePipelineLayout, nullptr);
+    worldSHCache = Buffer();
     vkDestroyPipeline(ctx.device, rcAllocPipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcTracePipeline, nullptr);
     vkDestroyPipeline(ctx.device, rcMergePipeline, nullptr);
@@ -1361,6 +1449,7 @@ void Renderer::cleanup() {
     vkDestroyDescriptorSetLayout(ctx.device, gbufDescSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, rcHashDescSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, rcParentHashDescSetLayout, nullptr);
+    vkDestroyDescriptorSetLayout(ctx.device, rcSHCacheDescSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(ctx.device, tonemapDescSetLayout, nullptr);
 
     cmdManager.destroy(ctx);
@@ -1576,9 +1665,24 @@ void Renderer::recreateCascades() {
             (uint32_t)rcParentHashDescSets.size(), rcParentHashDescSets.data());
     if (tonemapDescSet != VK_NULL_HANDLE)
         vkFreeDescriptorSets(ctx.device, descriptorPool, 1, &tonemapDescSet);
+    if (rcSHCacheDescSet != VK_NULL_HANDLE)
+        vkFreeDescriptorSets(ctx.device, descriptorPool, 1, &rcSHCacheDescSet);
     rcHashDescSets.clear();
     rcParentHashDescSets.clear();
-    tonemapDescSet = VK_NULL_HANDLE;
+    tonemapDescSet   = VK_NULL_HANDLE;
+    rcSHCacheDescSet = VK_NULL_HANDLE;
+
+    // Rebuild world SH cache sized for the new cascade-0 grid dimensions.
+    worldSHCache = Buffer();
+    {
+        auto gs = rcConfig.gridSize(0);
+        uint32_t numCells = uint32_t(gs.x) * uint32_t(gs.y) * uint32_t(gs.z);
+        VkDeviceSize cacheSize = VkDeviceSize(numCells) * 4 * sizeof(float) * 4;
+        constexpr VkBufferUsageFlags flags =
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        worldSHCache = Buffer(ctx.allocator, cacheSize, flags, VMA_MEMORY_USAGE_GPU_ONLY);
+    }
+    worldSHCacheInitialized = false;  // trigger zero-fill on next frame
 
     rcStorage.destroy();
     rcStorage.initialize(ctx, rcConfig);

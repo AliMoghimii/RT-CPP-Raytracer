@@ -116,7 +116,10 @@ vec3 sampleProbeIrradiance(uint slot, vec3 normal) {
     vec3 sh1 = shCoeffs[base4 + 1].rgb;
     vec3 sh2 = shCoeffs[base4 + 2].rgb;
     vec3 sh3 = shCoeffs[base4 + 3].rgb;
-    return max(vec3(0.0), sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z);
+    vec3 result = sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z;
+    // Soft floor at 10% of L0 (Geomerics-style): prevents back-facing surfaces from going black
+    // while still preserving full clamping for truly unlit probes.
+    return max(result, sh0 * 0.1);
 }
 
 void main() {
@@ -200,7 +203,12 @@ void main() {
                     float wx = (px == 0) ? (1.0 - f.x) : f.x;
                     float wy = (py == 0) ? (1.0 - f.y) : f.y;
                     float wz = (pz == 0) ? (1.0 - f.z) : f.z;
-                    float w = wx * wy * wz;
+                    // DDGI backface weight: deprioritise probes that are behind the shading surface.
+                    // Prevents probes on the far side of a wall from leaking through geometry.
+                    vec3 toProbe = (vec3(probe) + 0.5) * pc.worldOriginSpacing.w
+                                 + pc.worldOriginSpacing.xyz - worldPos;
+                    float wrapShading = (dot(normalize(toProbe), normal) + 1.0) * 0.5;
+                    float w = wx * wy * wz * (wrapShading * wrapShading + 0.2);
 
                     indirect += sampleProbeIrradiance(pSlot, normal) * w;
                     weightSum += w;
@@ -227,8 +235,10 @@ void main() {
         }
     }
 
+    // When probes exist use their irradiance directly; ambient is only a tiny safety floor
+    // (was clamped to mat.ambient = 0.1 which drowned any colored indirect signal).
     vec3 indirectContrib = hasProbes
-        ? albedo * max(indirect * pc.kIndirectScale, vec3(mat.ambient))
+        ? albedo * max(indirect * pc.kIndirectScale, vec3(mat.ambient * 0.05))
         : albedo * mat.ambient;
     // Mode 5: raw probe irradiance bypassing the ambient clamp.
     // Black = no probe allocated here. Use this + Indirect Scale slider to diagnose GI.

@@ -213,6 +213,7 @@ void LegacyPass::record(VkCommandBuffer cmd, const CameraPushConstants& pc,
 }
 
 void LegacyPass::destroy(VkDevice device) {
+    if (photonPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, photonPipeline, nullptr);
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
     if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
     photonPipeline = VK_NULL_HANDLE;

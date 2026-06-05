@@ -38,6 +38,10 @@ layout(std430, set = 1, binding = 2) readonly buffer STK { uint slotToKey[]; };
 layout(std430, set = 1, binding = 3) readonly buffer SC  { uint nextSlot; };
 layout(std430, set = 1, binding = 4)          buffer CD  { uvec2 cascadeData[]; };
 
+// World-space SH cache (set 2): stable dense buffer written by probe_shcache.comp.
+// Indexed by flat grid cell (not hash slot), so it's coherent across frame re-allocations.
+layout(std430, set = 2, binding = 0) readonly buffer WSH { vec4 worldSHCache[]; };
+
 #include "../common/cascade_layout.glsl"
 
 layout(push_constant) uniform TracePC {
@@ -52,7 +56,78 @@ layout(push_constant) uniform TracePC {
     int quadCount;
     int evaluateDirect;         // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
     int softShadowSamples;      // 1 = hard shadow (original path), >1 = area-light jitter for BVH shadow
+    int   hashSize;             // cascade-0 hash table size (unused — second bounce now uses world cache)
+    float bounceWeight;         // 0 = second bounce off, 1 = full color bleeding
+    float kIndirectScale;       // same scale as final_gather; keeps bounce in the same unit
+    float pad;
 } pc;
+
+// Sample SH L0+L1 from the world cache at a stable flat cell index.
+// Uses a soft Geomerics-style floor (sh0 * 0.1) so back-facing surfaces
+// still receive some indirect rather than being zeroed out by the hard clamp.
+vec3 sampleWorldSH(ivec3 cell, vec3 normal) {
+    uint flatIdx = uint(cell.x)
+                 + uint(cell.y) * uint(pc.gridSizeOctRes.x)
+                 + uint(cell.z) * uint(pc.gridSizeOctRes.x) * uint(pc.gridSizeOctRes.y);
+    int base4 = int(flatIdx) * 4;
+    vec3 sh0 = worldSHCache[base4 + 0].rgb;
+    vec3 sh1 = worldSHCache[base4 + 1].rgb;
+    vec3 sh2 = worldSHCache[base4 + 2].rgb;
+    vec3 sh3 = worldSHCache[base4 + 3].rgb;
+    vec3 result = sh0 + sh1 * normal.x + sh2 * normal.y + sh3 * normal.z;
+    return max(result, sh0 * 0.1);
+}
+
+// Trilinear interpolation over the 8 surrounding world-cache probes at a world position.
+// Reads from the dense worldSHCache (stable cell indices, no hash lookup) to avoid the
+// slot-reassignment jitter that the hash map causes when queried across frames.
+// Includes DDGI backface weight to prevent probes behind walls from leaking through.
+// Falls back to a 3×3×3 neighbourhood when no 8-corner probes are populated yet.
+vec3 lookupBounceIrradiance(vec3 worldPos, vec3 normal) {
+    vec3 cascadeSpace = (worldPos - pc.worldOriginSpacing.xyz) / pc.worldOriginSpacing.w - 0.5;
+    ivec3 base = ivec3(floor(cascadeSpace));
+    vec3 f = cascadeSpace - vec3(base);
+    float weightSum = 0.0;
+    vec3 indirect = vec3(0.0);
+
+    for (int pz = 0; pz <= 1; pz++)
+    for (int py = 0; py <= 1; py++)
+    for (int px = 0; px <= 1; px++) {
+        ivec3 probe = base + ivec3(px, py, pz);
+        if (any(lessThan(probe, ivec3(0))) ||
+            any(greaterThanEqual(probe, pc.gridSizeOctRes.xyz))) continue;
+        uint flatIdx = uint(probe.x)
+                     + uint(probe.y) * uint(pc.gridSizeOctRes.x)
+                     + uint(probe.z) * uint(pc.gridSizeOctRes.x) * uint(pc.gridSizeOctRes.y);
+        if (worldSHCache[int(flatIdx) * 4].w < 0.5) continue;  // not yet initialised
+        float wx = (px == 0) ? (1.0 - f.x) : f.x;
+        float wy = (py == 0) ? (1.0 - f.y) : f.y;
+        float wz = (pz == 0) ? (1.0 - f.z) : f.z;
+        // DDGI backface weight: down-weight probes behind the shading surface
+        vec3 toProbe = (vec3(probe) + 0.5) * pc.worldOriginSpacing.w
+                     + pc.worldOriginSpacing.xyz - worldPos;
+        float wrapShading = (dot(normalize(toProbe), normal) + 1.0) * 0.5;
+        float w = wx * wy * wz * (wrapShading * wrapShading + 0.2);
+        indirect += sampleWorldSH(probe, normal) * w;
+        weightSum += w;
+    }
+    if (weightSum > 0.001) return indirect / weightSum;
+
+    // 3×3×3 fallback for sparsely populated areas
+    for (int fz = -1; fz <= 1; fz++)
+    for (int fy = -1; fy <= 1; fy++)
+    for (int fx = -1; fx <= 1; fx++) {
+        ivec3 fp = base + ivec3(fx, fy, fz);
+        if (any(lessThan(fp, ivec3(0))) || any(greaterThanEqual(fp, pc.gridSizeOctRes.xyz))) continue;
+        uint flatIdx = uint(fp.x)
+                     + uint(fp.y) * uint(pc.gridSizeOctRes.x)
+                     + uint(fp.z) * uint(pc.gridSizeOctRes.x) * uint(pc.gridSizeOctRes.y);
+        if (worldSHCache[int(flatIdx) * 4].w < 0.5) continue;
+        indirect += sampleWorldSH(fp, normal);
+        weightSum += 1.0;
+    }
+    return (weightSum > 0.001) ? indirect / weightSum : vec3(0.0);
+}
 
 void main()
 {
@@ -254,6 +329,17 @@ void main()
 
                 float atten = 1.0 / max(lightDist * lightDist, 0.01);
                 radiance += albedo * mat.diffuse * NdotL * lights[l].color * atten * shadowAtten;
+            }
+
+            // Second bounce: read the EMA-stable world SH cache at the hit surface position.
+            // worldSHCache stores SH irradiance (L0 = π × mean_radiance). Dividing by π converts
+            // back to a raw radiance estimate before adding to cascadeData. Without this correction
+            // the feedback loop gains a factor of π per cycle (coefficient 1.045 per frame → diverges
+            // in ~70 frames, producing Inf/NaN and a black scene).
+            if (pc.bounceWeight > 0.0) {
+                const float INV_PI = 0.31830988;
+                vec3 bounce = lookupBounceIrradiance(hitPos, hitN);
+                radiance += albedo * mat.diffuse * bounce * pc.bounceWeight * INV_PI;
             }
         }
     }

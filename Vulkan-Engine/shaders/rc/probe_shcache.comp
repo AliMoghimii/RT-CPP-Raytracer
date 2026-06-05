@@ -1,0 +1,58 @@
+#version 460
+#extension GL_GOOGLE_include_directive : require
+layout(local_size_x = 256) in;
+
+// Cascade-0 hash data — reads slotToKey, nextSlot, shCoeffs
+layout(std430, set = 0, binding = 2) readonly buffer STK { uint slotToKey[]; };
+layout(std430, set = 0, binding = 3) readonly buffer SC  { uint nextSlot;    };
+layout(std430, set = 0, binding = 6) readonly buffer SH  { vec4 shCoeffs[];  };
+
+// Persistent world-space SH cache: dense buffer indexed by flat grid cell.
+// Layout: 4 vec4s per cell (L0, L1x, L1y, L1z). w of L0 entry = 1 once initialized.
+// Indexed as: cell.x + cell.y*gridX + cell.z*gridX*gridY, then *4 for base.
+layout(std430, set = 1, binding = 0) buffer WSH { vec4 worldSHCache[]; };
+
+layout(push_constant) uniform PC {
+    ivec4 gridSize;         // xyz = cascade-0 grid dimensions (e.g. 64,60,92)
+    int   maxActiveSlots;
+    float emaAlpha;         // new-data fraction per frame (0.05–0.15)
+    int   levelScale;       // 1 = cascade-0, 2 = cascade-1, 4 = cascade-2 (maps coarser cell → cascade-0 coords)
+    int   pad;
+} pc;
+
+// Inline unpack for the cell key (mirrors cascade_layout.glsl to avoid full include)
+ivec3 unpackKey(uint key) {
+    return ivec3(
+        int(key & 0x3Fu),
+        int((key >> 6) & 0x3Fu),
+        int((key >> 12) & 0x7Fu));
+}
+
+void main() {
+    uint slot = gl_GlobalInvocationID.x;
+    if (slot >= nextSlot || slot >= uint(pc.maxActiveSlots)) return;
+
+    uint key = slotToKey[slot];
+    if (key == 0xFFFFFFFFu) return;
+
+    ivec3 cell = unpackKey(key);
+    // Scale coarser cascade-level cells to cascade-0 coordinate space.
+    ivec3 worldCell = cell * pc.levelScale;
+    if (any(lessThan(worldCell, ivec3(0))) ||
+        any(greaterThanEqual(worldCell, pc.gridSize.xyz))) return;
+
+    uint flatIdx = uint(worldCell.x)
+                 + uint(worldCell.y) * uint(pc.gridSize.x)
+                 + uint(worldCell.z) * uint(pc.gridSize.x) * uint(pc.gridSize.y);
+    int src  = int(slot)    * 4;
+    int dst  = int(flatIdx) * 4;
+
+    // EMA blend: new data fraction = emaAlpha.
+    // On first write (w==0 means uninitialised), take new data directly.
+    float alpha = (worldSHCache[dst].w < 0.5) ? 1.0 : pc.emaAlpha;
+
+    worldSHCache[dst + 0] = vec4(mix(worldSHCache[dst + 0].rgb, shCoeffs[src + 0].rgb, alpha), 1.0);
+    worldSHCache[dst + 1] = vec4(mix(worldSHCache[dst + 1].rgb, shCoeffs[src + 1].rgb, alpha), 0.0);
+    worldSHCache[dst + 2] = vec4(mix(worldSHCache[dst + 2].rgb, shCoeffs[src + 2].rgb, alpha), 0.0);
+    worldSHCache[dst + 3] = vec4(mix(worldSHCache[dst + 3].rgb, shCoeffs[src + 3].rgb, alpha), 0.0);
+}

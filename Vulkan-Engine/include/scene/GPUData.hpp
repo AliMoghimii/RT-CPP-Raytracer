@@ -46,7 +46,7 @@ struct GPUSphere {
 
 struct GPUTriangle {
     glm::vec3 v0;
-    float uv0x;          // tex UV for vertex 0, packed into vec3 padding slots
+    float uv0x;          // tex UV for vertex 0, packed into vec3 padding slots    
     glm::vec3 v1;
     float uv0y;
     glm::vec3 v2;
@@ -68,6 +68,12 @@ struct GPULight {
     float radius;
     glm::vec3 color;
     float p2;
+};
+
+struct GPUPhoton {
+    glm::vec4 position;
+    glm::vec4 direction;
+    glm::vec4 energy;
 };
 
 struct GPUPlane {

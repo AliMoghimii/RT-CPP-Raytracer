@@ -14,6 +14,7 @@ public:
         VkDescriptorSetLayout sceneLayout;
         VkBuffer materialBuf, sphereBuf, triangleBuf, lightBuf,
                  planeBuf, quadBuf, cubeBuf, bvhBuf;
+        VkBuffer photonBuf, photonCounterBuf, gridHeadBuf, photonNextBuf;
         VkSampler sampler;
         const std::vector<VkImageView>* texViews;
         VkImageView outputView;   // ldrImage - binding 0, rgba8 write
@@ -29,6 +30,10 @@ private:
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSet descSet = VK_NULL_HANDLE;
+
+    VkPipeline photonPipeline = VK_NULL_HANDLE;
+    VkBuffer photonCounterBuf = VK_NULL_HANDLE;
+    VkBuffer gridHeadBuf = VK_NULL_HANDLE;
 
     static std::vector<char> readSpv(const std::string& path);
 };

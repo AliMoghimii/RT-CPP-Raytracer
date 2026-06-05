@@ -42,6 +42,14 @@ struct CameraPushConstants {
     int enableSkybox;
     glm::vec3 skyTopColor;
     int enableTextures;
+    int totalEmittedPhotons;
+    int enableCaustics;
+    float causticIntensity;
+    float padding;
+    glm::vec4 gridMin;
+    glm::vec4 gridMax;
+    int gridRes;
+    float gatherRadius;
 };
 
 class Renderer {
@@ -60,6 +68,15 @@ public:
     glm::vec3 skyBottomColor = glm::vec3(1.0f, 1.0f, 1.0f);
     glm::vec3 skyTopColor = glm::vec3(0.1f, 0.3f, 0.7f);
     int enableTextures = 1;
+
+    int enableCaustics = 1;
+    uint32_t totalEmittedPhotons = 1000000;
+    float causticIntensity = 15.0f;
+
+    glm::vec3 gridMin = glm::vec3(-40.0f);
+    glm::vec3 gridMax = glm::vec3(40.0f);
+    int gridRes = 256;
+    float gatherRadius = 0.2f;
 
     // --- Debug / visualization (controlled by DebugUI) ---
     int probeSoftShadowSamples = 1; // 1=hard shadow (original), >1=area-light jitter per probe BVH shadow ray
@@ -136,6 +153,12 @@ private:
     VkPipelineLayout twoPassPipelineLayout = VK_NULL_HANDLE;
     VkPipeline primaryPassPipeline = VK_NULL_HANDLE;
     VkPipeline compositePassPipeline = VK_NULL_HANDLE;
+
+    VkPipeline photonPipeline = VK_NULL_HANDLE;
+    Buffer photonBuffer;
+    Buffer photonCounterBuffer;
+    Buffer gridHeadBuffer;
+    Buffer photonNextBuffer;
 
     VkPipeline rcAllocPipeline = VK_NULL_HANDLE;
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;

@@ -26,7 +26,7 @@ int main() {
 
     int GLOBAL_SHADING_MODEL = 0; // 0 = Blinn-Phong, 1 = PBR
 
-    int ENABLE_SOFT_SHADOWS = 1; // 0 = Off, 1 = On
+    int ENABLE_SOFT_SHADOWS = 0; // 0 = Off, 1 = On
     int MAX_DEPTH = 5; // recursion depth for ray tracing
     int MAX_SHADOW_RAYS = 4; // 4, 8, 16, 32, 64, 128
 
@@ -34,16 +34,25 @@ int main() {
     float FOCAL_DISTANCE = 1.6f; // 0.5f, 1.0f, 2.0f
     float LENS_RADIUS = 0.02f; // 0.01f, 0.05f, 0.1f
 
-    int ENABLE_FOG = 1; // 0 = Off, 1 = On
+    int ENABLE_FOG = 0; // 0 = Off, 1 = On
     glm::vec3 FOG_COLOR = glm::vec3(1.0, 1.0, 1.0); // Grey: glm::vec3(0.05, 0.05, 0.05); Blue: glm::vec3(0.1, 0.2, 0.5);  White: glm::vec3(1.0, 1.0, 1.0); Green: glm::vec3(0.2, 0.8, 0.2);
 
-    int ENABLE_SKYBOX = 1; // 0 = Off, 1 = On
+    int ENABLE_SKYBOX = 0; // 0 = Off, 1 = On
     glm::vec3 SKY_BOTTOM_COLOR = glm::vec3(1.0f, 1.0f, 1.0f); // White at the horizon
     glm::vec3 SKY_TOP_COLOR = glm::vec3(0.1f, 0.3f, 0.7f); // Deep blue at the top
 
     int ENABLE_TEXTURES = 1; // 0 = Off, 1 = On
 
     int PRIMARY_RAYS_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
+
+    int ENABLE_CAUSTICS = 0; // 0 = Off, 1 = On
+    int PHOTON_COUNT = 1000000; // Max 5,000,000
+    float CAUSTIC_INTENSITY = 15.0f; // 5.0f, 10.0f, 15.0f, 30.0f
+
+    glm::vec3 GRID_MIN = glm::vec3(-40.0f); // -10.0f, ~ -40.0f 
+    glm::vec3 GRID_MAX = glm::vec3(40.0f); // 10.0f, ~ 40.0f 
+    int GRID_RESOLUTION = 256; // 64 ~ 256
+    float GATHER_RADIUS = 0.6f; // 0.2f ~ 0.6f
 
     // --- TEXTURES ---
     // Format: ImageLoader::load("path", vector) - If a material lacks a map pass -1 to the material constructor.
@@ -112,15 +121,16 @@ int main() {
     materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass
     materials.push_back({ glm::vec3(0.1f, 0.1f, 1.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, 0.1f, 0.9f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass
     materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, pavingColor, pavingNormal, pavingRoughness, pavingAO, pavingDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 20: Paving (Tiled 4x)
-    materials.push_back({ glm::vec3(0.0f, 0.0f, 0.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.5f, 1.31f, 1, 0, 1.0f, 0.0f, 1, 1, iceColor, iceNormal, iceRoughness, -1, iceDisp, 2.0f, 0.0f, 1.5f, 0.03f, 0.0f, 0.0f }); // Material 21: Ice (Tiled 2x)
+    materials.push_back({ glm::vec3(0.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.5f, 1.31f, 1, 0, 1.0f, 0.0f, 1, 1, iceColor, iceNormal, iceRoughness, -1, iceDisp, 2.0f, 0.0f, 1.5f, 0.03f, 0.0f, 0.0f }); // Material 21: Ice (Tiled 2x)
     materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.05f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, tilesColor, tilesNormal, tilesRoughness, tilesAO, tilesDisp, 4.0f, 0.0f, 2.0f, 0.04f, 0.0f, 0.0f }); // Material 22: Tiles (Tiled 4x)
     materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, woodColor, woodNormal, woodRoughness, woodAO, woodDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 23: Wood (Tiled 4x)
     materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, groundColor, groundNormal, groundRoughness, groundAO, groundDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 24: Ground (Tiled 4x)
     materials.push_back({ glm::vec3(1.0f), 0.05f, glm::vec3(0.0f), 1.0f, glm::vec3(0.0f), 1.0f, 0.0f, 0.0f, 1.0f, 1, 0, 1.0f, 0.0f, 1, 1, sandColor, sandNormal, sandRoughness, sandAO, sandDisp, 4.0f, 0.0f, 2.0f, 0.05f, 0.0f, 0.0f }); // Material 25: Sand (Tiled 4x)
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.0f, glm::vec3(0.0f), 0.0f, glm::vec3(0.0f), 1.0f, 0.1f, 0.95f, 1.5f, GLOBAL_SHADING_MODEL, 0, 0.0f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 26: Caustics Glass Suited
 
     // --- PLANES ---
     // Format: { center(x,y,z), padding1, normal(x,y,z), materialIndex, padding2, padding3, padding4, padding5 }
-    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Floor (Dark Mirror)
+    planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 0 /*12*/, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 0: Floor (Dark Mirror)
 
     // --- QUADS ---
     // Format: { corner(x,y,z), p1, edge1(x,y,z), p2, edge2(x,y,z), p3, normalVector(x,y,z), materialIndex, p4, p5, p6, p7 }
@@ -141,15 +151,16 @@ int main() {
     spheres.push_back({ glm::vec3(1.0f, 1.85f, 8.0f), 0.75f, 5, 0.0f, 0.0f, 0.0f }); // Material 5: Green Sphere
     spheres.push_back({ glm::vec3(-5.0f, 10.0f, 25.0f), 2.0f, 0, 0.0f, 0.0f, 0.0f }); // Material 0: Dark Sphere
     spheres.push_back({ glm::vec3(-5.0f, -3.0f, 5.0f), 5.0f, 6, 0.0f, 0.0f, 0.0f }); // Material 6: Checkered Sphere
-    spheres.push_back({ glm::vec3(1.0f, 0.75f, 0.0f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
+    spheres.push_back({ glm::vec3(0.75f, 0.5f, 0.1f), 0.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 11: Solid Glass Sphere
     spheres.push_back({ glm::vec3(1.0f, 0.0f, 0.0f), 0.2f, 15, 0.0f, 0.0f, 0.0f }); // Material 15: Glowing Orb
-    spheres.push_back({ glm::vec3(10.0f, 2.0f, 20.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
-    spheres.push_back({ glm::vec3(7.0f, 1.0f, -13.0f), 1.0f, 20, 0.0f, 0.0f, 0.0f }); // Material 20: Paving Stone
-    spheres.push_back({ glm::vec3(7.0f, 1.0f, -10.5f), 1.0f, 21, 0.0f, 0.0f, 0.0f }); // Material 21: Ice
-    spheres.push_back({ glm::vec3(7.0f, 1.0f, -8.0f), 1.0f, 22, 0.0f, 0.0f, 0.0f }); // Material 22: Pool Tiles
-    spheres.push_back({ glm::vec3(7.0f, 3.5f, -13.0f), 1.0f, 23, 0.0f, 0.0f, 0.0f }); // Material 23: Wood
-    spheres.push_back({ glm::vec3(7.0f, 3.5f, -10.5f), 1.0f, 24, 0.0f, 0.0f, 0.0f }); // Material 24: Ground
-    spheres.push_back({ glm::vec3(7.0f, 3.5f, -8.0f), 1.0f, 25, 0.0f, 0.0f, 0.0f }); // Material 25: Sand
+    spheres.push_back({ glm::vec3(9.0f, 11.0f, 19.0f), 2.5f, 18, 0.0f, 0.0f, 0.0f }); // Material 18: Red Stained Glass Sphere
+    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -13.0f), 1.0f, 20, 0.0f, 0.0f, 0.0f }); // Material 20: Paving Stone
+    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -10.5f), 1.0f, 21, 0.0f, 0.0f, 0.0f }); // Material 21: Ice
+    spheres.push_back({ glm::vec3(-7.0f, 1.0f, -8.0f), 1.0f, 22, 0.0f, 0.0f, 0.0f }); // Material 22: Pool Tiles
+    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -13.0f), 1.0f, 23, 0.0f, 0.0f, 0.0f }); // Material 23: Wood
+    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -10.5f), 1.0f, 24, 0.0f, 0.0f, 0.0f }); // Material 24: Ground
+    spheres.push_back({ glm::vec3(-7.0f, 3.5f, -8.0f), 1.0f, 25, 0.0f, 0.0f, 0.0f }); // Material 25: Sand
+    spheres.push_back({ glm::vec3(10.0f, 7.0f, -10.0f),2.25f, 11, 0.0f, 0.0f, 0.0f }); // Material 26: Solid Glass Sphere
 
     // --- CUBES ---
     // Format: { boundsMin(x,y,z), padding1, boundsMax(x,y,z), padding2, center(x,y,z), padding3, rotation(pitch,yaw,roll), materialIndex, padding4, padding5, padding6, padding7 }
@@ -157,7 +168,7 @@ int main() {
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.0f, -0.2f), 0.0f, glm::vec3(0.0f, 20.0f, 0.0f), 11, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 11: Glass Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.3f, -0.2f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 16, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 16: Wood Cube
     cubes.push_back({ glm::vec3(-0.15f, -0.15f, -0.15f), 0.0f, glm::vec3(0.15f, 0.15f, 0.15f), 0.0f, glm::vec3(-1.5f, 0.6f, -0.2f), 0.0f, glm::vec3(0.0f, 10.0f, 0.0f), 17, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 17: Marble Cube
-    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-13.0f, 1.5f, 25.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
+    cubes.push_back({ glm::vec3(-2.0f, -2.0f, -2.0f), 0.0f, glm::vec3(2.0f, 2.0f, 2.0f), 0.0f, glm::vec3(-12.0f, 8.5f, 24.0f), 0.0f, glm::vec3(0.0f, 45.0f, 0.0f), 19, 0.0f, 0.0f, 0.0f, 0.0f }); // Material 19: Blue Stained Glass Cube
 
     // --- PYRAMID ---
     glm::vec3 pts[4] = {
@@ -189,6 +200,7 @@ int main() {
     //ModelLoader::load("assets/models/model_shuttle.obj", triangles, bvhNodes, 10, glm::vec3(-1.3f, 0.0f, 0.4f), glm::vec3(270.0f, 45.0f, 0.0f), 0.07f); // Material 10: Model Purple
     //ModelLoader::load("assets/models/model_teapot.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(0.0f, 0.0f, 0.0f), 0.0045f); // Material 10: Model Purple
     ModelLoader::load("assets/models/model_doughnut.obj", triangles, bvhNodes, 10, glm::vec3(-1.2f, 0.0f, 0.5f), glm::vec3(-30.0f, 0.0f, 5.0f), 5.0f); // Material 10: Model Purple
+    ModelLoader::load("assets/models/model_shotGlass.obj", triangles, bvhNodes, 26, glm::vec3(-1.0f, 14.0f, -1.0f), glm::vec3(0.0f, 0.0f, 0.0f), 1.0f); // Material 26: Model Glass
 
     // --- LIGHTS ---
     glm::vec3 topLightColor = glm::vec3(1.0f, 1.0f, 1.0f);
@@ -223,24 +235,36 @@ int main() {
 
     engine.enableTextures = ENABLE_TEXTURES;
 
-    // Tessellate object primitives into the BVH so RC probes can see them.
-    // Quads (walls/ceiling) and planes (floor) stay analytical, their large
-    // triangles bloat the BVH root AABB and make shadow traversal O(N).
-    for (const auto& sphere : spheres) {
-        tessellateSphere(sphere, sphere.materialIndex, triangles);
+    engine.enableCaustics = ENABLE_CAUSTICS;
+    engine.totalEmittedPhotons = PHOTON_COUNT;
+    engine.causticIntensity = CAUSTIC_INTENSITY;
+
+    engine.gridMin = GRID_MIN;
+    engine.gridMax = GRID_MAX;
+    engine.gridRes = GRID_RESOLUTION;
+    engine.gatherRadius = GATHER_RADIUS;
+
+    if (!USE_LEGACY_PIPELINE)
+    {
+        // Tessellate object primitives into the BVH so RC probes can see them.
+        // Quads (walls/ceiling) and planes (floor) stay analytical, their large
+        // triangles bloat the BVH root AABB and make shadow traversal O(N).
+        for (const auto& sphere : spheres) {
+            tessellateSphere(sphere, sphere.materialIndex, triangles);
+        }
+
+        for (const auto& cube : cubes) {
+            tessellateCube(cube, cube.materialIndex, triangles);
+        }
+
+        // Clear only the primitives now in the BVH. Quads and planes remain
+        // in their SSBOs as fast analytical shadow occluders.
+        spheres.clear();
+        cubes.clear();
+
+        // Rebuild BVH from unified triangle pool
+        ModelLoader::buildBVH(triangles, bvhNodes);
     }
-
-    for (const auto& cube : cubes) {
-        tessellateCube(cube, cube.materialIndex, triangles);
-    }
-
-    // Clear only the primitives now in the BVH. Quads and planes remain
-    // in their SSBOs as fast analytical shadow occluders.
-    spheres.clear();
-    cubes.clear();
-
-    // Rebuild BVH from unified triangle pool
-    ModelLoader::buildBVH(triangles, bvhNodes);
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
     engine.loadTextures(texturePaths);

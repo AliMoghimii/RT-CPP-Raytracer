@@ -15,7 +15,7 @@ set TARGET=--target-env=vulkan1.3
 set ERROR_COUNT=0
 
 REM --- Folders that contain compilable shaders (NOT 'common', which is headers only) ---
-set FOLDERS=legacy monolith visibility rc shading tonemap debug
+set FOLDERS=legacy monolith visibility photon-mapping rc shading tonemap debug
 
 REM --- Sanity check: is glslc on PATH? ---
 where %GLSLC% >nul 2>&1
@@ -50,8 +50,10 @@ for %%F in (%FOLDERS%) do (
 echo.
 if %ERROR_COUNT%==0 (
     echo Success - all shaders compiled.
+    pause
     exit /b 0
 ) else (
     echo FAILED with %ERROR_COUNT% error^(s^).
+    pause
     exit /b 1
 )

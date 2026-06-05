@@ -43,7 +43,7 @@ int main() {
 
     int PRIMARY_RAYS_PER_PIXEL = 1; //1 (Off), 2, 4, 8, 16, 32
 
-    int ENABLE_CAUSTICS = 1; // 0 = Off, 1 = On
+    int ENABLE_CAUSTICS = 0; // 0 = Off, 1 = On
     int PHOTON_COUNT = 1000000; // Max 5,000,000
     float CAUSTIC_INTENSITY = 15.0f; // 5.0f, 10.0f, 15.0f, 30.0f
 

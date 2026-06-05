@@ -207,10 +207,12 @@ void DebugUI::panelVisualization(Renderer& renderer) {
 void DebugUI::panelSceneControls(Renderer& renderer) {
     bool legacy = renderer.useLegacyPipeline;
 
-    // kIndirectScale and fogDensity feed RC gather/transparent push constants only.
+    // kIndirectScale, bounceWeight, and fogDensity feed RC gather/transparent push constants only.
     if (legacy) ImGui::BeginDisabled();
-    ImGui::SliderFloat("Indirect Scale", &renderer.kIndirectScale, 0.0f, 0.1f, "%.4f");
-    ImGui::SliderFloat("Fog Density", &renderer.fogDensity, 0.0f, 0.1f, "%.3f");
+    ImGui::SliderFloat("Indirect Scale",   &renderer.kIndirectScale, 0.0f, 0.1f, "%.4f");
+    ImGui::SliderFloat("2nd Bounce Weight", &renderer.bounceWeight,   0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Bounce EMA Alpha",  &renderer.bounceEmaAlpha, 0.01f, 0.5f, "%.2f");
+    ImGui::SliderFloat("Fog Density",      &renderer.fogDensity,     0.0f, 0.1f, "%.3f");
     if (legacy) ImGui::EndDisabled();
 
     ImGui::Separator();

@@ -86,6 +86,8 @@ public:
     int enableDirect = 1;
     int enableIndirect = 1;
     float kIndirectScale = 0.01f;   // GI irradiance -> color scale (slider in Scene Controls); halved after K0 fix (was 2x too small)
+    float bounceWeight   = 0.5f;    // second RC bounce weight (0 = off, 1 = full color bleeding)
+    float bounceEmaAlpha = 0.08f;   // world SH cache EMA blend factor (0=frozen, 1=no history)
     float fogDensity = 0.04f;       // exponential fog decay coefficient
     bool fogBlendWithSky = true;    // true = fog samples sky gradient; false = no fog (RC passes)
 
@@ -159,6 +161,14 @@ private:
     Buffer photonCounterBuffer;
     Buffer gridHeadBuffer;
     Buffer photonNextBuffer;
+
+    // World-space SH cache: dense buffer + pipeline for EMA-stable second bounce
+    Buffer worldSHCache;
+    bool   worldSHCacheInitialized = false;
+    VkDescriptorSetLayout rcSHCacheDescSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       rcSHCacheDescSet       = VK_NULL_HANDLE;
+    VkPipeline            rcSHCachePipeline      = VK_NULL_HANDLE;
+    VkPipelineLayout      rcSHCachePipelineLayout = VK_NULL_HANDLE;
 
     VkPipeline rcAllocPipeline = VK_NULL_HANDLE;
     VkPipeline rcTracePipeline = VK_NULL_HANDLE;

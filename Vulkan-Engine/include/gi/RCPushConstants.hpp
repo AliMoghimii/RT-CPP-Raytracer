@@ -25,6 +25,10 @@ struct RCTracePC {                          // 68 bytes
     int quadCount;
     int evaluateDirect;                     // 1 = cascade-0 (direct+emission), 0 = levels 1+ (emission-only)
     int softShadowSamples;                  // 1 = hard shadow (original), >1 = area-light jitter in BVH shadow
+    int   hashSize;                         // cascade-0 hash table size (unused — second bounce uses world cache)
+    float bounceWeight;                     // 0 = second bounce off, 1 = full weight
+    float kIndirectScale;                   // same scale as final_gather; keeps bounce in the same unit
+    float pad;
 };
 
 struct RCMergePC {                          // 64 bytes
@@ -80,6 +84,14 @@ struct TransparentPC {                      // 128 bytes
     int hashSize;
     float kIndirectScale;                   // GI irradiance → color scale (probe path only)
     float fogDensity;                       // exponential fog decay coefficient
+};
+
+struct RCSHCachePC {                        // 32 bytes
+    glm::ivec4 gridSize;                    // xyz = cascade-0 grid dimensions
+    int   maxActiveSlots;
+    float emaAlpha;                         // EMA new-data fraction (0.05–0.15)
+    int   levelScale;                       // 1=cascade-0, 2=cascade-1, 4=cascade-2
+    int   pad;
 };
 
 struct TonemapPC {                          // 16 bytes

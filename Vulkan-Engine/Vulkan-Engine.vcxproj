@@ -190,11 +190,11 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\scene\Primitive.hpp" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="caustics.glsl" />
     <None Include="compile_shaders.bat" />
     <None Include="config\imgui\imgui.ini" />
     <None Include="shaders\common\bvh.glsl" />
     <None Include="shaders\common\cascade_layout.glsl" />
+    <None Include="shaders\common\caustics.glsl" />
     <None Include="shaders\common\lighting.glsl" />
     <None Include="shaders\common\material.glsl" />
     <None Include="shaders\common\octahedral.glsl" />
@@ -202,6 +202,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <None Include="shaders\common\random.glsl" />
     <None Include="shaders\common\ray.glsl" />
     <None Include="shaders\common\shadow.glsl" />
+    <None Include="shaders\debug\probe_debug.comp" />
     <None Include="shaders\legacy\photonpass.comp" />
     <None Include="shaders\legacy\raytracer.comp" />
     <None Include="shaders\monolith\raytracer.comp" />

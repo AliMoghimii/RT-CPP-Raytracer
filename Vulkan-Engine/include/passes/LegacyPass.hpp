@@ -31,5 +31,9 @@ private:
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSet descSet = VK_NULL_HANDLE;
 
+    VkPipeline photonPipeline = VK_NULL_HANDLE;
+    VkBuffer photonCounterBuf = VK_NULL_HANDLE;
+    VkBuffer gridHeadBuf = VK_NULL_HANDLE;
+
     static std::vector<char> readSpv(const std::string& path);
 };

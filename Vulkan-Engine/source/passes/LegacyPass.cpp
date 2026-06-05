@@ -33,6 +33,34 @@ void LegacyPass::create(const CreateInfo& info) {
     if (vkCreatePipelineLayout(info.device, &plci, nullptr, &pipelineLayout) != VK_SUCCESS)
         throw std::runtime_error("LegacyPass: pipeline layout creation failed.");
 
+    photonCounterBuf = info.photonCounterBuf;
+    gridHeadBuf = info.gridHeadBuf;
+
+    // --- Compute pipeline for photonpass.comp ---
+    auto photonCode = readSpv("shaders/legacy/photonpass.comp.spv");
+    VkShaderModuleCreateInfo photonSmci{};
+    photonSmci.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    photonSmci.codeSize = photonCode.size();
+    photonSmci.pCode = reinterpret_cast<const uint32_t*>(photonCode.data());
+    VkShaderModule photonMod;
+    if (vkCreateShaderModule(info.device, &photonSmci, nullptr, &photonMod) != VK_SUCCESS)
+        throw std::runtime_error("LegacyPass: photon shader module creation failed.");
+
+    VkPipelineShaderStageCreateInfo photonStage{};
+    photonStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    photonStage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    photonStage.module = photonMod;
+    photonStage.pName = "main";
+
+    VkComputePipelineCreateInfo photonCpci{};
+    photonCpci.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    photonCpci.layout = pipelineLayout;
+    photonCpci.stage = photonStage;
+
+    if (vkCreateComputePipelines(info.device, VK_NULL_HANDLE, 1, &photonCpci, nullptr, &photonPipeline) != VK_SUCCESS)
+        throw std::runtime_error("LegacyPass: photon pipeline creation failed.");
+    vkDestroyShaderModule(info.device, photonMod, nullptr);
+
     // --- Compute pipeline from raytracer.comp.spv ---
     auto code = readSpv("shaders/legacy/raytracer.comp.spv");
 
@@ -151,7 +179,31 @@ void LegacyPass::create(const CreateInfo& info) {
 }
 
 void LegacyPass::record(VkCommandBuffer cmd, const CameraPushConstants& pc,
-                        uint32_t dX, uint32_t dY) {
+    uint32_t dX, uint32_t dY) {
+
+    if (pc.enableCaustics == 1) {
+        vkCmdFillBuffer(cmd, photonCounterBuf, 0, sizeof(uint32_t), 0);
+        vkCmdFillBuffer(cmd, gridHeadBuf, 0, sizeof(int) * 256 * 256 * 256, 0xFFFFFFFF);
+
+        VkMemoryBarrier fillBarrier{};
+        fillBarrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        fillBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &fillBarrier, 0, nullptr, 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, photonPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &descSet, 0, nullptr);
+        vkCmdPushConstants(cmd, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CameraPushConstants), &pc);
+
+        vkCmdDispatch(cmd, (pc.totalEmittedPhotons + 255) / 256, 1, 1);
+
+        VkMemoryBarrier pass1Barrier{};
+        pass1Barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        pass1Barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        pass1Barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &pass1Barrier, 0, nullptr, 0, nullptr);
+    }
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
         pipelineLayout, 0, 1, &descSet, 0, nullptr);
@@ -163,6 +215,7 @@ void LegacyPass::record(VkCommandBuffer cmd, const CameraPushConstants& pc,
 void LegacyPass::destroy(VkDevice device) {
     if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
     if (pipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+    photonPipeline = VK_NULL_HANDLE;
     pipeline = VK_NULL_HANDLE;
     pipelineLayout = VK_NULL_HANDLE;
     descSet = VK_NULL_HANDLE;

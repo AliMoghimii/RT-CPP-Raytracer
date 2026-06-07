@@ -8,6 +8,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/material.glsl"
 #include "../common/lighting.glsl"
 #include "../common/shadow.glsl"
+#include "../common/tlas.glsl"
 #include "../common/octahedral.glsl"
 
 // G-buffer inputs (set 1 = gbufDescSet)
@@ -161,7 +162,7 @@ HitResult findNearestHit(vec3 origin, vec3 dir) {
     bvhRay.tMin = 0.001;
     bvhRay.tMax = res.t;
     HitInfo bvhHit;
-    if (traverseBVH(bvhRay, pc.bvhCount, bvhHit)) {
+    if (traverseScene(bvhRay, pc.bvhCount, bvhHit)) {
         res.t = bvhHit.t;
         res.matIdx = bvhHit.materialIndex;
         res.normal = bvhHit.normal;

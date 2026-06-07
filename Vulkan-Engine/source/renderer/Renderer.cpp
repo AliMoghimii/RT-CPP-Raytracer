@@ -1,4 +1,4 @@
-#include "renderer/Renderer.hpp"
+﻿#include "renderer/Renderer.hpp"
 #include "scene/ImageLoader.hpp"
 #include "gi/RCPushConstants.hpp"
 
@@ -10,6 +10,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstring>
+#include <limits>
 
 using namespace std;
 
@@ -37,10 +38,32 @@ void Renderer::loadScene(
     sceneQuads = quds;
     sceneCubes = cbs;
     sceneBVH = bvh;
+    staticBvhNodeCount = (int)sceneBVH.size();
 }
 
 void Renderer::loadTextures(const vector<string>& paths) {
     pendingTexturePaths = paths;
+}
+
+void Renderer::loadDynamicMeshes(const vector<string>& meshFiles, const vector<int>& materialIndices,
+                                 const vector<MeshInstance>& instances) {
+    sceneMeshes.clear();
+    for (size_t i = 0; i < meshFiles.size(); i++) {
+        sceneMeshes.push_back(Mesh::load(meshFiles[i], materialIndices[i], sceneTriangles, sceneBVH));
+    }
+
+    sceneMeshInstances = instances;
+
+    // sceneInstances/sceneTLAS keep a fixed size from here on -- only their contents are
+    // refreshed (memcpy) each frame in updateDynamicData(), mirroring the sphereBuffer pattern.
+    sceneInstances.resize(sceneMeshInstances.size());
+
+    // Single-leaf TLAS: with <= a handful of instances, a real BVH tree buys nothing --
+    // one leaf node containing all instances is provably optimal. instanceCount is stored
+    // in tlasNodes[0].triCount, mirroring how the static path overloads bvhCount==0.
+    sceneTLAS.assign(1, GPUBVHNode{});
+    sceneTLAS[0].leftFirst = 0;
+    sceneTLAS[0].triCount = static_cast<int>(sceneMeshInstances.size());
 }
 
 // ---- Initialization ----
@@ -88,7 +111,7 @@ void Renderer::initVulkan() {
 
     // World-space SH cache: dense buffer covering all possible cascade-0 cells.
     // 4 vec4s per cell (L0, L1x, L1y, L1z). Indexed by flat grid cell, not hash slot.
-    // Persists across frames — written by probe_shcache.comp with EMA blending.
+    // Persists across frames â€” written by probe_shcache.comp with EMA blending.
     {
         auto gs = rcConfig.gridSize(0);
         uint32_t numCells = uint32_t(gs.x) * uint32_t(gs.y) * uint32_t(gs.z);
@@ -112,6 +135,7 @@ void Renderer::initVulkan() {
         materialBuffer.handle, sphereBuffer.handle, triangleBuffer.handle, lightBuffer.handle,
         planeBuffer.handle, quadBuffer.handle, cubeBuffer.handle, bvhBuffer.handle,
         photonBuffer.handle, photonCounterBuffer.handle, gridHeadBuffer.handle, photonNextBuffer.handle,
+        instanceBuffer.handle, tlasBuffer.handle,
         textureSampler, &textureImageViews,
         ldrImage.view,  // binding 0: rgba8 output
         hdrImage.view   // fallback for unused texture slots
@@ -136,6 +160,11 @@ void Renderer::createSceneBuffers() {
     quadBuffer = make(sizeof(GPUQuad) * max((size_t)1, sceneQuads.size()));
     cubeBuffer = make(sizeof(GPUCube) * max((size_t)1, sceneCubes.size()));
     bvhBuffer = make(sizeof(GPUBVHNode) * max((size_t)1, sceneBVH.size()));
+
+    // Fixed-size, per-frame-rewritten buffers for the TLAS/instance system. Sized off the
+    // CPU-side instance count -- sceneInstances/sceneTLAS never resize after loadDynamicMeshes().
+    instanceBuffer = make(sizeof(GPUInstance) * max((size_t)1, sceneInstances.size()));
+    tlasBuffer = make(sizeof(GPUBVHNode) * max((size_t)1, sceneTLAS.size()));
 
     // Caustics Buffers
     uint32_t maxPhotons = 1000000;
@@ -165,6 +194,8 @@ void Renderer::uploadSceneData() {
     if (!sceneQuads.empty()) memcpy(quadBuffer.mapped, sceneQuads.data(), sizeof(GPUQuad) * sceneQuads.size());
     if (!sceneCubes.empty()) memcpy(cubeBuffer.mapped, sceneCubes.data(), sizeof(GPUCube) * sceneCubes.size());
     if (!sceneBVH.empty()) memcpy(bvhBuffer.mapped, sceneBVH.data(), sizeof(GPUBVHNode) * sceneBVH.size());
+    if (!sceneInstances.empty()) memcpy(instanceBuffer.mapped, sceneInstances.data(), sizeof(GPUInstance) * sceneInstances.size());
+    if (!sceneTLAS.empty()) memcpy(tlasBuffer.mapped, sceneTLAS.data(), sizeof(GPUBVHNode) * sceneTLAS.size());
 }
 
 // ---- Textures ----
@@ -247,7 +278,7 @@ void Renderer::createTextureResources() {
 // ---- Descriptor Set Layouts ----
 
 void Renderer::createSceneDescriptorSetLayout() {
-    vector<VkDescriptorSetLayoutBinding> bindings(14);
+    vector<VkDescriptorSetLayoutBinding> bindings(16);
 
     // binding 0: placeholder storage image (the two-pass shaders don't declare it but the layout must match)
     bindings[0].binding = 0;
@@ -277,9 +308,17 @@ void Renderer::createSceneDescriptorSetLayout() {
         bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
+    // bindings 14-15: TLAS/BLAS instance data (GPUInstance[], TLAS nodes reusing GPUBVHNode)
+    for (uint32_t i = 14; i <= 15; i++) {
+        bindings[i].binding = i;
+        bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[i].descriptorCount = 1;
+        bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+
     VkDescriptorSetLayoutCreateInfo ci{};
     ci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    ci.bindingCount = 14;
+    ci.bindingCount = 16;
     ci.pBindings = bindings.data();
 
     if (vkCreateDescriptorSetLayout(ctx.device, &ci, nullptr, &sceneDescSetLayout) != VK_SUCCESS)
@@ -333,7 +372,7 @@ void Renderer::createRCDescriptorSetLayouts() {
             throw std::runtime_error("Renderer: rcParentHashDescSetLayout creation failed.");
     }
 
-    // World SH cache set: 1 SSBO — dense cell-indexed irradiance cache for stable second bounce
+    // World SH cache set: 1 SSBO â€” dense cell-indexed irradiance cache for stable second bounce
     {
         VkDescriptorSetLayoutBinding bind{ 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
                                            VK_SHADER_STAGE_COMPUTE_BIT, nullptr };
@@ -400,14 +439,14 @@ void Renderer::createRCPipelineLayouts() {
 
     // Alloc: set0=gbufDescSetLayout (G-buffer pixels for cascade-0),
     //        set1=rcHashDescSetLayout (target level's hash map, write),
-    //        set2=rcParentHashDescSetLayout (parent level's map, read — for cascade k>0)
+    //        set2=rcParentHashDescSetLayout (parent level's map, read â€” for cascade k>0)
     rcAllocPipelineLayout = makeLayout(
         { gbufDescSetLayout, rcHashDescSetLayout, rcParentHashDescSetLayout },
         sizeof(RCAllocPC));
 
     // Trace: set0=sceneDescSetLayout (BVH + materials + textures),
     //        set1=rcHashDescSetLayout (reads slotToKey, writes cascadeData),
-    //        set2=rcSHCacheDescSetLayout (world SH cache — read-only for second bounce)
+    //        set2=rcSHCacheDescSetLayout (world SH cache â€” read-only for second bounce)
     rcTracePipelineLayout = makeLayout(
         { sceneDescSetLayout, rcHashDescSetLayout, rcSHCacheDescSetLayout },
         sizeof(RCTracePC));
@@ -507,7 +546,7 @@ void Renderer::createDescriptorPool() {
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
     poolSizes[0].descriptorCount = 10;                                          // 7 gbuf + 2 tonemap + 1 legacyPass
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-    poolSizes[1].descriptorCount = uint32_t(24 + kMaxCascades * 7 + kMaxCascades * 4 + 1);  // +1 for worldSHCache
+    poolSizes[1].descriptorCount = uint32_t(24 + kMaxCascades * 7 + kMaxCascades * 4 + 1 + 4);  // +1 worldSHCache, +4 instance/TLAS (sceneDescSet + legacyPass x2 each)
     poolSizes[2].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     poolSizes[2].descriptorCount = 200;                                         // 100 sceneDescSet + 100 legacyPass
 
@@ -558,7 +597,7 @@ void Renderer::createSceneDescriptorSet() {
         bufInfos[i].range = VK_WHOLE_SIZE;
     }
 
-    // binding 9: texture sampler array — fill unused slots with hdrImage (in GENERAL layout)
+    // binding 9: texture sampler array â€” fill unused slots with hdrImage (in GENERAL layout)
     vector<VkDescriptorImageInfo> texInfos(100);
     for (int i = 0; i < 100; i++) {
         texInfos[i].sampler = textureSampler;
@@ -586,7 +625,16 @@ void Renderer::createSceneDescriptorSet() {
         causticBufInfos[i].range = VK_WHOLE_SIZE;
     }
 
-    vector<VkWriteDescriptorSet> writes(14);
+    // bindings 14-15: TLAS/BLAS instance data
+    Buffer* tlasBufs[] = { &instanceBuffer, &tlasBuffer };
+    vector<VkDescriptorBufferInfo> tlasBufInfos(2);
+    for (int i = 0; i < 2; i++) {
+        tlasBufInfos[i].buffer = tlasBufs[i]->handle;
+        tlasBufInfos[i].offset = 0;
+        tlasBufInfos[i].range = VK_WHOLE_SIZE;
+    }
+
+    vector<VkWriteDescriptorSet> writes(16);
 
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = sceneDescSet;
@@ -620,7 +668,16 @@ void Renderer::createSceneDescriptorSet() {
         writes[10 + i].pBufferInfo = &causticBufInfos[i];
     }
 
-    vkUpdateDescriptorSets(ctx.device, 14, writes.data(), 0, nullptr);
+    for (int i = 0; i < 2; i++) {
+        writes[14 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[14 + i].dstSet = sceneDescSet;
+        writes[14 + i].dstBinding = (uint32_t)(14 + i);
+        writes[14 + i].descriptorCount = 1;
+        writes[14 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[14 + i].pBufferInfo = &tlasBufInfos[i];
+    }
+
+    vkUpdateDescriptorSets(ctx.device, 16, writes.data(), 0, nullptr);
 }
 
 void Renderer::createGBufferDescriptorSet() {
@@ -785,7 +842,6 @@ void Renderer::mainLoop() {
 
         glfwPollEvents();
         processInput();
-        updateDynamicData();
         drawFrame();
 
         if (!rcSlotChecked) {
@@ -862,6 +918,35 @@ void Renderer::updateDynamicData() {
 
         memcpy(sphereBuffer.mapped, sceneSpheres.data(), sizeof(GPUSphere) * sceneSpheres.size());
     }
+
+    // TLAS/instance refresh: recompute each instance's world transform from elapsed time,
+    // rebuild the trivial single-leaf TLAS, and re-upload both -- zero BVH rebuild cost.
+    // Mirrors the sphereBuffer re-upload pattern above exactly.
+    if (!sceneMeshInstances.empty()) {
+        if (enableDynamicInstances) {
+            float t = (float)glfwGetTime();
+
+            glm::vec3 worldMin(std::numeric_limits<float>::infinity());
+            glm::vec3 worldMax(-std::numeric_limits<float>::infinity());
+            for (size_t i = 0; i < sceneMeshInstances.size(); i++) {
+                const MeshInstance& mi = sceneMeshInstances[i];
+                sceneInstances[i] = mi.computeGPUInstance(sceneMeshes[mi.meshIndex], t);
+                worldMin = glm::min(worldMin, sceneInstances[i].worldAabbMin);
+                worldMax = glm::max(worldMax, sceneInstances[i].worldAabbMax);
+            }
+            memcpy(instanceBuffer.mapped, sceneInstances.data(), sizeof(GPUInstance) * sceneInstances.size());
+
+            sceneTLAS[0].aabbMin = worldMin;
+            sceneTLAS[0].aabbMax = worldMax;
+            sceneTLAS[0].leftFirst = 0;
+            sceneTLAS[0].triCount = static_cast<int>(sceneMeshInstances.size());
+            memcpy(tlasBuffer.mapped, sceneTLAS.data(), sizeof(GPUBVHNode) * sceneTLAS.size());
+        } else {
+            // Disabled: zero out the instance count so traverseScene's TLAS walk is a true no-op.
+            sceneTLAS[0].triCount = 0;
+            memcpy(tlasBuffer.mapped, sceneTLAS.data(), sizeof(GPUBVHNode) * sceneTLAS.size());
+        }
+    }
 }
 
 void Renderer::drawFrame() {
@@ -870,6 +955,18 @@ void Renderer::drawFrame() {
     if (width == 0 || height == 0) return;
 
     vkWaitForFences(ctx.device, 1, &cmdManager.inFlightFence, VK_TRUE, UINT64_MAX);
+
+    // GPU has finished the previous frame's dispatch -- now safe to overwrite the
+    // mapped CPU_TO_GPU buffers (sphere/instance/TLAS) it was reading from. Calling
+    // this any earlier (e.g. before the fence wait) races the CPU's memcpy against
+    // the GPU's in-flight SSBO reads: a torn read of a 64-byte instance transform
+    // produces a garbage ray-transform for whatever pixels the GPU happens to be
+    // processing mid-write, and since both the primary-visibility and shadow passes
+    // read the same instances[] buffer within that one corrupted frame, the BLAS
+    // traversal misses for those rays in both -- producing matching "missing chunk"
+    // patches in the rendered geometry AND its cast shadow that shift every frame
+    // with CPU/GPU timing (exactly the flickering black-square doughnut artifact).
+    updateDynamicData();
 
     // Read actual probe counts from previous frame, GPU is now idle, mapped memory is safe.
     for (int lvl = 0; lvl < rcConfig.numCascades; lvl++) {
@@ -942,7 +1039,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     uint32_t dX = swapchain.extent.width / 16;
     uint32_t dY = swapchain.extent.height / 16;
 
-    // Build camera push constants — shared by both legacy and RC pipeline paths.
+    // Build camera push constants â€” shared by both legacy and RC pipeline paths.
     CameraPushConstants pc{};
     pc.camPos = glm::vec4(cameraPos, 0.0f);
     pc.camForward = glm::vec4(cameraFront, 0.0f);
@@ -954,7 +1051,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     pc.quadCount = (int)sceneQuads.size();
     pc.cubeCount = (int)sceneCubes.size();
     pc.lightCount = (int)sceneLights.size();
-    pc.bvhCount = (int)sceneBVH.size();
+    pc.bvhCount = staticBvhNodeCount;
     pc.maxDepth = maxDepth;
     pc.shadowRays = shadowRays;
     pc.primaryRaysPerPixel = primaryRaysPerPixel;
@@ -1030,7 +1127,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     }
     emitTransferToComputeBarrier(cmd);  // fill writes visible before allocation shaders read
 
-    // === 2. Primary visibility — fills G-buffer ===
+    // === 2. Primary visibility â€” fills G-buffer ===
     // primary.comp: one thread per pixel, outputs world-pos / normal / albedo / emissive.
 
     VkDescriptorSet primarySets[] = { sceneDescSet, gbufDescSet };
@@ -1098,7 +1195,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         tracePC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(level));
         tracePC.intervalStart = rcConfig.intervalStart(level);
         tracePC.intervalEnd = rcConfig.intervalEnd(level);
-        tracePC.bvhCount = (int)sceneBVH.size();
+        tracePC.bvhCount = staticBvhNodeCount;
         tracePC.maxActiveSlots = (int)rcStorage.maxActiveSlots[level];
         tracePC.lightCount = (int)sceneLights.size();
         tracePC.planeCount = (int)scenePlanes.size();
@@ -1218,7 +1315,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
         gatherPC.camPos = glm::vec4(cameraPos, 0.0f);
         gatherPC.hashSize = (int)rcStorage.hashTableSize[0];
-        gatherPC.bvhCount = (int)sceneBVH.size();
+        gatherPC.bvhCount = staticBvhNodeCount;
         gatherPC.planeCount = (int)scenePlanes.size();
         gatherPC.quadCount = (int)sceneQuads.size();
         gatherPC.lightCount = (int)sceneLights.size();
@@ -1239,7 +1336,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         gatherPC.gridMax = glm::vec4(gridMax, 0.0f);
         gatherPC.gridRes = gridRes;
 
-        // set 0 = sceneDescSet (BVH + lights + materials — matches bvh.glsl/lighting.glsl set 0 bindings)
+        // set 0 = sceneDescSet (BVH + lights + materials â€” matches bvh.glsl/lighting.glsl set 0 bindings)
         // set 1 = gbufDescSet (G-buffer read at b0-b4, hdrImage write at b5)
         // set 2 = rcHashDescSets[0] (cascade-0 hash + cascadeData read)
         VkDescriptorSet gatherSets[] = { sceneDescSet, gbufDescSet, rcHashDescSets[0] };
@@ -1256,7 +1353,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         // === 6.5 Reflection pass (fog + first-order reflections for all geometry pixels) ===
         // Reads outHDR (from gather_simple), applies fog to ALL geometry pixels, blends
         // reflection BVH color for reflective pixels (~30%). Reuses rcGatherPipelineLayout
-        // (same 3 descriptor sets and RCGatherPC push constant) — no new layout needed.
+        // (same 3 descriptor sets and RCGatherPC push constant) â€” no new layout needed.
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, rcReflectionPipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
             rcGatherPipelineLayout, 0, 3, gatherSets, 0, nullptr);
@@ -1280,7 +1377,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
         transPC.skyTopColor    = glm::vec4(skyTopColor,    0.0f);
         transPC.worldOriginSpacing = glm::vec4(rcConfig.worldOrigin, rcConfig.spacing(0));
         transPC.gridSizeOctRes = glm::ivec4(rcConfig.gridSize(0), rcConfig.octRes(0));
-        transPC.bvhCount = (int)sceneBVH.size();
+        transPC.bvhCount = staticBvhNodeCount;
         transPC.lightCount = (int)sceneLights.size();
         transPC.planeCount = (int)scenePlanes.size();
         transPC.quadCount = (int)sceneQuads.size();
@@ -1347,7 +1444,7 @@ void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 15);
             vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestampPool, 1);
         }
-        // No barrier needed before the copy — image layout transitions act as execution barriers.
+        // No barrier needed before the copy â€” image layout transitions act as execution barriers.
     }
 
     } // end else (RC pipeline)
@@ -1397,6 +1494,8 @@ void Renderer::cleanup() {
     quadBuffer = Buffer();
     cubeBuffer = Buffer();
     bvhBuffer = Buffer();
+    instanceBuffer = Buffer();
+    tlasBuffer = Buffer();
 
     // Destroy Caustics VMA buffers
     photonBuffer = Buffer();

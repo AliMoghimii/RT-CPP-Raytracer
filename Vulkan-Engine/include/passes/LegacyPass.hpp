@@ -15,6 +15,7 @@ public:
         VkBuffer materialBuf, sphereBuf, triangleBuf, lightBuf,
                  planeBuf, quadBuf, cubeBuf, bvhBuf;
         VkBuffer photonBuf, photonCounterBuf, gridHeadBuf, photonNextBuf;
+        VkBuffer instanceBuf, tlasBuf;
         VkSampler sampler;
         const std::vector<VkImageView>* texViews;
         VkImageView outputView;   // ldrImage - binding 0, rgba8 write

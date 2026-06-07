@@ -12,6 +12,7 @@ layout(local_size_x = 256) in;
 #include "../common/material.glsl"
 #include "../common/lighting.glsl"
 #include "../common/shadow.glsl"
+#include "../common/tlas.glsl"
 #include "../common/octahedral.glsl"
 #include "../common/random.glsl"
 
@@ -194,7 +195,7 @@ void main()
     // --- 2. BVH traversal capped at the analytical hit ---
     ray.tMax = analytT;
     HitInfo bvhHit;
-    bool bvhResult = traverseBVH(ray, pc.bvhCount, bvhHit);
+    bool bvhResult = traverseScene(ray, pc.bvhCount, bvhHit);
 
     // --- 3. Nearest overall hit ---
     bool didHit = bvhResult || (analytMat >= 0);
@@ -223,7 +224,7 @@ void main()
                 float NdotL = max(0.0, dot(hitN, lightDir));
                 if (NdotL < 0.001) continue;
 
-                vec3 shadowOrigin = hitPos + hitN * 0.001;
+                vec3 shadowOrigin = offsetRayOrigin(hitPos, hitN, lightDir, 0.001);
                 float shadowMaxT = lightDist - 0.01;
 
                 // Shadow evaluation — two paths sharing the same condition.
@@ -266,7 +267,7 @@ void main()
                         sr.direction = lightDir;
                         sr.tMin      = 0.001;
                         sr.tMax      = shadowMaxT;
-                        shadowAtten *= traverseBVHShadow(sr, pc.bvhCount);
+                        shadowAtten *= traverseSceneShadow(sr, pc.bvhCount);
                     }
                 } else {
                     // --- Unified soft shadow: N samples test the same jittered direction for
@@ -318,7 +319,7 @@ void main()
                             sr.direction = jitDir;
                             sr.tMin      = 0.001;
                             sr.tMax      = jitMaxT;
-                            sampleAtten *= traverseBVHShadow(sr, pc.bvhCount);
+                            sampleAtten *= traverseSceneShadow(sr, pc.bvhCount);
                         }
                         shadowAtten += sampleAtten;
                     }

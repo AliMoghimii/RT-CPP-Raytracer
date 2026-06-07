@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <map>
 
 using namespace std;
 
@@ -42,6 +43,54 @@ static float surfaceArea(const AABB& box) {
 static float surfaceArea(const GPUBVHNode& node) {
     glm::vec3 e = node.aabbMax - node.aabbMin;
     return 2.0f * (e.x * e.y + e.y * e.z + e.z * e.x);
+}
+
+// Strict ordering over vec3 so it can key a std::map -- used to identify "the same vertex
+// position" across triangles that don't share an explicit shared-vertex index (GPUTriangle
+// stores baked positions, not OBJ vertex indices).
+struct Vec3Less {
+    bool operator()(const glm::vec3& a, const glm::vec3& b) const {
+        if (a.x != b.x) return a.x < b.x;
+        if (a.y != b.y) return a.y < b.y;
+        return a.z < b.z;
+    }
+};
+
+// Smooth-normal averaging: for triangles that came in flat-shaded (no `vn` data, isSmooth==0),
+// accumulate each face's area-weighted normal (unnormalized cross product) onto every vertex
+// position it touches, normalize the per-position sums, and write them back as per-vertex
+// normals. This turns faceted flat shading into smooth Phong-style shading for meshes that
+// don't ship normals (e.g. model_teapot.obj has 0 `vn` lines).
+static void computeSmoothNormals(vector<GPUTriangle>& triangles, size_t firstTri, size_t triCount) {
+    std::map<glm::vec3, glm::vec3, Vec3Less> normalSum;
+
+    for (size_t i = firstTri; i < firstTri + triCount; i++) {
+        GPUTriangle& tri = triangles[i];
+        if (tri.isSmooth) continue;
+
+        glm::vec3 faceNormal = glm::cross(tri.v1 - tri.v0, tri.v2 - tri.v0);
+        normalSum[tri.v0] += faceNormal;
+        normalSum[tri.v1] += faceNormal;
+        normalSum[tri.v2] += faceNormal;
+    }
+
+    if (normalSum.empty()) return;
+
+    for (auto& kv : normalSum) {
+        if (glm::length(kv.second) > 1e-8f) {
+            kv.second = glm::normalize(kv.second);
+        }
+    }
+
+    for (size_t i = firstTri; i < firstTri + triCount; i++) {
+        GPUTriangle& tri = triangles[i];
+        if (tri.isSmooth) continue;
+
+        tri.n0 = normalSum[tri.v0];
+        tri.n1 = normalSum[tri.v1];
+        tri.n2 = normalSum[tri.v2];
+        tri.isSmooth = 1;
+    }
 }
 
 void ModelLoader::load(const string& filename, vector<GPUTriangle>& sceneTriangles, vector<GPUBVHNode>& bvhNodes, int materialIndex, const glm::vec3& position, const glm::vec3& rotation, float scale) {
@@ -375,21 +424,59 @@ void ModelLoader::subdivideSAH(int nodeIdx, vector<GPUBVHNode>& bvhNodes,
     subdivideSAH(rightChild, bvhNodes, triangles, nodesUsed);
 }
 
+void ModelLoader::loadOBJLocal(const string& filename, vector<GPUTriangle>& sceneTriangles, int materialIndex) {
+    size_t firstTri = sceneTriangles.size();
+
+    // Identity transform: the mesh stays in local space; per-instance placement happens
+    // via a GPUInstance transform matrix at trace time instead of baked-in vertex positions.
+    loadOBJ(filename, sceneTriangles, materialIndex, glm::vec3(0.0f), glm::vec3(0.0f), 1.0f);
+
+    computeSmoothNormals(sceneTriangles, firstTri, sceneTriangles.size() - firstTri);
+}
+
+void ModelLoader::buildBVHRange(vector<GPUTriangle>& triangles, int firstTri, int triCount, vector<GPUBVHNode>& outNodes) {
+    outNodes.clear();
+    if (triCount <= 0) {
+        return;
+    }
+
+    outNodes.resize(triCount * 2);
+
+    GPUBVHNode& root = outNodes[0];
+    root.leftFirst = firstTri;   // leaves reference global indices into `triangles` directly
+    root.triCount = triCount;
+
+    updateNodeBounds(0, outNodes, triangles);
+
+    int nodesUsed = 1;
+    subdivideSAH(0, outNodes, triangles, nodesUsed);
+
+    outNodes.resize(nodesUsed);
+}
+
 void ModelLoader::buildBVH(vector<GPUTriangle>& triangles, vector<GPUBVHNode>& bvhNodes) {
     if (triangles.empty()) {
         return;
     }
 
-    bvhNodes.resize(triangles.size() * 2);
+    buildBVHRange(triangles, 0, static_cast<int>(triangles.size()), bvhNodes);
+}
 
-    GPUBVHNode& root = bvhNodes[0];
-    root.leftFirst = 0;
-    root.triCount = static_cast<int>(triangles.size());
+int ModelLoader::appendBLAS(vector<GPUTriangle>& sceneTriangles, vector<GPUBVHNode>& sceneBVH, int triOffset, int triCount) {
+    vector<GPUBVHNode> localNodes;
+    buildBVHRange(sceneTriangles, triOffset, triCount, localNodes);
 
-    updateNodeBounds(0, bvhNodes, triangles);
+    int nodeOffset = static_cast<int>(sceneBVH.size());
 
-    int nodesUsed = 1;
-    subdivideSAH(0, bvhNodes, triangles, nodesUsed);
+    // Leaf nodes already carry global triangle indices (buildBVHRange seeded the root with
+    // `firstTri = triOffset`), so only internal-node child indices need shifting to account
+    // for the BLAS's new position within the shared sceneBVH array.
+    for (auto& node : localNodes) {
+        if (node.triCount == 0) {
+            node.leftFirst += nodeOffset;
+        }
+    }
 
-    bvhNodes.resize(nodesUsed);
+    sceneBVH.insert(sceneBVH.end(), localNodes.begin(), localNodes.end());
+    return nodeOffset;
 }

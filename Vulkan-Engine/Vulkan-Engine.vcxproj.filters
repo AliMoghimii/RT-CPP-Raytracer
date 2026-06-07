@@ -110,6 +110,9 @@
     <ClCompile Include="source\scene\ImageLoader.cpp">
       <Filter>Source\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="source\scene\Mesh.cpp">
+      <Filter>Source\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="source\scene\ModelLoader.cpp">
       <Filter>Source\Scene</Filter>
     </ClCompile>
@@ -185,6 +188,12 @@
       <Filter>Include\Scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\ImageLoader.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\Mesh.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\MeshInstance.hpp">
       <Filter>Include\Scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\ModelLoader.hpp">

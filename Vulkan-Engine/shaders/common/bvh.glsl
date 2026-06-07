@@ -29,7 +29,11 @@ struct GPUTriangle {
 layout(std430, set = 0, binding = 3) readonly buffer TriangleBuffer { GPUTriangle triangles[]; };
 layout(std430, set = 0, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhNodes[]; };
 
-#define BVH_STACK_SIZE 32
+// 64: a binned-SAH tree over a dense BLAS (e.g. the ~76K-tri doughnut) can exceed the
+// depth a 32-deep DFS stack supports; when stackPtr+2 > BVH_STACK_SIZE the push is silently
+// dropped (see below), losing whole subtrees -- producing exactly "some triangles render,
+// some don't, and which ones flips with view angle" as traversal order shifts per-ray.
+#define BVH_STACK_SIZE 64
 
 // Iterative depth-first BVH traversal using an explicit stack (GPU has no call stack).
 // The BVH is a binary tree of axis-aligned bounding boxes.  Leaf nodes store a contiguous
@@ -40,7 +44,10 @@ layout(std430, set = 0, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhN
 // only if the AABB is hit and closer than the current best.  hit.t tracks the closest hit
 // so far -- any AABB farther than hit.t is culled immediately (main source of speedup).
 // invDir = 1/ray.direction is precomputed once so the AABB test avoids per-node division.
-bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
+// rootIndex-parameterized core: lets BLAS traversal (root != 0, e.g. an appended mesh's
+// subtree within the shared sceneBVH array) reuse the exact same proven DFS loop as the
+// always-rooted-at-0 static scene traversal.
+bool traverseBVHFrom(Ray ray, int rootIndex, int bvhNodeCount, out HitInfo hit) {
     hit.t = ray.tMax;
     int hitIndex = -1;
     float hitU = 0, hitV = 0;
@@ -49,7 +56,7 @@ bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
 
     int stack[BVH_STACK_SIZE];
     int stackPtr = 0;
-    stack[stackPtr++] = 0;              // start at the root (node 0)
+    stack[stackPtr++] = rootIndex;
     vec3 invDir = 1.0 / ray.direction;  // precomputed for the slab test
 
     while (stackPtr > 0) {
@@ -108,6 +115,11 @@ bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
     hit.materialIndex = tri.materialIndex;
 
     return true;
+}
+
+// Static-scene entry point: always rooted at node 0, exactly as before the BLAS refactor.
+bool traverseBVH(Ray ray, int bvhNodeCount, out HitInfo hit) {
+    return traverseBVHFrom(ray, 0, bvhNodeCount, hit);
 }
 
 #endif

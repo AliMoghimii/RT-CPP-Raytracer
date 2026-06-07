@@ -7,12 +7,12 @@
 // This is ~4x faster than the old nearest-hit loop because:
 //   (a) Single pass — no 4x traverseBVH loop
 //   (b) Early exit as soon as any opaque triangle is found
-vec3 traverseBVHShadow(Ray ray, int bvhCount) {
+vec3 traverseBVHShadowFrom(Ray ray, int rootIndex, int bvhCount) {
     if (bvhCount == 0) return vec3(1.0);
 
     int stack[BVH_STACK_SIZE];
     int stackPtr = 0;
-    stack[stackPtr++] = 0;
+    stack[stackPtr++] = rootIndex;
     vec3  invDir = 1.0 / ray.direction;
     float tMax   = ray.tMax;
 
@@ -43,6 +43,11 @@ vec3 traverseBVHShadow(Ray ray, int bvhCount) {
         }
     }
     return vec3(1.0);
+}
+
+// Static-scene entry point: always rooted at node 0, exactly as before the BLAS refactor.
+vec3 traverseBVHShadow(Ray ray, int bvhCount) {
+    return traverseBVHShadowFrom(ray, 0, bvhCount);
 }
 
 #endif

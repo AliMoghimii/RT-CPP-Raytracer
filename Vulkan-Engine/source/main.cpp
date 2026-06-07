@@ -102,6 +102,10 @@ int main() {
     materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // 12: Matte White
     materials.push_back({ glm::vec3(1.0f, 0.1f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // 13: Matte Red
     materials.push_back({ glm::vec3(0.1f, 1.0f, 0.1f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.0f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.95f, 0.0f, 1, 0, -1, -1, -1, -1, -1, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // 14: Matte Green
+    // useTexture = 2 selects triplanar world-space projection (no UVs needed -- the teapot OBJ has none);
+    // proceduralScale doubles as the world-space tiling frequency for sampleTriplanar(). Albedo only --
+    // normalMapIndex stays -1 since triplanar normal-map blending needs a 3-way tangent-space whiteout blend.
+    materials.push_back({ glm::vec3(1.0f, 1.0f, 1.0f), 0.1f, glm::vec3(0.0f, 0.0f, 0.0f), 1.0f, glm::vec3(0.0f, 0.0f, 0.0f), 0.5f, 0.0f, 0.0f, 1.0f, GLOBAL_SHADING_MODEL, 0, 0.5f, 0.0f, 1, 2, tilesColor, -1, -1, -1, -1, 0.3f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }); // 15: Tiles Triplanar PBR
 
     planes.push_back({ glm::vec3(0.0f, -0.5f, 0.0f), 0.0f, glm::vec3(0.0f, 1.0f, 0.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f });
 
@@ -111,42 +115,42 @@ int main() {
     quads.push_back({ glm::vec3(15.0f, -0.5f, 30.0f), 0.0f, glm::vec3(-30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, -1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Back Wall (Matte White)
     quads.push_back({ glm::vec3(-15.0f, -0.5f, -15.0f), 0.0f, glm::vec3(30.0f, 0.0f, 0.0f), 0.0f, glm::vec3(0.0f, 25.5f, 0.0f), 0.0f, glm::vec3(0.0f, 0.0f, 1.0f), 12, 0.0f, 0.0f, 0.0f, 0.0f }); // Front Wall (Matte White)
 
-    cubes.push_back({
-        glm::vec3(-3.0f, -3.0f, -3.0f), 0.0f, 
-        glm::vec3(3.0f, 3.0f, 3.0f), 0.0f,   
-        glm::vec3(0.0f, 2.0f, 7.0f), 0.0f,   
-        glm::vec3(0.0f, 45.0f, 0.0f),        
-        14, 0.0f, 0.0f, 0.0f, 0.0f            
-        });
+    //cubes.push_back({
+    //    glm::vec3(-3.0f, -3.0f, -3.0f), 0.0f,
+    //    glm::vec3(3.0f, 3.0f, 3.0f), 0.0f,
+    //    glm::vec3(0.0f, 2.0f, 7.0f), 0.0f,
+    //    glm::vec3(0.0f, 45.0f, 0.0f),
+    //    14, 0.0f, 0.0f, 0.0f, 0.0f
+    //    });
 
-    spheres.push_back({
-        glm::vec3(-15.0f, 2.0f, 2.0f), 2.0f,  
-        13, 0.0f, 0.0f, 0.0f   
-        });
+    //spheres.push_back({
+    //    glm::vec3(-15.0f, 2.0f, 2.0f), 2.0f,
+    //    13, 0.0f, 0.0f, 0.0f
+    //    });
 
-    auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
-        glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-        triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
-        };
+    //auto pushTri = [&](glm::vec3 v0, glm::vec3 v1, glm::vec3 v2, int matIdx) {
+    //    glm::vec3 flatN = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+    //    triangles.push_back({ v0, 0.0f, v1, 0.0f, v2, 0.0f, flatN, 0.0f, flatN, 0.0f, flatN, 0, matIdx, 0.0f, 0.0f, 0.0f });
+    //    };
 
-    const int numSegments = 64;
-    const float radius = 3.0f;
-    const float height = 5.0f;
-    const glm::vec3 baseCenter(5.0f, 2.0f, 0.0f); 
-    const glm::vec3 tip(5.0f, 2.0f + height, 0.0f);
-    const int glassMatIdx = 11; 
+    //const int numSegments = 64;
+    //const float radius = 3.0f;
+    //const float height = 5.0f;
+    //const glm::vec3 baseCenter(5.0f, 2.0f, 0.0f);
+    //const glm::vec3 tip(5.0f, 2.0f + height, 0.0f);
+    //const int glassMatIdx = 11;
 
-    const float PI = 3.14159265359f;
-    for (int i = 0; i < numSegments; i++) {
-        float theta1 = ((float)i / numSegments) * 2.0f * PI;
-        float theta2 = ((float)(i + 1) / numSegments) * 2.0f * PI;
+    //const float PI = 3.14159265359f;
+    //for (int i = 0; i < numSegments; i++) {
+    //    float theta1 = ((float)i / numSegments) * 2.0f * PI;
+    //    float theta2 = ((float)(i + 1) / numSegments) * 2.0f * PI;
 
-        glm::vec3 p1 = baseCenter + glm::vec3(cos(theta1) * radius, 0.0f, sin(theta1) * radius);
-        glm::vec3 p2 = baseCenter + glm::vec3(cos(theta2) * radius, 0.0f, sin(theta2) * radius);
+    //    glm::vec3 p1 = baseCenter + glm::vec3(cos(theta1) * radius, 0.0f, sin(theta1) * radius);
+    //    glm::vec3 p2 = baseCenter + glm::vec3(cos(theta2) * radius, 0.0f, sin(theta2) * radius);
 
-        pushTri(p1, p2, tip, glassMatIdx);
-        pushTri(p2, p1, baseCenter, glassMatIdx);
-    }
+    //    pushTri(p1, p2, tip, glassMatIdx);
+    //    pushTri(p2, p1, baseCenter, glassMatIdx);
+    //}
 
     // --- LIGHTS ---
     float lightRadius = (ENABLE_SOFT_SHADOWS == 1) ? 5.0f : 0.0f;
@@ -193,15 +197,7 @@ int main() {
         for (const auto& cube : cubes) {
             tessellateCube(cube, cube.materialIndex, triangles);
         }
-        //for (const auto& plane : planes) {
-        //    tessellatePlane(plane, plane.materialIndex, triangles);
-        //}
-        //for (const auto& quad : quads) {
-        //    tessellateQuad(quad, quad.materialIndex, triangles);
-        //}
 
-        /*quads.clear();
-        planes.clear();*/
         spheres.clear();
         cubes.clear();
 
@@ -210,6 +206,68 @@ int main() {
 
     engine.loadScene(materials, spheres, triangles, lights, planes, quads, cubes, bvhNodes);
     engine.loadTextures(texturePaths);
+
+    // --- TLAS/BLAS showcase: a doughnut floating in the middle of the room ---
+    // model_doughnut.obj is ~0.15 units across (real-world-scale Blender export, has its
+    // own vn/vt so no triplanar mapping is needed); scale it up to ~4.5 units and give it
+    // a simple flat material override. Bobs up/down sinusoidally and spins continuously --
+    // both driven purely by the per-frame transform refresh, no BVH rebuild.
+    const int tilesTriplanarMatIdx = 15;
+    const int solidGlassMatIdx = 11;
+    const int matteRedMatIdx = 13;
+
+    MeshInstance doughnut;
+    doughnut.meshIndex = 0;
+    doughnut.basePosition = glm::vec3(0.0f, 3.0f, 7.0f);
+    doughnut.baseRotationDeg = glm::vec3(90.0f, 0.0f, 0.0f);
+    doughnut.scale = 30.0f;
+    doughnut.spinDegPerSec = 30.0f;
+    doughnut.bobAmplitude = 1.0f;
+    doughnut.bobSpeed = 0.25f;
+    doughnut.materialOverride = matteRedMatIdx;
+
+    /*engine.loadDynamicMeshes(
+        { "assets/models/model_doughnut.obj" },
+        { matteRedMatIdx },
+        { doughnut }
+    );*/
+
+    MeshInstance doughnutGlass;
+    doughnutGlass.meshIndex = 0;
+    doughnutGlass.basePosition = glm::vec3(10.0f, 3.0f, 3.0f);
+    doughnutGlass.baseRotationDeg = glm::vec3(90.0f, 0.0f, 0.0f);
+    doughnutGlass.scale = 30.0f;
+    doughnutGlass.spinDegPerSec = 30.0f;
+    doughnutGlass.bobAmplitude = 1.0f;
+    doughnutGlass.bobSpeed = 0.25f;
+    doughnutGlass.materialOverride = solidGlassMatIdx;
+    engine.loadDynamicMeshes(
+        { "assets/models/model_doughnut.obj" },
+        { matteRedMatIdx, solidGlassMatIdx },
+        { doughnut, doughnutGlass }
+    );
+
+    //MeshInstance teapotTiles;
+    //teapotTiles.meshIndex = 0;
+    //teapotTiles.basePosition = glm::vec3(-4.0f, 3.0f, 7.0f);
+    //teapotTiles.baseRotationDeg = glm::vec3(0.0f, 0.0f, 0.0f);
+    //teapotTiles.scale = 0.05f;
+    //teapotTiles.spinDegPerSec = 30.0f;
+    //teapotTiles.materialOverride = matteRedMatIdx;
+
+    //MeshInstance teapotGlass;
+    //teapotGlass.meshIndex = 0;
+    //teapotGlass.basePosition = glm::vec3(4.0f, 3.0f, 7.0f);
+    //teapotGlass.baseRotationDeg = glm::vec3(0.0f, 0.0f, 0.0f);
+    //teapotGlass.scale = 0.05f;
+    //teapotGlass.spinDegPerSec = -30.0f;
+    //teapotGlass.materialOverride = solidGlassMatIdx;
+
+    //engine.loadDynamicMeshes(
+    //    { "assets/models/model_teapot.obj" },
+    //    { tilesTriplanarMatIdx },
+    //    { teapotTiles }
+    //);
 
     try {
         engine.run();

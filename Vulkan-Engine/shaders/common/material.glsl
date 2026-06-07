@@ -58,6 +58,36 @@ vec3 sampleAlbedo(GPUMaterial mat, vec2 uv) {
     return mat.color;
 }
 
+// Blend weights for triplanar projection: each world axis contributes proportionally to
+// how aligned the surface normal is with it. Sharpened (pow 4) so the blend stays tight
+// near edges instead of smearing across large flat faces.
+vec3 triplanarWeights(vec3 n) {
+    vec3 w = pow(abs(n), vec3(4.0));
+    return w / (w.x + w.y + w.z);
+}
+
+// Samples one texture three times -- once per world-axis projection (YZ, XZ, XY planes)
+// -- and blends by `weights`. Lets UV-less meshes (e.g. OBJs with no `vt` data) wear a
+// texture without stretch artifacts. `scale` sets the world-space tiling frequency.
+vec3 sampleTriplanar(int texIndex, vec3 worldPos, vec3 weights, float scale) {
+    vec3 p = worldPos * scale;
+    vec3 cx = textureLod(textures[nonuniformEXT(texIndex)], p.yz, 0.0).rgb;
+    vec3 cy = textureLod(textures[nonuniformEXT(texIndex)], p.xz, 0.0).rgb;
+    vec3 cz = textureLod(textures[nonuniformEXT(texIndex)], p.xy, 0.0).rgb;
+    return cx * weights.x + cy * weights.y + cz * weights.z;
+}
+
+// useTexture == 2: triplanar world-space projection (no UVs needed). Falls back to the
+// regular UV-mapped / flat-color paths for useTexture == 1 / 0.
+vec3 sampleAlbedo(GPUMaterial mat, vec2 uv, vec3 worldPos, vec3 worldNormal) {
+    if (mat.useTexture == 2 && mat.albedoIndex >= 0) {
+        float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 1.0;
+        vec3 texCol = sampleTriplanar(mat.albedoIndex, worldPos, triplanarWeights(worldNormal), scale);
+        return pow(max(texCol, vec3(0.0)), vec3(2.2));
+    }
+    return sampleAlbedo(mat, uv);
+}
+
 // Procedural pattern helpers (hash → value noise → fbm, used by patternType 2 and 3)
 float _patternHash(vec3 p) {
     p = fract(p * 0.3183099 + 0.1);

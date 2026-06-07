@@ -9,6 +9,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/material.glsl"
 #include "../common/lighting.glsl"
 #include "../common/shadow.glsl"
+#include "../common/tlas.glsl"
 #include "../common/octahedral.glsl"
 #include "../common/caustics.glsl"
 
@@ -274,7 +275,7 @@ void main() {
                 float lightDist = length(toLight);
 
                 Ray shadowRay;
-                shadowRay.origin = worldPos + normal * 0.001;
+                shadowRay.origin = offsetRayOrigin(worldPos, normal, lightDir, 0.001);
                 shadowRay.direction = lightDir;
                 shadowRay.tMin = 0.001;
                 shadowRay.tMax = lightDist - 0.01;
@@ -282,7 +283,7 @@ void main() {
                 // Analytical shadow first (planes + quads); BVH shadow for mesh occlusion (doughnut etc.).
                 vec3 shadowAtten = analyticalShadow(shadowRay.origin, shadowRay.direction, shadowRay.tMax);
                 if (dot(shadowAtten, shadowAtten) > 0.001) {
-                    shadowAtten *= traverseBVHShadow(shadowRay, pc.bvhCount);
+                    shadowAtten *= traverseSceneShadow(shadowRay, pc.bvhCount);
                 }
                 if (dot(shadowAtten, shadowAtten) > 0.001) {
                     float atten = 1.0 / max(lightDist * lightDist, 0.01);

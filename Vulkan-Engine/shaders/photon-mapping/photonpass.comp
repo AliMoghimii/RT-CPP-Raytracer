@@ -8,6 +8,7 @@ layout (local_size_x = 256) in;
 #include "../common/random.glsl"
 #include "../common/material.glsl"
 #include "../common/lighting.glsl"
+#include "../common/tlas.glsl"
 #include "../common/push_constants.glsl"
 
 // --- Analytical Geometry Structs ---
@@ -150,15 +151,62 @@ void main() {
             }
         }
 
+        // --- Dynamic instances (TLAS/BLAS): transform the ray into each instance's local
+        // space and reuse the proven inline triangle loop above (`t` is invariant across
+        // spaces -- see transformRayToLocal's doc comment in tlas.glsl -- so minHitDistance
+        // stays directly comparable against the world-space static hits already found). ---
+        int hitInstTri = -1;
+        mat3 hitInstNormalMat = mat3(1.0);
+        int hitInstMaterialOverride = -1;
+        {
+            int instanceCount = tlasNodes[0].triCount;
+            vec3 invDir = 1.0 / photonRay.direction;
+            for (int ii = 0; ii < instanceCount; ii++) {
+                GPUInstance inst = instances[ii];
+                if (intersectAABB(photonRay, invDir, inst.worldAabbMin, inst.worldAabbMax) >= minHitDistance) continue;
+
+                Ray localRay = transformRayToLocal(photonRay, inst.invTransform);
+                vec3 localInvDir = 1.0 / localRay.direction;
+                int stack[64]; int stackPtr = 0; stack[stackPtr++] = inst.blasRootIndex;
+                while (stackPtr > 0) {
+                    int nodeIdx = stack[--stackPtr];
+                    GPUBVHNode node = bvhNodes[nodeIdx];
+                    if (intersectAABB(localRay, localInvDir, node.aabbMin, node.aabbMax) < minHitDistance) {
+                        if (node.triCount > 0) {
+                            for (int i = 0; i < node.triCount; i++) {
+                                int triIdx = node.leftFirst + i; float tU, tV;
+                                GPUTriangle tri = triangles[triIdx];
+                                float dist = triangleIntersect(localRay, tri.v0, tri.v1, tri.v2, tU, tV);
+                                if (dist > 0.001 && dist < minHitDistance) {
+                                    minHitDistance = dist; hitObjType = 5; hitObjIndex = ii;
+                                    hitInstTri = triIdx;
+                                    hitInstNormalMat = transpose(mat3(inst.invTransform));
+                                    hitInstMaterialOverride = inst.materialOverride;
+                                }
+                            }
+                        } else {
+                            if (stackPtr + 2 <= 64) { stack[stackPtr++] = node.leftFirst; stack[stackPtr++] = node.leftFirst + 1; }
+                        }
+                    }
+                }
+            }
+        }
+
         if (hitObjType == -1) break;
         vec3 hitPos = photonRay.origin + photonRay.direction * minHitDistance;
         GPUMaterial mat; vec3 hitNormal;
 
         if (hitObjType == 0) { hitNormal = normalize(hitPos - spheres[hitObjIndex].center); mat = materials[spheres[hitObjIndex].materialIndex]; }
-        else if (hitObjType == 1) { hitNormal = triangles[hitObjIndex].n0; mat = materials[triangles[hitObjIndex].materialIndex]; } 
+        else if (hitObjType == 1) { hitNormal = triangles[hitObjIndex].n0; mat = materials[triangles[hitObjIndex].materialIndex]; }
         else if (hitObjType == 2) { hitNormal = planes[hitObjIndex].normalVector; mat = materials[planes[hitObjIndex].materialIndex]; }
         else if (hitObjType == 3) { hitNormal = quads[hitObjIndex].normalVector; mat = materials[quads[hitObjIndex].materialIndex]; }
         else if (hitObjType == 4) { hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]); mat = materials[cubes[hitObjIndex].materialIndex]; }
+        else if (hitObjType == 5) {
+            GPUTriangle tri = triangles[hitInstTri];
+            hitNormal = normalize(hitInstNormalMat * tri.n0);
+            int matIdx = (hitInstMaterialOverride >= 0) ? hitInstMaterialOverride : tri.materialIndex;
+            mat = materials[matIdx];
+        }
 
         vec3 originalNormal = hitNormal;
         if (dot(photonRay.direction, hitNormal) > 0.0) hitNormal = -hitNormal;

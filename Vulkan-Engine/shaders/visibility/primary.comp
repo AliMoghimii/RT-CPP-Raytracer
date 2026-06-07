@@ -6,6 +6,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/ray.glsl"
 #include "../common/bvh.glsl"
 #include "../common/material.glsl"
+#include "../common/tlas.glsl"
 #include "../common/push_constants.glsl"
 
 layout(set = 1, binding = 0, rgba32f) uniform writeonly image2D gPosition;
@@ -97,16 +98,16 @@ void main() {
     // BVH traversal capped to the nearest analytical hit.
     ray.tMax = analyticalT;
     HitInfo hit;
-    bool hasBVH = traverseBVH(ray, cam.bvhCount, hit);
+    bool hasBVH = traverseScene(ray, cam.bvhCount, hit);
 
     if (hasBVH) {
         GPUMaterial mat = materials[hit.materialIndex];
         vec2 surfaceUV = hit.uv;
-        vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
+        vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV, hit.position, hit.normal) : mat.color;
         color = applyProceduralPattern(mat, color, hit.position);
 
         vec3 n = hit.normal;
-        if (mat.normalMapIndex >= 0 && cam.enableTextures == 1) {
+        if (mat.useTexture != 2 && mat.normalMapIndex >= 0 && cam.enableTextures == 1) {
             vec3 mapN = textureLod(textures[nonuniformEXT(mat.normalMapIndex)], surfaceUV, 0.0).rgb * 2.0 - 1.0;
             n = normalize(getTBN(n) * mapN);
         }

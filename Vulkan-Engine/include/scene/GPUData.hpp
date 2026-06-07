@@ -123,3 +123,12 @@ struct GPUBVHNode {
     glm::vec3 aabbMax;
     int triCount;
 };
+
+struct GPUInstance {
+    glm::mat4 transform;     // local -> world
+    glm::mat4 invTransform;  // world -> local; transpose(mat3(.)) = normal matrix
+    glm::vec3 worldAabbMin;
+    int blasRootIndex;       // root node index into sceneBVH[]
+    glm::vec3 worldAabbMax;
+    int materialOverride;    // -1 = use triangle's own materialIndex
+};

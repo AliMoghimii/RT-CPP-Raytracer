@@ -14,6 +14,8 @@
 #include "resources/Buffer.hpp"
 #include "resources/Image.hpp"
 #include "scene/GPUData.hpp"
+#include "scene/Mesh.hpp"
+#include "scene/MeshInstance.hpp"
 #include "gi/CascadeConfig.hpp"
 #include "gi/CascadeStorage.hpp"
 #include "debug/FrameStats.hpp"
@@ -116,6 +118,19 @@ public:
     );
     void loadTextures(const std::vector<std::string>& paths);
 
+    // Loads BLAS meshes (appended into the shared sceneTriangles/sceneBVH after the static
+    // region) and registers MeshInstances that place them in the world via per-frame
+    // transform updates -- must be called after loadScene() and before the renderer's
+    // Vulkan init (run()), since it grows sceneTriangles/sceneBVH that createSceneBuffers()
+    // sizes buffers from. See updateDynamicData() for the per-frame TLAS/instance refresh.
+    void loadDynamicMeshes(
+        const std::vector<std::string>& meshFiles,
+        const std::vector<int>& materialIndices,
+        const std::vector<MeshInstance>& instances
+    );
+
+    bool enableDynamicInstances = true;
+
 private:
     GLFWwindow* window = nullptr;
     VulkanContext ctx;
@@ -137,6 +152,8 @@ private:
     Buffer quadBuffer;
     Buffer cubeBuffer;
     Buffer bvhBuffer;
+    Buffer instanceBuffer;  // GPUInstance[] -- binding 14, rebuilt+memcpy'd each frame
+    Buffer tlasBuffer;      // GPUBVHNode[] reused as a trivial single-leaf TLAS -- binding 15
 
     VkDescriptorSetLayout sceneDescSetLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout gbufDescSetLayout = VK_NULL_HANDLE;
@@ -203,6 +220,19 @@ private:
     std::vector<GPUQuad> sceneQuads;
     std::vector<GPUCube> sceneCubes;
     std::vector<GPUBVHNode> sceneBVH;
+
+    // Node count of the STATIC region of sceneBVH only (captured at loadScene(), before
+    // loadDynamicMeshes() appends BLAS subtrees). The static traversal (traverseBVH, always
+    // rooted at node 0) must be gated on this -- not sceneBVH.size() -- otherwise an empty
+    // static scene (count 0) would report a non-zero total once BLAS nodes land at index 0,
+    // and the static path would wrongly walk into a BLAS's local-space subtree as "node 0".
+    int staticBvhNodeCount = 0;
+
+    // --- Dynamic instanced meshes (TLAS/BLAS) ---
+    std::vector<Mesh> sceneMeshes;                  // BLAS metadata; triangles/BVH live in sceneTriangles/sceneBVH
+    std::vector<MeshInstance> sceneMeshInstances;   // CPU animation state, recomputed -> sceneInstances each frame
+    std::vector<GPUInstance> sceneInstances;        // GPU mirror of sceneMeshInstances, rebuilt every frame
+    std::vector<GPUBVHNode> sceneTLAS;              // trivial single-leaf TLAS; instanceCount lives in tlasNodes[0].triCount
 
     glm::vec3 cameraPos = glm::vec3(0.0f, 0.3f, -1.0f);
     glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, 1.0f);

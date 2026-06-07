@@ -8,6 +8,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 #include "../common/material.glsl"
 #include "../common/lighting.glsl"
 #include "../common/shadow.glsl"
+#include "../common/tlas.glsl"
 #include "../common/octahedral.glsl"
 
 // G-buffer (set 1 = gbufDescSet)
@@ -180,7 +181,7 @@ void main() {
         reflRay.tMin      = 0.001;
         reflRay.tMax      = reflT;
         HitInfo reflHit;
-        if (traverseBVH(reflRay, pc.bvhCount, reflHit)) {
+        if (traverseScene(reflRay, pc.bvhCount, reflHit)) {
             reflT = reflHit.t; reflMatIdx = reflHit.materialIndex;
             reflNormal = reflHit.normal; reflIsBVH = true; reflUV = reflHit.uv;
         }
@@ -294,7 +295,7 @@ void main() {
                     tpRay.tMin      = 0.001;
                     tpRay.tMax      = 8.0;
                     HitInfo tpHit;
-                    if (!traverseBVH(tpRay, pc.bvhCount, tpHit)) break;
+                    if (!traverseScene(tpRay, pc.bvhCount, tpHit)) break;
                     tpPos = tpPos + tpDir * tpHit.t;
                     GPUMaterial tpMat = materials[tpHit.materialIndex];
                     if (tpMat.transparency < 0.3) {

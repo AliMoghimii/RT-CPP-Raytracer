@@ -141,7 +141,16 @@ void LegacyPass::create(const CreateInfo& info) {
         causticBufInfos[i].range = VK_WHOLE_SIZE;
     }
 
-    VkWriteDescriptorSet writes[14] = {};
+    // bindings 14-15: TLAS/BLAS instance data (instances, TLAS nodes reusing GPUBVHNode layout)
+    VkBuffer tlasBuffers[2] = { info.instanceBuf, info.tlasBuf };
+    VkDescriptorBufferInfo tlasBufInfos[2];
+    for (int i = 0; i < 2; i++) {
+        tlasBufInfos[i].buffer = tlasBuffers[i];
+        tlasBufInfos[i].offset = 0;
+        tlasBufInfos[i].range = VK_WHOLE_SIZE;
+    }
+
+    VkWriteDescriptorSet writes[16] = {};
 
     writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     writes[0].dstSet = descSet;
@@ -175,7 +184,16 @@ void LegacyPass::create(const CreateInfo& info) {
         writes[10 + i].pBufferInfo = &causticBufInfos[i];
     }
 
-    vkUpdateDescriptorSets(info.device, 14, writes, 0, nullptr);
+    for (int i = 0; i < 2; i++) {
+        writes[14 + i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[14 + i].dstSet = descSet;
+        writes[14 + i].dstBinding = (uint32_t)(14 + i);
+        writes[14 + i].descriptorCount = 1;
+        writes[14 + i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[14 + i].pBufferInfo = &tlasBufInfos[i];
+    }
+
+    vkUpdateDescriptorSets(info.device, 16, writes, 0, nullptr);
 }
 
 void LegacyPass::record(VkCommandBuffer cmd, const CameraPushConstants& pc,

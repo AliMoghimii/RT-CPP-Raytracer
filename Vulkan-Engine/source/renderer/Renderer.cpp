@@ -901,6 +901,12 @@ void Renderer::mainLoop() {
             sceneManager.swapScene(path);
         }
 
+        if (debugUI.pendingLegacyToggle >= 0) {
+            bool useLegacy = debugUI.pendingLegacyToggle != 0;
+            debugUI.pendingLegacyToggle = -1;
+            sceneManager.setLegacyPipeline(useLegacy);
+        }
+
         if (!rcSlotChecked) {
             rcSlotChecked = true;
             vkDeviceWaitIdle(ctx.device);

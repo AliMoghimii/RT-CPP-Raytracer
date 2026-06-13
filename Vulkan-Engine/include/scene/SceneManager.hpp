@@ -15,9 +15,14 @@ public:
     void loadInitial(const std::string& path);
     void swapScene(const std::string& path);
 
+    // Re-loads the current scene file with useLegacyPipeline overridden, then rebuilds
+    // (re-tessellates or restores analytical primitives as appropriate) and reuploads.
+    void setLegacyPipeline(bool useLegacy);
+
 private:
     Renderer& renderer;
     std::unique_ptr<Scene> currentScene;
+    std::string currentScenePath;
 
     void applyToRenderer(const SceneData& data);
 };

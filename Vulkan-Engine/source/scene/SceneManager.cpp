@@ -3,6 +3,7 @@
 #include "renderer/Renderer.hpp"
 
 void SceneManager::loadInitial(const std::string& path) {
+    currentScenePath = path;
     currentScene = SceneLoader::loadFromFile(path);
     currentScene->build();
     applyToRenderer(currentScene->data());
@@ -11,7 +12,20 @@ void SceneManager::loadInitial(const std::string& path) {
 void SceneManager::swapScene(const std::string& path) {
     renderer.unloadSceneGPU();
 
+    currentScenePath = path;
     auto next = SceneLoader::loadFromFile(path);
+    next->build();
+    applyToRenderer(next->data());
+    currentScene = std::move(next);
+
+    renderer.reloadSceneGPU();
+}
+
+void SceneManager::setLegacyPipeline(bool useLegacy) {
+    renderer.unloadSceneGPU();
+
+    auto next = SceneLoader::loadFromFile(currentScenePath);
+    next->setUseLegacyPipeline(useLegacy);
     next->build();
     applyToRenderer(next->data());
     currentScene = std::move(next);

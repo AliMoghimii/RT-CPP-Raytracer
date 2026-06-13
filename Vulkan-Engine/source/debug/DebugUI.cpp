@@ -243,7 +243,10 @@ void DebugUI::panelSceneControls(Renderer& renderer) {
 }
 
 void DebugUI::panelLegacy(Renderer& renderer) {
-    ImGui::Checkbox("Use legacy pipeline", &renderer.useLegacyPipeline);
+    bool legacyMode = renderer.useLegacyPipeline;
+    if (ImGui::Checkbox("Use legacy pipeline", &legacyMode)) {
+        pendingLegacyToggle = legacyMode ? 1 : 0;
+    }
     ImGui::Separator();
 
     bool disabled = !renderer.useLegacyPipeline;

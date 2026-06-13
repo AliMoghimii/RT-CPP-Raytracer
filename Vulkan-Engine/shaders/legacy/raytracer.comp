@@ -189,6 +189,18 @@ layout(std430, binding = 6) readonly buffer QuadBuffer { GPUQuad quads[]; };
 layout(std430, binding = 7) readonly buffer CubeBuffer { GPUCube cubes[]; };
 layout(std430, binding = 8) readonly buffer BVHBuffer { GPUBVHNode bvhNodes[]; };
 
+struct GPUInstance {
+    mat4 transform;
+    mat4 invTransform;
+    vec3 worldAabbMin;
+    int  blasRootIndex;
+    vec3 worldAabbMax;
+    int  materialOverride;
+};
+
+layout(std430, binding = 14) readonly buffer InstanceBuffer { GPUInstance instances[]; };
+layout(std430, binding = 15) readonly buffer TLASBuffer     { GPUBVHNode tlasNodes[]; };
+
 struct Ray {
     vec3 origin;
     vec3 direction;
@@ -309,8 +321,13 @@ float triangleIntersect(Ray ray, GPUTriangle tri, out float outU, out float outV
     vec3 edge2 = tri.v2 - tri.v0;
     vec3 h = cross(ray.direction, edge2);
     float a = dot(edge1, h);
-    if (a > -0.0000001 && a < 0.0000001) return -1.0;
-    
+
+    // |a| scales with |rayDir|*|edge1|*|edge2| -- a fixed epsilon silently rejects valid
+    // hits on small-scale local-space BLAS geometry. Scale the epsilon by the same
+    // magnitudes so the parallel test stays scale-invariant.
+    float aScale = length(edge1) * length(edge2) * length(ray.direction);
+    if (abs(a) < 0.0000001 * aScale) return -1.0;
+
     float f = 1.0 / a;
     vec3 s = ray.origin - tri.v0;
     float u = f * dot(s, h);
@@ -533,6 +550,100 @@ vec3 gatherPhotons(vec3 hitPos, vec3 hitNormal) {
     return (gatheredEnergy / area) * cam.causticIntensity; 
 }
 
+// Primary/reflection/refraction nearest-hit test across all mesh instances (TLAS).
+// Mirrors the static BVH block in main() but walks each instance's BLAS in local space.
+void traverseInstances(Ray ray, inout float minHitDistance, inout int hitObjType,
+                        inout int hitObjIndex, inout float hitU, inout float hitV,
+                        inout int hitInstIdx) {
+    int instanceCount = tlasNodes[0].triCount;
+    vec3 invDir = 1.0 / ray.direction;
+
+    for (int inst = 0; inst < instanceCount; inst++) {
+        GPUInstance instData = instances[inst];
+        if (intersectAABB(ray, invDir, instData.worldAabbMin, instData.worldAabbMax) >= minHitDistance) continue;
+
+        Ray localRay;
+        localRay.origin = vec3(instData.invTransform * vec4(ray.origin, 1.0));
+        localRay.direction = vec3(instData.invTransform * vec4(ray.direction, 0.0));
+        vec3 localInvDir = 1.0 / localRay.direction;
+
+        int stack[64];
+        int stackPtr = 0;
+        stack[stackPtr++] = instData.blasRootIndex;
+
+        while (stackPtr > 0) {
+            int nodeIdx = stack[--stackPtr];
+            GPUBVHNode node = bvhNodes[nodeIdx];
+            float distAABB = intersectAABB(localRay, localInvDir, node.aabbMin, node.aabbMax);
+            if (distAABB < minHitDistance) {
+                if (node.triCount > 0) {
+                    for (int i = 0; i < node.triCount; i++) {
+                        int triIdx = node.leftFirst + i;
+                        float tempU, tempV;
+                        float dist = triangleIntersect(localRay, triangles[triIdx], tempU, tempV);
+                        if (dist > 0.0 && dist < minHitDistance) {
+                            minHitDistance = dist;
+                            hitObjType = 5; hitObjIndex = triIdx; hitU = tempU; hitV = tempV;
+                            hitInstIdx = inst;
+                        }
+                    }
+                } else {
+                    stack[stackPtr++] = node.leftFirst;
+                    stack[stackPtr++] = node.leftFirst + 1;
+                }
+            }
+        }
+    }
+}
+
+// Any-hit shadow test across all mesh instances (TLAS). Accumulates into shadowColor
+// exactly like the static-BVH shadow blocks (glass instances tint, opaque -> vec3(0)).
+void traverseInstancesShadow(Ray shadowRay, float maxDist, inout vec3 shadowColor) {
+    int instanceCount = tlasNodes[0].triCount;
+    vec3 invDir = 1.0 / shadowRay.direction;
+
+    for (int inst = 0; inst < instanceCount; inst++) {
+        GPUInstance instData = instances[inst];
+        if (intersectAABB(shadowRay, invDir, instData.worldAabbMin, instData.worldAabbMax) >= maxDist) continue;
+
+        Ray localRay;
+        localRay.origin = vec3(instData.invTransform * vec4(shadowRay.origin, 1.0));
+        localRay.direction = vec3(instData.invTransform * vec4(shadowRay.direction, 0.0));
+        vec3 localInvDir = 1.0 / localRay.direction;
+
+        int stack[64];
+        int stackPtr = 0;
+        stack[stackPtr++] = instData.blasRootIndex;
+
+        while (stackPtr > 0) {
+            int nodeIdx = stack[--stackPtr];
+            GPUBVHNode node = bvhNodes[nodeIdx];
+            if (intersectAABB(localRay, localInvDir, node.aabbMin, node.aabbMax) < maxDist) {
+                if (node.triCount > 0) {
+                    for (int i = 0; i < node.triCount; i++) {
+                        float dU, dV;
+                        GPUTriangle tri = triangles[node.leftFirst + i];
+                        float dist = triangleIntersect(localRay, tri, dU, dV);
+                        if (dist > 0.0 && dist < maxDist) {
+                            int matIdx = (instData.materialOverride >= 0) ? instData.materialOverride : tri.materialIndex;
+                            GPUMaterial smat = materials[matIdx];
+                            if (smat.castShadows == 1) {
+                                if (smat.transparency > 0.0) { shadowColor *= smat.color * smat.transparency; }
+                                else { shadowColor = vec3(0.0); break; }
+                            }
+                        }
+                    }
+                    if (shadowColor == vec3(0.0)) { stackPtr = 0; break; }
+                } else {
+                    stack[stackPtr++] = node.leftFirst;
+                    stack[stackPtr++] = node.leftFirst + 1;
+                }
+            }
+        }
+        if (shadowColor == vec3(0.0)) return;
+    }
+}
+
 const float MIN_DISPLACEMENT = 0.0001;
 
 void main() {
@@ -579,6 +690,7 @@ void main() {
             
             float hitU = 0.0;
             float hitV = 0.0;
+            int hitInstIdx = -1;
             for (int i = 0; i < cam.sphereCount; i++) {
                 float dist = sphereIntersect(ray, spheres[i]);
                 if (dist > 0.0 && dist < minHitDistance) { minHitDistance = dist; hitObjType = 0; hitObjIndex = i;
@@ -633,6 +745,10 @@ void main() {
                         }
                     }
                 }
+            }
+
+            if (tlasNodes[0].triCount > 0) {
+                traverseInstances(ray, minHitDistance, hitObjType, hitObjIndex, hitU, hitV, hitInstIdx);
             }
 
             if (hitObjType == -1) {
@@ -702,6 +818,22 @@ void main() {
                 hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]);
                 mat = materials[cubes[hitObjIndex].materialIndex];
                 hitUV = hitPos.xy;
+            }
+            else if (hitObjType == 5) {
+                GPUInstance instData = instances[hitInstIdx];
+                GPUTriangle tri = triangles[hitObjIndex];
+                vec3 localNormal;
+                if (tri.isSmooth == 1) {
+                    float hitW = 1.0 - hitU - hitV;
+                    localNormal = normalize(tri.n0 * hitW + tri.n1 * hitU + tri.n2 * hitV);
+                } else {
+                    localNormal = tri.n0;
+                }
+                hitNormal = normalize(mat3(transpose(instData.invTransform)) * localNormal);
+                if (dot(ray.direction, hitNormal) > 0.0) hitNormal = -hitNormal;
+                int matIdx = (instData.materialOverride >= 0) ? instData.materialOverride : tri.materialIndex;
+                mat = materials[matIdx];
+                hitUV = vec2(hitU, hitV);
             }
 
             vec3 baseColor = mat.color;
@@ -881,6 +1013,10 @@ void main() {
                             }
                         }
                     }
+
+                    if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && tlasNodes[0].triCount > 0) {
+                        traverseInstancesShadow(shadowRay, lightDistance, shadowColor);
+                    }
                     totalVisibility = shadowColor;
                 }
 
@@ -983,6 +1119,10 @@ void main() {
                                     }
                                 }
                             }
+                        }
+
+                        if ((shadowColor.x > 0.0 || shadowColor.y > 0.0 || shadowColor.z > 0.0) && tlasNodes[0].triCount > 0) {
+                            traverseInstancesShadow(shadowRay, jitteredLightDistance, shadowColor);
                         }
                      totalVisibility += shadowColor;
                     }

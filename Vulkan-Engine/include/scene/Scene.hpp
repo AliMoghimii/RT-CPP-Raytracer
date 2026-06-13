@@ -14,6 +14,10 @@ public:
 
     const SceneData& data() const { return sceneData; }
 
+    // Overrides the parsed pipeline flag before build() runs (used when toggling the
+    // legacy pipeline at runtime without re-editing the scene file).
+    void setUseLegacyPipeline(bool v) { sceneData.settings.useLegacyPipeline = v; }
+
 protected:
     SceneData sceneData;
 };

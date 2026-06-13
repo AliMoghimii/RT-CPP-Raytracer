@@ -15,6 +15,7 @@ class Renderer;
 class DebugUI {
 public:
     std::string pendingScenePath; // set by openSceneFileDialog(); consumed by Renderer when loading is implemented
+    int pendingLegacyToggle = -1; // -1 = none, 0/1 = requested useLegacyPipeline value; consumed by Renderer::mainLoop
 
     void init(VulkanContext& ctx, Swapchain& swapchain, GLFWwindow* window);
     void shutdown(VulkanContext& ctx);

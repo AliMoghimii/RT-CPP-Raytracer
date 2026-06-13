@@ -66,6 +66,57 @@ void Renderer::loadDynamicMeshes(const vector<string>& meshFiles, const vector<i
     sceneTLAS[0].triCount = static_cast<int>(sceneMeshInstances.size());
 }
 
+// ---- Runtime scene swap ----
+
+void Renderer::unloadSceneGPU() {
+    vkDeviceWaitIdle(ctx.device);
+
+    legacyPass.releaseDescriptorSet(ctx.device, descriptorPool);
+    if (sceneDescSet != VK_NULL_HANDLE) {
+        vkFreeDescriptorSets(ctx.device, descriptorPool, 1, &sceneDescSet);
+        sceneDescSet = VK_NULL_HANDLE;
+    }
+
+    materialBuffer = Buffer();
+    sphereBuffer = Buffer();
+    triangleBuffer = Buffer();
+    lightBuffer = Buffer();
+    planeBuffer = Buffer();
+    quadBuffer = Buffer();
+    cubeBuffer = Buffer();
+    bvhBuffer = Buffer();
+    instanceBuffer = Buffer();
+    tlasBuffer = Buffer();
+    photonBuffer = Buffer();
+    photonCounterBuffer = Buffer();
+    gridHeadBuffer = Buffer();
+    photonNextBuffer = Buffer();
+
+    for (size_t i = 0; i < textureImages.size(); i++) {
+        vkDestroyImageView(ctx.device, textureImageViews[i], nullptr);
+        vmaDestroyImage(ctx.allocator, textureImages[i], textureImageAllocs[i]);
+    }
+    textureImages.clear();
+    textureImageAllocs.clear();
+    textureImageViews.clear();
+}
+
+void Renderer::reloadSceneGPU() {
+    createTextureResources();
+    createSceneBuffers();
+    createSceneDescriptorSet();
+    legacyPass.rebindDescriptorSet({
+        ctx.device, descriptorPool, sceneDescSetLayout,
+        materialBuffer.handle, sphereBuffer.handle, triangleBuffer.handle, lightBuffer.handle,
+        planeBuffer.handle, quadBuffer.handle, cubeBuffer.handle, bvhBuffer.handle,
+        photonBuffer.handle, photonCounterBuffer.handle, gridHeadBuffer.handle, photonNextBuffer.handle,
+        instanceBuffer.handle, tlasBuffer.handle,
+        textureSampler, &textureImageViews,
+        ldrImage.view,
+        hdrImage.view
+    });
+}
+
 // ---- Initialization ----
 
 void Renderer::initWindow() {
@@ -843,6 +894,12 @@ void Renderer::mainLoop() {
         glfwPollEvents();
         processInput();
         drawFrame();
+
+        if (!debugUI.pendingScenePath.empty()) {
+            std::string path = std::move(debugUI.pendingScenePath);
+            debugUI.pendingScenePath.clear();
+            sceneManager.swapScene(path);
+        }
 
         if (!rcSlotChecked) {
             rcSlotChecked = true;

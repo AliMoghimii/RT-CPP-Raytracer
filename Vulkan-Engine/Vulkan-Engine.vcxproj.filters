@@ -116,6 +116,15 @@
     <ClCompile Include="source\scene\ModelLoader.cpp">
       <Filter>Source\Scene</Filter>
     </ClCompile>
+    <ClCompile Include="source\scene\GenericScene.cpp">
+      <Filter>Source\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\SceneLoader.cpp">
+      <Filter>Source\Scene</Filter>
+    </ClCompile>
+    <ClCompile Include="source\scene\SceneManager.cpp">
+      <Filter>Source\Scene</Filter>
+    </ClCompile>
     <ClCompile Include="source\core\VMA.cpp">
       <Filter>Source\Core</Filter>
     </ClCompile>
@@ -200,6 +209,21 @@
       <Filter>Include\Scene</Filter>
     </ClInclude>
     <ClInclude Include="include\scene\Primitive.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\GenericScene.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\Scene.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneData.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneLoader.hpp">
+      <Filter>Include\Scene</Filter>
+    </ClInclude>
+    <ClInclude Include="include\scene\SceneManager.hpp">
       <Filter>Include\Scene</Filter>
     </ClInclude>
     <ClInclude Include="include\passes\GBuffer.hpp">
@@ -310,6 +334,12 @@
     <None Include="config\imgui\imgui.ini">
       <Filter>Config\ImGUI</Filter>
     </None>
+    <None Include="assets\scenes\default.json">
+      <Filter>Config\Scenarios</Filter>
+    </None>
+    <None Include="assets\scenes\test_scene.json">
+      <Filter>Config\Scenarios</Filter>
+    </None>
     <None Include="shaders\legacy\photonpass.comp">
       <Filter>Shader\Legacy</Filter>
     </None>
@@ -322,5 +352,6 @@
     <None Include="shaders\debug\probe_debug.comp">
       <Filter>Shader\Debug</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

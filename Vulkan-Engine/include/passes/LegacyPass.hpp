@@ -27,6 +27,15 @@ public:
                 uint32_t dX, uint32_t dY);
     void destroy(VkDevice device);
 
+    // Frees descSet only -- pipelines/pipelineLayout are left intact. Used when swapping
+    // scenes: the buffers/textures behind the descriptor set are about to be destroyed and
+    // recreated, but the compute pipelines don't need to change.
+    void releaseDescriptorSet(VkDevice device, VkDescriptorPool pool);
+
+    // Re-allocates and re-writes descSet against (possibly new) buffer/texture handles.
+    // Call after releaseDescriptorSet() once the new scene's GPU resources exist.
+    void rebindDescriptorSet(const CreateInfo& info);
+
 private:
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
@@ -35,6 +44,8 @@ private:
     VkPipeline photonPipeline = VK_NULL_HANDLE;
     VkBuffer photonCounterBuf = VK_NULL_HANDLE;
     VkBuffer gridHeadBuf = VK_NULL_HANDLE;
+
+    void allocateAndWriteDescriptorSet(const CreateInfo& info);
 
     static std::vector<char> readSpv(const std::string& path);
 };

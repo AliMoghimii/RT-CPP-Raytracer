@@ -102,7 +102,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\nlohmann\include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -126,7 +126,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\nlohmann\include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)lib;$(ProjectDir)include;$(VULKAN_SDK)\Include;$(ProjectDir)third-party\vk-bootstrap\include;$(ProjectDir)third-party\vma\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -156,10 +156,13 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClCompile Include="source\renderer\Renderer.cpp" />
     <ClCompile Include="source\resources\Buffer.cpp" />
     <ClCompile Include="source\resources\Image.cpp" />
+    <ClCompile Include="source\scene\GenericScene.cpp" />
     <ClCompile Include="source\scene\ImageLoader.cpp" />
     <ClCompile Include="source\scene\Mesh.cpp" />
     <ClCompile Include="source\scene\ModelLoader.cpp" />
     <ClCompile Include="source\scene\Primitive.cpp" />
+    <ClCompile Include="source\scene\SceneLoader.cpp" />
+    <ClCompile Include="source\scene\SceneManager.cpp" />
     <ClCompile Include="third-party\vk-bootstrap\source\VkBootstrap.cpp" />
     <ClCompile Include="lib\imgui-docking\imgui.cpp" />
     <ClCompile Include="lib\imgui-docking\imgui_draw.cpp" />
@@ -184,6 +187,7 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\renderer\Renderer.hpp" />
     <ClInclude Include="include\resources\Buffer.hpp" />
     <ClInclude Include="include\resources\Image.hpp" />
+    <ClInclude Include="include\scene\GenericScene.hpp" />
     <ClInclude Include="include\scene\GPUData.hpp" />
     <ClInclude Include="include\scene\ImageLoader.hpp" />
     <ClInclude Include="include\scene\Mesh.hpp" />
@@ -191,10 +195,17 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
     <ClInclude Include="include\scene\ModelLoader.hpp" />
     <ClInclude Include="include\passes\LegacyPass.hpp" />
     <ClInclude Include="include\scene\Primitive.hpp" />
+    <ClInclude Include="include\scene\Scene.hpp" />
+    <ClInclude Include="include\scene\SceneData.hpp" />
+    <ClInclude Include="include\scene\SceneLoader.hpp" />
+    <ClInclude Include="include\scene\SceneManager.hpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="compile_shaders.bat" />
     <None Include="config\imgui\imgui.ini" />
+    <None Include="assets\scenes\default.json" />
+    <None Include="assets\scenes\test_scene.json" />
+    <None Include="packages.config" />
     <None Include="shaders\common\bvh.glsl" />
     <None Include="shaders\common\cascade_layout.glsl" />
     <None Include="shaders\common\caustics.glsl" />
@@ -223,5 +234,12 @@ if exist "$(ProjectDir)shaders" xcopy /y /d /s /i "$(ProjectDir)shaders\*.spv" "
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets" Condition="Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" />
   </ImportGroup>
+  <Target Name="EnsureNuGetPackageBuildImports" BeforeTargets="PrepareForBuild">
+    <PropertyGroup>
+      <ErrorText>This project references NuGet package(s) that are missing on this computer. Use NuGet Package Restore to download them.  For more information, see http://go.microsoft.com/fwlink/?LinkID=322105. The missing file is {0}.</ErrorText>
+    </PropertyGroup>
+    <Error Condition="!Exists('packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets')" Text="$([System.String]::Format('$(ErrorText)', 'packages\nlohmann.json.3.12.0\build\native\nlohmann.json.targets'))" />
+  </Target>
 </Project>

@@ -20,6 +20,7 @@
 #include "gi/CascadeStorage.hpp"
 #include "debug/FrameStats.hpp"
 #include "debug/DebugUI.hpp"
+#include "scene/SceneManager.hpp"
 
 struct CameraPushConstants {
     glm::vec4 camPos;
@@ -105,6 +106,13 @@ public:
     void recreateCascades();
     FrameStats lastStats() const { return lastFrameStats; }
 
+    // Runtime scene swap (called by SceneManager::swapScene): tears down all GPU resources
+    // owned by the current scene (scene SSBOs, textures, scene/legacy descriptor sets)
+    // without touching pipelines, RC cascade state, or the swapchain. reloadSceneGPU()
+    // recreates them from the CPU-side scene data SceneManager has just loaded.
+    void unloadSceneGPU();
+    void reloadSceneGPU();
+
     void run();
     void loadScene(
         const std::vector<GPUMaterial>& mats,
@@ -130,6 +138,10 @@ public:
     );
 
     bool enableDynamicInstances = true;
+
+    // State Pattern context: holds the current Scene and applies its data onto this
+    // Renderer. *this is valid here -- the constructor only stores the reference.
+    SceneManager sceneManager{ *this };
 
 private:
     GLFWwindow* window = nullptr;

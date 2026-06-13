@@ -276,7 +276,7 @@ void DebugUI::openSceneFileDialog() {
     ofn.lpstrFilter = L"JSON Files\0*.json\0All Files\0*.*\0";
     ofn.lpstrFile = buf;
     ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
 
     if (GetOpenFileNameW(&ofn)) {
         int len = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);

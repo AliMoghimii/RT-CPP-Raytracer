@@ -89,6 +89,23 @@ void LegacyPass::create(const CreateInfo& info) {
 
     vkDestroyShaderModule(info.device, mod, nullptr);
 
+    allocateAndWriteDescriptorSet(info);
+}
+
+void LegacyPass::releaseDescriptorSet(VkDevice device, VkDescriptorPool pool) {
+    if (descSet != VK_NULL_HANDLE) {
+        vkFreeDescriptorSets(device, pool, 1, &descSet);
+        descSet = VK_NULL_HANDLE;
+    }
+}
+
+void LegacyPass::rebindDescriptorSet(const CreateInfo& info) {
+    photonCounterBuf = info.photonCounterBuf;
+    gridHeadBuf = info.gridHeadBuf;
+    allocateAndWriteDescriptorSet(info);
+}
+
+void LegacyPass::allocateAndWriteDescriptorSet(const CreateInfo& info) {
     // --- Descriptor set (reuses sceneDescSetLayout, binding 0 = ldrImage) ---
     VkDescriptorSetAllocateInfo ai{};
     ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;

@@ -8,6 +8,8 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include <iostream>
+
 using json = nlohmann::json;
 
 namespace {
@@ -145,9 +147,23 @@ std::unique_ptr<Scene> SceneLoader::loadFromFile(const std::string& path) {
     if (root.contains("lights")) {
         for (const auto& l : root["lights"]) {
             GPULight light{};
+
             light.position = vec3Field(l, "position", glm::vec3(0.0f));
-            light.radius = getOr(l, "radius", 0.0f);
-            light.color = vec3Field(l, "color", glm::vec3(1.0f));
+
+            if (data.settings.enableSoftShadows) {
+                light.radius = 5.0f;
+            }
+            else
+            {
+                light.radius = getOr(l, "radius", 0.0f);
+            }
+
+            if (data.settings.globalShadingModel == 1) {
+                light.color = vec3Field(l, "color", glm::vec3(1.0f)) * 3.0f;
+            }
+            else
+                light.color = vec3Field(l, "color", glm::vec3(1.0f));
+
             light.p2 = 0.0f;
             data.lights.push_back(light);
         }
@@ -198,6 +214,25 @@ std::unique_ptr<Scene> SceneLoader::loadFromFile(const std::string& path) {
             sphere.radius = getOr(sp, "radius", 1.0f);
             sphere.materialIndex = resolveMaterialIndex(sp, materialIndex);
             data.spheres.push_back(sphere);
+        }
+    }
+
+    if (root.contains("triangles")) {
+        for (const auto& t : root["triangles"]) {
+            GPUTriangle tri{};
+            tri.v0 = vec3Field(t, "v0", glm::vec3(0.0f));
+            tri.v1 = vec3Field(t, "v1", glm::vec3(0.0f));
+            tri.v2 = vec3Field(t, "v2", glm::vec3(0.0f));
+
+            glm::vec3 n = vec3Field(t, "normal", glm::vec3(0.0f, 1.0f, 0.0f));
+            tri.n0 = n;
+            tri.n1 = n;
+            tri.n2 = n;
+
+            tri.isSmooth = getOr(t, "isSmooth", 0);
+            tri.materialIndex = resolveMaterialIndex(t, materialIndex);
+
+            data.triangles.push_back(tri);
         }
     }
 

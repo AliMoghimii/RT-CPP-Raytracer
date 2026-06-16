@@ -1,0 +1,96 @@
+{
+  "settings": {
+    "useLegacyPipeline": false,
+    "globalShadingModel": 0,
+    "enableSoftShadows": false,
+    "maxDepth": 5,
+    "shadowRays": 4,
+    "enableDOF": false,
+    "focalDistance": 1.6,
+    "lensRadius": 0.02,
+    "enableFog": false,
+    "fogColor": [1.0, 1.0, 1.0],
+    "enableSkybox": false,
+    "skyBottomColor": [1.0, 1.0, 1.0],
+    "skyTopColor": [0.1, 0.3, 0.7],
+    "enableTextures": true,
+    "primaryRaysPerPixel": 1,
+    "enableCaustics": true,
+    "photonCount": 1000000,
+    "causticIntensity": 15.0,
+    "gridMin": [-20.0, -20.0, -20.0],
+    "gridMax": [20.0, 20.0, 20.0],
+    "gridResolution": 256,
+    "gatherRadius": 0.4
+  },
+
+  "textures": [
+    { "name": "tilesColor", "path": "assets/Textures/Tiles/Color.jpg" }
+  ],
+
+  "materials": [
+    {
+      "name": "causticsGlass",
+      "color": [1.0, 1.0, 1.0], "ambient": 0.0, "emission": [0,0,0],
+      "diffuse": 0.0, "color2": [0,0,0], "specular": 1.0,
+      "reflection": 0.1, "transparency": 0.95, "ior": 1.5,
+      "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1,
+      "useTexture": 0
+    },
+    {
+      "name": "blueMirror",
+      "color": [0.0, 0.0, 1.0], "ambient": 0.05, "emission": [0,0,0],
+      "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0,
+      "reflection": 0.2, "transparency": 0.0, "ior": 1.0,
+      "patternType": 0, "roughness": 0.2, "metallic": 0.1, "castShadows": 1,
+      "useTexture": 0
+    },
+    {
+      "name": "matteWhite",
+      "color": [1.0, 1.0, 1.0], "ambient": 0.1, "emission": [0,0,0],
+      "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0,
+      "reflection": 0.0, "transparency": 0.0, "ior": 1.0,
+      "patternType": 0, "roughness": 0.95, "metallic": 0.0, "castShadows": 1,
+      "useTexture": 0
+    }
+  ],
+
+  "lights": [
+    { "position": [2.5, 4.5, 0.0], "color": [50.0, 50.0, 50.0], "radius": 0.0 }
+  ],
+
+  "planes": [
+    { "center": [0.0, -0.5, 0.0], "normal": [0.0, 1.0, 0.0], "material": "matteWhite" }
+  ],
+
+  "quads": [
+    { "corner": [-15.0, 25.0, -15.0], "edge1": [30.0, 0.0, 0.0], "edge2": [0.0, 0.0, 45.0], "normal": [0.0, -1.0, 0.0], "material": "matteWhite" },
+    { "corner": [-15.0, -0.5, -15.0], "edge1": [0.0, 0.0, 45.0], "edge2": [0.0, 25.5, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteWhite" },
+    { "corner": [15.0, -0.5, 30.0], "edge1": [0.0, 0.0, -45.0], "edge2": [0.0, 25.5, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteWhite" },
+    { "corner": [15.0, -0.5, 30.0], "edge1": [-30.0, 0.0, 0.0], "edge2": [0.0, 25.5, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteWhite" },
+    { "corner": [-15.0, -0.5, -15.0], "edge1": [30.0, 0.0, 0.0], "edge2": [0.0, 25.5, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteWhite" }
+  ],
+
+  "meshInstances": [
+    {
+      "meshFile": "assets/models/model_doughnut.obj",
+      "material": "causticsGlass",
+      "basePosition": [1.5, 7.0, 0.0],
+      "baseRotationDeg": [45.0, 0.0, 0.0],
+      "scale": 25.0,
+      "spinDegPerSec": 45.0,
+      "bobAmplitude": 0.25,
+      "bobSpeed": 0.5
+    },
+    {
+      "meshFile": "assets/models/model_doughnut.obj",
+      "material": "blueMirror",
+      "basePosition": [4.0, 2.0, 0.0],
+      "baseRotationDeg": [45.0, 0.0, 20.0],
+      "scale": 25.0,
+      "spinDegPerSec": -30.0,
+      "bobAmplitude": 0.0,
+      "bobSpeed": 0.0
+    }
+  ]
+}

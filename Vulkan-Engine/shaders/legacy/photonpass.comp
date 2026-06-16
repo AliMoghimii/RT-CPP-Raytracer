@@ -74,6 +74,18 @@ layout(std430, binding = 11) buffer PhotonCounter { uint globalPhotonCount; };
 layout(std430, binding = 12) buffer GridHeadBuffer { int gridHeads[]; };
 layout(std430, binding = 13) writeonly buffer PhotonNextBuffer { int photonNexts[]; };
 
+struct GPUInstance {
+    mat4 transform;
+    mat4 invTransform;
+    vec3 worldAabbMin;
+    int  blasRootIndex;
+    vec3 worldAabbMax;
+    int  materialOverride;
+};
+
+layout(std430, binding = 14) readonly buffer InstanceBuffer { GPUInstance instances[]; };
+layout(std430, binding = 15) readonly buffer TLASBuffer     { GPUBVHNode  tlasNodes[]; };
+
 struct Ray { vec3 origin; vec3 direction; };
 
 const float PI = 3.14159265359;
@@ -372,8 +384,56 @@ void main() {
             }
         }
 
+        // TLAS instance traversal — handles animated mesh instances (e.g. the glass doughnut)
+        int hitInstTri = -1;
+        mat3 hitInstNormalMat = mat3(1.0);
+        int hitInstMaterialOverride = -1;
+        {
+            int instanceCount = tlasNodes[0].triCount;
+            vec3 invDir = 1.0 / photonRay.direction;
+            for (int ii = 0; ii < instanceCount; ii++) {
+                GPUInstance inst = instances[ii];
+                if (intersectAABB(photonRay, invDir, inst.worldAabbMin, inst.worldAabbMax) >= minHitDistance) continue;
+
+                Ray localRay;
+                localRay.origin    = vec3(inst.invTransform * vec4(photonRay.origin,    1.0));
+                localRay.direction = vec3(inst.invTransform * vec4(photonRay.direction, 0.0));
+
+                vec3 localInvDir = 1.0 / localRay.direction;
+                int stack[64]; int stackPtr = 0;
+                stack[stackPtr++] = inst.blasRootIndex;
+                while (stackPtr > 0) {
+                    int nodeIdx = stack[--stackPtr];
+                    GPUBVHNode node = bvhNodes[nodeIdx];
+                    if (intersectAABB(localRay, localInvDir, node.aabbMin, node.aabbMax) < minHitDistance) {
+                        if (node.triCount > 0) {
+                            for (int i = 0; i < node.triCount; i++) {
+                                int triIdx = node.leftFirst + i;
+                                float tU, tV;
+                                float dist = triangleIntersect(localRay, triangles[triIdx], tU, tV);
+                                if (dist > 0.001 && dist < minHitDistance) {
+                                    minHitDistance = dist;
+                                    hitObjType = 5;
+                                    hitObjIndex = ii;
+                                    hitInstTri = triIdx;
+                                    hitInstNormalMat = transpose(mat3(inst.invTransform));
+                                    hitInstMaterialOverride = inst.materialOverride;
+                                }
+                            }
+                        } else {
+                            if (stackPtr + 2 <= 64) {
+                                stack[stackPtr++] = node.leftFirst;
+                                stack[stackPtr++] = node.leftFirst + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (hitObjType == -1) break;
 
+        // hitPos uses world-space ray: t is invariant across local/world spaces
         vec3 hitPos = photonRay.origin + photonRay.direction * minHitDistance;
         GPUMaterial mat;
         vec3 hitNormal;
@@ -383,6 +443,12 @@ void main() {
         else if (hitObjType == 2) { hitNormal = planes[hitObjIndex].normalVector; mat = materials[planes[hitObjIndex].materialIndex]; }
         else if (hitObjType == 3) { hitNormal = quads[hitObjIndex].normalVector; mat = materials[quads[hitObjIndex].materialIndex]; }
         else if (hitObjType == 4) { hitNormal = cubeNormal(hitPos, cubes[hitObjIndex]); mat = materials[cubes[hitObjIndex].materialIndex]; }
+        else if (hitObjType == 5) {
+            GPUTriangle tri = triangles[hitInstTri];
+            hitNormal = normalize(hitInstNormalMat * tri.n0);
+            int matIdx = (hitInstMaterialOverride >= 0) ? hitInstMaterialOverride : tri.materialIndex;
+            mat = materials[matIdx];
+        }
 
         vec3 originalNormal = hitNormal;
 

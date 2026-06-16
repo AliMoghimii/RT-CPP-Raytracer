@@ -122,9 +122,13 @@ void Renderer::reloadSceneGPU() {
 void Renderer::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     window = glfwCreateWindow(1280, 720, "Vulkan Real-Time Raytracer", nullptr, nullptr);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
+        static_cast<Renderer*>(glfwGetWindowUserPointer(w))->framebufferResized = true;
+    });
 }
 
 void Renderer::initVulkan() {
@@ -1012,6 +1016,93 @@ void Renderer::updateDynamicData() {
     }
 }
 
+void Renderer::recreateSwapchain() {
+    int w = 0, h = 0;
+    while (w == 0 || h == 0) {
+        glfwGetFramebufferSize(window, &w, &h);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(ctx.device);
+
+    gbuffer.destroy(ctx);
+    hdrImage.destroy(ctx.allocator);
+    ldrImage.destroy(ctx.allocator);
+    swapchain.destroy(ctx);
+
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(ctx.physicalDevice, ctx.surface, &caps);
+    VkExtent2D newExtent;
+    if (caps.currentExtent.width != UINT32_MAX) {
+        newExtent = caps.currentExtent;
+    } else {
+        newExtent.width  = std::clamp((uint32_t)w, caps.minImageExtent.width,  caps.maxImageExtent.width);
+        newExtent.height = std::clamp((uint32_t)h, caps.minImageExtent.height, caps.maxImageExtent.height);
+    }
+
+    swapchain.create(ctx, ctx.surface, newExtent);
+
+    hdrImage = Image(ctx.allocator, newExtent.width, newExtent.height,
+                     VK_FORMAT_R16G16B16A16_SFLOAT,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+    ldrImage = Image(ctx.allocator, newExtent.width, newExtent.height,
+                     VK_FORMAT_R8G8B8A8_UNORM,
+                     VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                     VMA_MEMORY_USAGE_GPU_ONLY);
+    gbuffer.create(ctx, newExtent);
+
+    VkCommandBuffer cmd = cmdManager.beginOneTime(ctx);
+    gbuffer.transitionForWrite(cmd);
+    transitionImageLayout(cmd, hdrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    transitionImageLayout(cmd, ldrImage.handle, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    cmdManager.submitOneTime(ctx, cmd);
+
+    // Update tonemapDescSet: b0=hdrImage, b1=ldrImage
+    {
+        VkDescriptorImageInfo imgInfos[2] = {
+            { VK_NULL_HANDLE, hdrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+            { VK_NULL_HANDLE, ldrImage.view, VK_IMAGE_LAYOUT_GENERAL },
+        };
+        VkWriteDescriptorSet writes[2] = {};
+        for (uint32_t b = 0; b < 2; b++) {
+            writes[b] = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                tonemapDescSet, b, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfos[b], nullptr, nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 2, writes, 0, nullptr);
+    }
+
+    // Update gbufDescSet: b0-b4=gbuffer layers, b5=hdrImage
+    {
+        VkImageView views[6] = {
+            gbuffer.position.view, gbuffer.normal.view, gbuffer.albedo.view,
+            gbuffer.emissive.view, gbuffer.linearDepth.view, hdrImage.view
+        };
+        vector<VkDescriptorImageInfo> imgInfos(6);
+        vector<VkWriteDescriptorSet>  writes(6);
+        for (uint32_t i = 0; i < 6; i++) {
+            imgInfos[i] = { VK_NULL_HANDLE, views[i], VK_IMAGE_LAYOUT_GENERAL };
+            writes[i]   = { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr,
+                gbufDescSet, i, 0, 1,
+                VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &imgInfos[i], nullptr, nullptr };
+        }
+        vkUpdateDescriptorSets(ctx.device, 6, writes.data(), 0, nullptr);
+    }
+
+    // Update legacyPass output binding (ldrImage.view is binding 0 of its descriptor set)
+    legacyPass.rebindDescriptorSet({
+        ctx.device, descriptorPool, sceneDescSetLayout,
+        materialBuffer.handle, sphereBuffer.handle, triangleBuffer.handle, lightBuffer.handle,
+        planeBuffer.handle, quadBuffer.handle, cubeBuffer.handle, bvhBuffer.handle,
+        photonBuffer.handle, photonCounterBuffer.handle, gridHeadBuffer.handle, photonNextBuffer.handle,
+        instanceBuffer.handle, tlasBuffer.handle,
+        textureSampler, &textureImageViews,
+        ldrImage.view,
+        hdrImage.view
+    });
+}
+
 void Renderer::drawFrame() {
     int width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
@@ -1047,6 +1138,10 @@ void Renderer::drawFrame() {
     uint32_t imageIndex;
     VkResult acquireResult = vkAcquireNextImageKHR(ctx.device, swapchain.handle, UINT64_MAX,
                                                    cmdManager.imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapchain();
+        return;
+    }
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
         return;
 
@@ -1083,7 +1178,11 @@ void Renderer::drawFrame() {
     pi.pSwapchains = &swapchain.handle;
     pi.pImageIndices = &imageIndex;
 
-    vkQueuePresentKHR(ctx.computeQueue, &pi);
+    VkResult presentResult = vkQueuePresentKHR(ctx.computeQueue, &pi);
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapchain();
+    }
 }
 
 void Renderer::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {

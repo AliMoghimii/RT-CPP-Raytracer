@@ -20,10 +20,14 @@ void VulkanCore::run() {
 void VulkanCore::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
     window = glfwCreateWindow(1280, 720, "Vulkan Real-Time Raytracer", nullptr, nullptr);
+    glfwSetWindowUserPointer(window, this);
+    glfwSetFramebufferSizeCallback(window, [](GLFWwindow* w, int, int) {
+        static_cast<VulkanCore*>(glfwGetWindowUserPointer(w))->framebufferResized = true;
+    });
 }
 
 void VulkanCore::initVulkan() {
@@ -224,24 +228,47 @@ void VulkanCore::createCommandPool() {
 }
 
 void VulkanCore::createSwapchain() {
+    int w, h;
+    glfwGetFramebufferSize(window, &w, &h);
+
+    VkSurfaceCapabilitiesKHR caps;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &caps);
+
+    VkExtent2D extent;
+    if (caps.currentExtent.width != UINT32_MAX) {
+        extent = caps.currentExtent;
+    } else {
+        extent.width  = std::clamp((uint32_t)w, caps.minImageExtent.width,  caps.maxImageExtent.width);
+        extent.height = std::clamp((uint32_t)h, caps.minImageExtent.height, caps.maxImageExtent.height);
+    }
+
+    VkSwapchainKHR oldSwapchain = swapChain;
+
     VkSwapchainCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     createInfo.surface = surface;
     createInfo.minImageCount = 2;
     createInfo.imageFormat = VK_FORMAT_R8G8B8A8_UNORM;
     createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-    createInfo.imageExtent = { 1280, 720 };
+    createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    createInfo.preTransform = caps.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
     createInfo.clipped = VK_TRUE;
+    createInfo.oldSwapchain = oldSwapchain;
 
-    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
+    VkSwapchainKHR newSwapchain;
+    if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &newSwapchain) != VK_SUCCESS) {
         throw runtime_error("Vulkan: Failed to create swap chain.");
     }
+
+    if (oldSwapchain != VK_NULL_HANDLE)
+        vkDestroySwapchainKHR(device, oldSwapchain, nullptr);
+
+    swapChain = newSwapchain;
 
     uint32_t imageCount;
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
@@ -249,7 +276,7 @@ void VulkanCore::createSwapchain() {
     vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
 
     swapChainImageFormat = VK_FORMAT_R8G8B8A8_UNORM;
-    swapChainExtent = { 1280, 720 };
+    swapChainExtent = extent;
 }
 
 void VulkanCore::createSwapchainImageViews() {
@@ -277,8 +304,8 @@ void VulkanCore::createComputeImage() {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
-    imageInfo.extent.width = 1280;
-    imageInfo.extent.height = 720;
+    imageInfo.extent.width = swapChainExtent.width;
+    imageInfo.extent.height = swapChainExtent.height;
     imageInfo.extent.depth = 1;
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
@@ -491,14 +518,16 @@ void VulkanCore::createTwoPassPipelines() {
 }
 
 void VulkanCore::createGBufferDescriptorSet() {
-    VkDescriptorSetAllocateInfo ai{};
-    ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    ai.descriptorPool = descriptorPool;
-    ai.descriptorSetCount = 1;
-    ai.pSetLayouts = &gbufDescSetLayout;
+    if (gbufDescSet == VK_NULL_HANDLE) {
+        VkDescriptorSetAllocateInfo ai{};
+        ai.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        ai.descriptorPool = descriptorPool;
+        ai.descriptorSetCount = 1;
+        ai.pSetLayouts = &gbufDescSetLayout;
 
-    if (vkAllocateDescriptorSets(device, &ai, &gbufDescSet) != VK_SUCCESS)
-        throw runtime_error("Vulkan: Failed to allocate G-buffer descriptor set.");
+        if (vkAllocateDescriptorSets(device, &ai, &gbufDescSet) != VK_SUCCESS)
+            throw runtime_error("Vulkan: Failed to allocate G-buffer descriptor set.");
+    }
 
     VkImageView views[6] = { gbufPositionV, gbufNormalV, gbufAlbedoV, gbufEmissiveV, gbufLinearDepthV, hdrImageView };
     vector<VkWriteDescriptorSet> writes(6);
@@ -1094,10 +1123,18 @@ void VulkanCore::drawFrame() {
     if (width == 0 || height == 0) return;
 
     vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-    vkResetFences(device, 1, &inFlightFence);
 
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    VkResult acquireResult = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX,
+        imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR) {
+        recreateSwapchain();
+        return;
+    }
+    if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
+        throw runtime_error("Vulkan: Failed to acquire swap chain image.");
+
+    vkResetFences(device, 1, &inFlightFence);
 
     vkResetCommandBuffer(commandBuffer, 0);
     recordCommandBuffer(commandBuffer, imageIndex);
@@ -1132,7 +1169,13 @@ void VulkanCore::drawFrame() {
     presentInfo.pSwapchains = swapChains;
     presentInfo.pImageIndices = &imageIndex;
 
-    vkQueuePresentKHR(computeQueue, &presentInfo);
+    VkResult presentResult = vkQueuePresentKHR(computeQueue, &presentInfo);
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || framebufferResized) {
+        framebufferResized = false;
+        recreateSwapchain();
+    } else if (presentResult != VK_SUCCESS) {
+        throw runtime_error("Vulkan: Failed to present swap chain image.");
+    }
 }
 
 void VulkanCore::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
@@ -1372,6 +1415,73 @@ uint32_t VulkanCore::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags p
     throw runtime_error("Vulkan: Failed to find suitable GPU memory type.");
 }
 
+void VulkanCore::cleanupResizeResources() {
+    for (auto iv : swapChainImageViews)
+        vkDestroyImageView(device, iv, nullptr);
+    swapChainImageViews.clear();
+
+    vkDestroyImageView(device, computeImageView, nullptr);
+    vkDestroyImage(device, computeImage, nullptr);
+    vkFreeMemory(device, computeImageMemory, nullptr);
+
+    vkDestroyImageView(device, gbufPositionV,    nullptr); vkDestroyImage(device, gbufPosition,    nullptr); vkFreeMemory(device, gbufPositionM,    nullptr);
+    vkDestroyImageView(device, gbufNormalV,      nullptr); vkDestroyImage(device, gbufNormal,      nullptr); vkFreeMemory(device, gbufNormalM,      nullptr);
+    vkDestroyImageView(device, gbufAlbedoV,      nullptr); vkDestroyImage(device, gbufAlbedo,      nullptr); vkFreeMemory(device, gbufAlbedoM,      nullptr);
+    vkDestroyImageView(device, gbufEmissiveV,    nullptr); vkDestroyImage(device, gbufEmissive,    nullptr); vkFreeMemory(device, gbufEmissiveM,    nullptr);
+    vkDestroyImageView(device, gbufLinearDepthV, nullptr); vkDestroyImage(device, gbufLinearDepth, nullptr); vkFreeMemory(device, gbufLinearDepthM, nullptr);
+    vkDestroyImageView(device, hdrImageView,     nullptr); vkDestroyImage(device, hdrImage,        nullptr); vkFreeMemory(device, hdrMemory,        nullptr);
+}
+
+void VulkanCore::updateImageDescriptors() {
+    VkDescriptorImageInfo imgInfo{ VK_NULL_HANDLE, computeImageView, VK_IMAGE_LAYOUT_GENERAL };
+    VkWriteDescriptorSet w0{};
+    w0.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w0.dstSet = descriptorSet;
+    w0.dstBinding = 0;
+    w0.descriptorCount = 1;
+    w0.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    w0.pImageInfo = &imgInfo;
+
+    uint32_t realCount  = (uint32_t)textureImageViews.size();
+    uint32_t emptyCount = 100u - realCount;
+    vector<VkDescriptorImageInfo> dummies(emptyCount, { textureSampler, computeImageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL });
+    VkWriteDescriptorSet w9{};
+    w9.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    w9.dstSet = descriptorSet;
+    w9.dstBinding = 9;
+    w9.dstArrayElement = realCount;
+    w9.descriptorCount = emptyCount;
+    w9.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    w9.pImageInfo = dummies.data();
+
+    if (emptyCount > 0) {
+        VkWriteDescriptorSet writes[] = { w0, w9 };
+        vkUpdateDescriptorSets(device, 2, writes, 0, nullptr);
+    } else {
+        vkUpdateDescriptorSets(device, 1, &w0, 0, nullptr);
+    }
+
+    createGBufferDescriptorSet();
+}
+
+void VulkanCore::recreateSwapchain() {
+    int w = 0, h = 0;
+    while (w == 0 || h == 0) {
+        glfwGetFramebufferSize(window, &w, &h);
+        glfwWaitEvents();
+    }
+
+    vkDeviceWaitIdle(device);
+
+    cleanupResizeResources();
+
+    createSwapchain();
+    createSwapchainImageViews();
+    createComputeImage();
+    createGBufferImages();
+    updateImageDescriptors();
+}
+
 void VulkanCore::cleanup() {
     vkDestroySemaphore(device, renderFinishedSemaphore, nullptr);
     vkDestroySemaphore(device, imageAvailableSemaphore, nullptr);
@@ -1379,9 +1489,8 @@ void VulkanCore::cleanup() {
 
     vkDestroyCommandPool(device, commandPool, nullptr);
 
-    vkDestroyImageView(device, computeImageView, nullptr);
-    vkDestroyImage(device, computeImage, nullptr);
-    vkFreeMemory(device, computeImageMemory, nullptr);
+    cleanupResizeResources();
+    vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     vkDestroySampler(device, textureSampler, nullptr);
     for (size_t i = 0; i < textureImages.size(); i++) {
@@ -1389,11 +1498,6 @@ void VulkanCore::cleanup() {
         vkDestroyImage(device, textureImages[i], nullptr);
         vkFreeMemory(device, textureImageMemories[i], nullptr);
     }
-
-    for (auto imageView : swapChainImageViews) {
-        vkDestroyImageView(device, imageView, nullptr);
-    }
-    vkDestroySwapchainKHR(device, swapChain, nullptr);
 
     vkDestroyDescriptorPool(device, descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
@@ -1426,13 +1530,6 @@ void VulkanCore::cleanup() {
     vkDestroyPipeline(device, compositePassPipeline, nullptr);
     vkDestroyPipelineLayout(device, twoPassPipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(device, gbufDescSetLayout, nullptr);
-
-    vkDestroyImageView(device, gbufPositionV,    nullptr); vkDestroyImage(device, gbufPosition,    nullptr); vkFreeMemory(device, gbufPositionM,    nullptr);
-    vkDestroyImageView(device, gbufNormalV,      nullptr); vkDestroyImage(device, gbufNormal,      nullptr); vkFreeMemory(device, gbufNormalM,      nullptr);
-    vkDestroyImageView(device, gbufAlbedoV,      nullptr); vkDestroyImage(device, gbufAlbedo,      nullptr); vkFreeMemory(device, gbufAlbedoM,      nullptr);
-    vkDestroyImageView(device, gbufEmissiveV,    nullptr); vkDestroyImage(device, gbufEmissive,    nullptr); vkFreeMemory(device, gbufEmissiveM,    nullptr);
-    vkDestroyImageView(device, gbufLinearDepthV, nullptr); vkDestroyImage(device, gbufLinearDepth, nullptr); vkFreeMemory(device, gbufLinearDepthM, nullptr);
-    vkDestroyImageView(device, hdrImageView,     nullptr); vkDestroyImage(device, hdrImage,        nullptr); vkFreeMemory(device, hdrMemory,        nullptr);
 
     vkDestroyPipeline(device, computePipeline, nullptr);
     vkDestroyPipeline(device, legacyComputePipeline, nullptr);

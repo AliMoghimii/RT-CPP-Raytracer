@@ -253,6 +253,7 @@ private:
     float pitch = 0.0f;
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
+    bool framebufferResized = false;
 
     // --- GPU timestamp queries (per-pass timing) ---
     VkQueryPool timestampPool = VK_NULL_HANDLE;
@@ -285,6 +286,7 @@ private:
     void processInput();
     void updateDynamicData();
     void drawFrame();
+    void recreateSwapchain();
     void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
     void cleanup();
 

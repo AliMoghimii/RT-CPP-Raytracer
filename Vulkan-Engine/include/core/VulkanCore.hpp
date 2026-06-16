@@ -77,7 +77,7 @@ private:
     VkDevice device;
     VkQueue computeQueue;
 
-    VkSwapchainKHR swapChain;
+    VkSwapchainKHR swapChain = VK_NULL_HANDLE;
     std::vector<VkImage> swapChainImages;
     VkFormat swapChainImageFormat;
     VkExtent2D swapChainExtent;
@@ -101,7 +101,7 @@ private:
 
     // G-buffer descriptor set (set = 1 for pass images)
     VkDescriptorSetLayout gbufDescSetLayout;
-    VkDescriptorSet gbufDescSet;
+    VkDescriptorSet gbufDescSet = VK_NULL_HANDLE;
 
     VkImage computeImage;
     VkDeviceMemory computeImageMemory;
@@ -169,6 +169,7 @@ private:
     float pitch = 0.0f;
     float deltaTime = 0.0f;
     float lastFrame = 0.0f;
+    bool framebufferResized = false;
 
     void initWindow();
     void initVulkan();
@@ -202,6 +203,9 @@ private:
     void createGBufferImages();
     void createTwoPassPipelines();
     void createGBufferDescriptorSet();
+    void recreateSwapchain();
+    void cleanupResizeResources();
+    void updateImageDescriptors();
 
     void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
     void createStorageImage(VkFormat format, VkImage& image, VkImageView& view, VkDeviceMemory& memory);

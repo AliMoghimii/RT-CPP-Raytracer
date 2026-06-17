@@ -114,25 +114,33 @@ float _patternFbm(vec3 x) {
 }
 
 // Applies procedural coloring on top of an already-sampled baseColor.
-// Call this after sampleAlbedo() in any G-buffer fill pass, passing the hit world position.
-vec3 applyProceduralPattern(GPUMaterial mat, vec3 baseColor, vec3 worldPos) {
+// Call this after sampleAlbedo() in any G-buffer fill pass, passing the hit world position AND UV.
+vec3 applyProceduralPattern(GPUMaterial mat, vec3 baseColor, vec3 worldPos, vec2 uv) {
     if (mat.useTexture != 1 || mat.patternType == 0) return baseColor;
-    if (mat.patternType == 1) {  // checkerboard XZ
+    
+    if (mat.patternType == 1) {  // checkerboard XZ (World-space)
         float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 3.0;
         float p = mod(floor((worldPos.x + 5.0) * scale) + floor(worldPos.z * scale), 2.0);
         return (p > 0.5) ? mat.color2 : mat.color;
     }
-    if (mat.patternType == 2) {  // wood grain
+    if (mat.patternType == 2) {  // wood grain (World-space volumetric)
         float spacing = mat.proceduralScale  > 0.0 ? mat.proceduralScale  : 16.0;
         float wobble  = mat.proceduralWobble > 0.0 ? mat.proceduralWobble : 3.0;
         float wood    = fract(length(worldPos.xz) * spacing + _patternFbm(worldPos * 2.0) * wobble);
         return mix(mat.color2, mat.color, wood);
     }
-    if (mat.patternType == 3) {  // marble
+    if (mat.patternType == 3) {  // marble (World-space volumetric)
         float scale  = mat.proceduralScale > 0.0 ? mat.proceduralScale : 2.0;
         float marble = sin(worldPos.x * 5.0 + _patternFbm(worldPos * scale) * 10.0) * 0.5 + 0.5;
         return mix(mat.color, mat.color2, marble);
     }
+    if (mat.patternType == 4) {  // checkerboard UV (Surface-wrapped)
+        float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 3.0;
+        float uvScale = scale * 10.0;
+        float p = mod(floor(uv.x * uvScale) + floor(uv.y * uvScale), 2.0);
+        return (p > 0.5) ? mat.color2 : mat.color;
+    }
+    
     return baseColor;
 }
 

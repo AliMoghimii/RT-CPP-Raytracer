@@ -17,7 +17,7 @@
     "primaryRaysPerPixel": 1,
     "enableCaustics": true,
     "photonCount": 1000000,
-    "causticIntensity": 15.0,
+    "causticIntensity": 30.0,
     "gridMin": [-40.0, -40.0, -40.0],
     "gridMax": [40.0, 40.0, 40.0],
     "gridResolution": 256,
@@ -37,22 +37,22 @@
     { "position": [0.0, 5.5, -5.0], "color": [50.0, 50.0, 50.0], "radius": 0.0 }
   ],
 
-"quads": [
-    { "corner": [-5.0, 0.0, -5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 0.0, 10.0], "normal": [0.0, 1.0, 0.0], "material": "matteWhite" },
-    { "corner": [-5.0, 10.0, -5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 0.0, 10.0], "normal": [0.0, -1.0, 0.0], "material": "matteWhite" },
-    { "corner": [-5.0, 0.0, 5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 10.0, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteWhite" },
-    { "corner": [-5.0, 0.0, -5.0], "edge1": [0.0, 0.0, 10.0], "edge2": [0.0, 10.0, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteWhite" },
-    { "corner": [5.0, 0.0, 5.0], "edge1": [0.0, 0.0, -10.0], "edge2": [0.0, 10.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteWhite" },
-    { "corner": [-5.0, 0.0, -5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 10.0, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteWhite" }
+  "quads": [
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 0.0, 18.0], "normal": [0.0, 1.0, 0.0], "material": "matteWhite" },
+    { "corner": [-9.0, 20.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 0.0, 18.0], "normal": [0.0, -1.0, 0.0], "material": "matteWhite" },
+    { "corner": [-9.0, 0.0, 9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 20.0, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteWhite" },
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [0.0, 0.0, 18.0], "edge2": [0.0, 20.0, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteWhite" },
+    { "corner": [9.0, 0.0, 9.0], "edge1": [0.0, 0.0, -18.0], "edge2": [0.0, 20.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteWhite" },
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 20.0, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteWhite" }
   ],
 
-  "meshInstances": [
+"meshInstances": [
     {
-      "meshFile": "assets/models/model_shotGlass.obj",
+      "meshFile": "assets/models/model_doughnut.obj",
       "material": "solidGlass",
-      "basePosition": [0.0, 0.1, 0.0],
-      "baseRotationDeg": [0.0, 0.0, 0.0],
-      "scale": 1.0,
+      "basePosition": [0.0, 2.0, 0.0],
+      "baseRotationDeg": [45.0, 0.0, 20.0],
+      "scale": 30.0,
       "spinDegPerSec": 0.0,
       "bobAmplitude": 0.0,
       "bobSpeed": 0.0

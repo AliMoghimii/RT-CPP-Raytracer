@@ -193,7 +193,7 @@ void main() {
             GPUMaterial reflMat = materials[reflMatIdx];
 
             vec3 reflAlbedo = reflIsBVH ? sampleAlbedo(reflMat, reflUV) : reflMat.color;
-            reflAlbedo = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos);
+            reflAlbedo = applyProceduralPattern(reflMat, reflAlbedo, reflWorldPos, reflUV);
 
             vec3 reflViewDir = -reflDir;
 

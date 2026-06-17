@@ -430,6 +430,12 @@ void main() {
                     float marble = sin(hitPos.x * 5.0 + turbulence * 10.0) * 0.5 + 0.5;
                     baseColor = mix(mat.color, mat.color2, marble);
                 }
+                else if (mat.patternType == 4) { 
+                    float scale = mat.proceduralScale > 0.0 ? mat.proceduralScale : 3.0;  
+                    float uvScale = scale * 10.0; 
+                    float pattern = mod(floor(hitUV.x * uvScale) + floor(hitUV.y * uvScale), 2.0);
+                    baseColor = (pattern > 0.5) ? mat.color2 : mat.color;
+                }
             }
 
             vec3 rayToCameraDir = normalize(cam.camPos.xyz - hitPos);

@@ -976,13 +976,33 @@ void Renderer::processInput() {
 }
 
 void Renderer::updateDynamicData() {
-    if (sceneSpheres.size() > 4) {
-        glm::vec3 eyeRCenter = sceneSpheres[1].center;
-        sceneSpheres[2].center = eyeRCenter + glm::normalize(cameraPos - eyeRCenter) * 0.09f;
+    //if (sceneSpheres.size() > 4) {
+    //    glm::vec3 eyeRCenter = sceneSpheres[1].center;
+    //    sceneSpheres[2].center = eyeRCenter + glm::normalize(cameraPos - eyeRCenter) * 0.09f;
 
-        glm::vec3 eyeLCenter = sceneSpheres[3].center;
-        sceneSpheres[4].center = eyeLCenter + glm::normalize(cameraPos - eyeLCenter) * 0.09f;
+    //    glm::vec3 eyeLCenter = sceneSpheres[3].center;
+    //    sceneSpheres[4].center = eyeLCenter + glm::normalize(cameraPos - eyeLCenter) * 0.09f;
 
+    //    memcpy(sphereBuffer.mapped, sceneSpheres.data(), sizeof(GPUSphere) * sceneSpheres.size());
+    //}
+
+    if (sceneSpheres.size() >= 5) {
+        bool isEyeScene =
+            (std::abs(sceneSpheres[1].radius - 0.1f) < 0.001f) &&
+            (std::abs(sceneSpheres[2].radius - 0.05f) < 0.001f) &&
+            (std::abs(sceneSpheres[3].radius - 0.1f) < 0.001f) &&
+            (std::abs(sceneSpheres[4].radius - 0.05f) < 0.001f);
+
+        if (isEyeScene) {
+            glm::vec3 eyeRCenter = sceneSpheres[1].center;
+            sceneSpheres[2].center = eyeRCenter + glm::normalize(cameraPos - eyeRCenter) * 0.09f;
+
+            glm::vec3 eyeLCenter = sceneSpheres[3].center;
+            sceneSpheres[4].center = eyeLCenter + glm::normalize(cameraPos - eyeLCenter) * 0.09f;
+        }
+    }
+
+    if (!sceneSpheres.empty()) {
         memcpy(sphereBuffer.mapped, sceneSpheres.data(), sizeof(GPUSphere) * sceneSpheres.size());
     }
 

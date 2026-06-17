@@ -1,0 +1,114 @@
+{
+  "settings": {
+    "useLegacyPipeline": true,
+    "globalShadingModel": 0,
+    "enableSoftShadows": false,
+    "maxDepth": 5,
+    "shadowRays": 4,
+    "enableDOF": false,
+    "focalDistance": 1.6,
+    "lensRadius": 0.02,
+    "enableFog": true,
+    "fogColor": [0.0, 0.0, 0.0],
+    "enableSkybox": false,
+    "skyBottomColor": [0.0, 0.0, 0.0],
+    "skyTopColor": [0.0, 0.0, 0.0],
+    "enableTextures": true,
+    "primaryRaysPerPixel": 1,
+    "enableCaustics": true,
+    "photonCount": 1000000,
+    "causticIntensity": 15.0,
+    "gridMin": [-40.0, -40.0, -40.0],
+    "gridMax": [40.0, 40.0, 40.0],
+    "gridResolution": 256,
+    "gatherRadius": 0.6
+  },
+
+  "textures": [
+    { "name": "pavingColor", "path": "assets/Textures/PavingStone/Color.jpg" },
+    { "name": "pavingNormal", "path": "assets/Textures/PavingStone/Normal.jpg" },
+    { "name": "pavingRoughness", "path": "assets/Textures/PavingStone/Roughness.jpg" },
+    { "name": "pavingAO", "path": "assets/Textures/PavingStone/AmbientOcclusion.jpg" },
+    { "name": "pavingDisp", "path": "assets/Textures/PavingStone/Displacement.jpg" },
+    { "name": "iceColor", "path": "assets/Textures/Ice/Color.jpg" },
+    { "name": "iceNormal", "path": "assets/Textures/Ice/Normal.jpg" },
+    { "name": "iceRoughness", "path": "assets/Textures/Ice/Roughness.jpg" },
+    { "name": "iceDisp", "path": "assets/Textures/Ice/Displacement.jpg" },
+    { "name": "tilesColor", "path": "assets/Textures/Tiles/Color.jpg" },
+    { "name": "tilesNormal", "path": "assets/Textures/Tiles/Normal.jpg" },
+    { "name": "tilesRoughness", "path": "assets/Textures/Tiles/Roughness.jpg" },
+    { "name": "tilesAO", "path": "assets/Textures/Tiles/AmbientOcclusion.jpg" },
+    { "name": "tilesDisp", "path": "assets/Textures/Tiles/Displacement.jpg" },
+    { "name": "woodColor", "path": "assets/Textures/Wood/Color.jpg" },
+    { "name": "woodNormal", "path": "assets/Textures/Wood/Normal.jpg" },
+    { "name": "woodRoughness", "path": "assets/Textures/Wood/Roughness.jpg" },
+    { "name": "woodAO", "path": "assets/Textures/Wood/AmbientOcclusion.jpg" },
+    { "name": "woodDisp", "path": "assets/Textures/Wood/Displacement.jpg" },
+    { "name": "groundColor", "path": "assets/Textures/Ground/Color.jpg" },
+    { "name": "groundNormal", "path": "assets/Textures/Ground/Normal.jpg" },
+    { "name": "groundRoughness", "path": "assets/Textures/Ground/Roughness.jpg" },
+    { "name": "groundAO", "path": "assets/Textures/Ground/AmbientOcclusion.jpg" },
+    { "name": "groundDisp", "path": "assets/Textures/Ground/Displacement.jpg" },
+    { "name": "sandColor", "path": "assets/Textures/Sand/Color.jpg" },
+    { "name": "sandNormal", "path": "assets/Textures/Sand/Normal.jpg" },
+    { "name": "sandRoughness", "path": "assets/Textures/Sand/Roughness.jpg" },
+    { "name": "sandAO", "path": "assets/Textures/Sand/AmbientOcclusion.jpg" },
+    { "name": "sandDisp", "path": "assets/Textures/Sand/Displacement.jpg" }
+  ],
+
+  "materials": [
+    { 
+      "name": "matteBlack", 
+      "color": [0.0, 0.0, 0.0], "ambient": 0.05, "emission": [0,0,0], 
+      "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, 
+      "reflection": 0.0, "transparency": 0.0, "ior": 1.0, 
+      "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, 
+      "useTexture": 0 
+    },
+    { 
+      "name": "greyMirror", 
+      "color": [0.4, 0.4, 0.4], "ambient": 0.05, "emission": [0,0,0], 
+      "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, 
+      "reflection": 0.5, "transparency": 0.0, "ior": 1.0, 
+      "patternType": 0, "roughness": 0.0, "metallic": 0.8, "castShadows": 1, 
+      "useTexture": 0 
+    },
+    { "name": "pavingStone", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "pavingColor", "normalMap": "pavingNormal", "roughnessMap": "pavingRoughness", "ao": "pavingAO", "heightMap": "pavingDisp", "proceduralScale": 4.0, "bumpStrength": 2.0, "parallaxScale": 0.05 },
+    { "name": "ice", "color": [0.0, 0.0, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.05, "transparency": 0.5, "ior": 1.31, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "iceColor", "normalMap": "iceNormal", "roughnessMap": "iceRoughness", "heightMap": "iceDisp", "proceduralScale": 2.0, "bumpStrength": 1.5, "parallaxScale": 0.03 },
+    { "name": "poolTiles", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.5, "reflection": 0.05, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "tilesColor", "normalMap": "tilesNormal", "roughnessMap": "tilesRoughness", "ao": "tilesAO", "heightMap": "tilesDisp", "proceduralScale": 4.0, "bumpStrength": 2.0, "parallaxScale": 0.04 },
+    { "name": "wood", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "woodColor", "normalMap": "woodNormal", "roughnessMap": "woodRoughness", "ao": "woodAO", "heightMap": "woodDisp", "proceduralScale": 4.0, "bumpStrength": 2.0, "parallaxScale": 0.05 },
+    { "name": "ground", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "groundColor", "normalMap": "groundNormal", "roughnessMap": "groundRoughness", "ao": "groundAO", "heightMap": "groundDisp", "proceduralScale": 4.0, "bumpStrength": 2.0, "parallaxScale": 0.05 },
+    { "name": "sand", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 1.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "albedo": "sandColor", "normalMap": "sandNormal", "roughnessMap": "sandRoughness", "ao": "sandAO", "heightMap": "sandDisp", "proceduralScale": 4.0, "bumpStrength": 2.0, "parallaxScale": 0.05 }
+  ],
+
+  "lights": [
+    { "position": [0.0, 10.0, -5.0], "color": [400.0, 400.0, 400.0], "radius": 0.0 }
+  ],
+
+  "planes": [
+    { "center": [0.0, -0.5, 0.0], "normal": [0.0, 1.0, 0.0], "material": "greyMirror" }
+  ],
+
+  "quads": [
+    { "corner": [-25.0, 49.5, -25.0], "edge1": [50.0, 0.0, 0.0], "edge2": [0.0, 0.0, 50.0], "normal": [0.0, -1.0, 0.0], "material": "matteBlack" },
+    { "corner": [-25.0, -0.5, -25.0], "edge1": [0.0, 0.0, 50.0], "edge2": [0.0, 50.0, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteBlack" },
+    { "corner": [25.0, -0.5, 25.0], "edge1": [0.0, 0.0, -50.0], "edge2": [0.0, 50.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteBlack" },
+    { "corner": [-25.0, -0.5, -25.0], "edge1": [50.0, 0.0, 0.0], "edge2": [0.0, 50.0, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteBlack" },
+    { "corner": [25.0, -0.5, 25.0], "edge1": [-50.0, 0.0, 0.0], "edge2": [0.0, 50.0, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteBlack" }
+  ],
+
+  "spheres": [
+    { "center": [-2.5, 4.5, 5.0], "radius": 1.0, "material": "wood" },
+    { "center": [ 0.0, 4.5, 5.0], "radius": 1.0, "material": "ground" },
+    { "center": [ 2.5, 4.5, 5.0], "radius": 1.0, "material": "sand" },
+    { "center": [ 0.0, 2.0, 5.0], "radius": 1.0, "material": "ice" },
+    { "center": [ 2.5, 2.0, 5.0], "radius": 1.0, "material": "poolTiles" },
+    { "center": [-2.5, 2.0, 5.0], "radius": 1.0, "material": "pavingStone" }
+  ],
+
+  "cubes": [],
+
+  "triangles": [],
+
+  "meshInstances": []
+}

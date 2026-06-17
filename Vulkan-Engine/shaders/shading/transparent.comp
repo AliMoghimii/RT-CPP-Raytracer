@@ -440,7 +440,7 @@ void main() {
                 surfAlbedo = firstHitAlbedo;
             } else {
                 vec2 sUV = hitIsPlane ? (hitPos.xz * 0.1) : hitUV;
-                surfAlbedo = applyProceduralPattern(mat, sampleAlbedo(mat, sUV), hitPos);
+                surfAlbedo = applyProceduralPattern(mat, sampleAlbedo(mat, sUV), hitPos, sUV);
             }
             accumulatedColor += attenuation
                               * shadeOpaque(mat, hitPos, hitNormal, surfAlbedo, -rayDir)

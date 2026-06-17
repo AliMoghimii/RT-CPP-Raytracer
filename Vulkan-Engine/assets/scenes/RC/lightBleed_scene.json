@@ -1,0 +1,104 @@
+{
+  "settings": {
+    "useLegacyPipeline": false,
+    "globalShadingModel": 0,
+    "enableSoftShadows": false,
+    "maxDepth": 5,
+    "shadowRays": 4,
+    "enableDOF": false,
+    "focalDistance": 1.6,
+    "lensRadius": 0.02,
+    "enableFog": false,
+    "fogColor": [1.0, 1.0, 1.0],
+    "enableSkybox": false,
+    "skyBottomColor": [1.0, 1.0, 1.0],
+    "skyTopColor": [0.1, 0.3, 0.7],
+    "enableTextures": false,
+    "primaryRaysPerPixel": 1,
+    "enableCaustics": false,
+    "photonCount": 1000000,
+    "causticIntensity": 15.0,
+    "gridMin": [-20.0, -20.0, -20.0],
+    "gridMax": [20.0, 20.0, 20.0],
+    "gridResolution": 256,
+    "gatherRadius": 0.4
+  },
+
+  "textures": [
+    { "name": "pavingColor", "path": "assets/Textures/PavingStone/Color.jpg" },
+    { "name": "pavingNormal", "path": "assets/Textures/PavingStone/Normal.jpg" },
+    { "name": "pavingRoughness", "path": "assets/Textures/PavingStone/Roughness.jpg" },
+    { "name": "pavingAO", "path": "assets/Textures/PavingStone/AmbientOcclusion.jpg" },
+    { "name": "pavingDisp", "path": "assets/Textures/PavingStone/Displacement.jpg" },
+    { "name": "iceColor", "path": "assets/Textures/Ice/Color.jpg" },
+    { "name": "iceNormal", "path": "assets/Textures/Ice/Normal.jpg" },
+    { "name": "iceRoughness", "path": "assets/Textures/Ice/Roughness.jpg" },
+    { "name": "iceDisp", "path": "assets/Textures/Ice/Displacement.jpg" },
+    { "name": "tilesColor", "path": "assets/Textures/Tiles/Color.jpg" },
+    { "name": "tilesNormal", "path": "assets/Textures/Tiles/Normal.jpg" },
+    { "name": "tilesRoughness", "path": "assets/Textures/Tiles/Roughness.jpg" },
+    { "name": "tilesAO", "path": "assets/Textures/Tiles/AmbientOcclusion.jpg" },
+    { "name": "tilesDisp", "path": "assets/Textures/Tiles/Displacement.jpg" },
+    { "name": "woodColor", "path": "assets/Textures/Wood/Color.jpg" },
+    { "name": "woodNormal", "path": "assets/Textures/Wood/Normal.jpg" },
+    { "name": "woodRoughness", "path": "assets/Textures/Wood/Roughness.jpg" },
+    { "name": "woodAO", "path": "assets/Textures/Wood/AmbientOcclusion.jpg" },
+    { "name": "woodDisp", "path": "assets/Textures/Wood/Displacement.jpg" },
+    { "name": "groundColor", "path": "assets/Textures/Ground/Color.jpg" },
+    { "name": "groundNormal", "path": "assets/Textures/Ground/Normal.jpg" },
+    { "name": "groundRoughness", "path": "assets/Textures/Ground/Roughness.jpg" },
+    { "name": "groundAO", "path": "assets/Textures/Ground/AmbientOcclusion.jpg" },
+    { "name": "groundDisp", "path": "assets/Textures/Ground/Displacement.jpg" },
+    { "name": "sandColor", "path": "assets/Textures/Sand/Color.jpg" },
+    { "name": "sandNormal", "path": "assets/Textures/Sand/Normal.jpg" },
+    { "name": "sandRoughness", "path": "assets/Textures/Sand/Roughness.jpg" },
+    { "name": "sandAO", "path": "assets/Textures/Sand/AmbientOcclusion.jpg" },
+    { "name": "sandDisp", "path": "assets/Textures/Sand/Displacement.jpg" }
+  ],
+
+  "materials": [
+    { "name": "darkMirror", "color": [0.067, 0.067, 0.067], "ambient": 0.2, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "redMirror", "color": [1.0, 0.0, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.2, "metallic": 0.1, "castShadows": 1, "useTexture": 0 },
+    { "name": "whiteShiny", "color": [1.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.01, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "blackShiny", "color": [0.0, 0.0, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.01, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "yellowMirror", "color": [1.0, 1.0, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.5, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "greenMirror", "color": [0.0, 1.0, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "checkeredBlueWhite", "color": [0.0, 0.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [1.0, 1.0, 1.0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 1, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 1, "proceduralScale": 3.0 },
+    { "name": "cyanMirror", "color": [0.0, 1.0, 1.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "orangeMirror", "color": [1.0, 0.647, 0.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.1, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "purpleMirror1", "color": [0.5, 0.0, 0.5], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.1, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "purpleMirror2", "color": [0.54, 0.17, 0.886], "ambient": 0.1, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.2, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.3, "metallic": 0.8, "castShadows": 1, "useTexture": 0 },
+    { "name": "solidGlass", "color": [1.0, 1.0, 1.0], "ambient": 0.0, "emission": [0,0,0], "diffuse": 0.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.1, "transparency": 0.75, "ior": 1.5, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "matteWhite", "color": [1.0, 1.0, 1.0], "ambient": 1.1, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.95, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "matteRed", "color": [1.0, 0.1, 0.1], "ambient": 0.1, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.95, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "matteGreen", "color": [0.1, 1.0, 0.1], "ambient": 0.1, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.95, "metallic": 0.0, "castShadows": 1, "useTexture": 0 }
+  ],
+
+  "lights": [
+    { "position": [7.0, 1.0, -7.0], "color": [50.0, 50.0, 50.0], "radius": 0.0 },
+    { "position": [-10.0, 1.0, 15.0], "color": [50.0, 50.0, 50.0], "radius": 0.0 }
+  ],
+
+  "planes": [
+    { "center": [0.0, -0.5, 0.0], "normal": [0.0, 1.0, 0.0], "material": "matteWhite" }
+  ],
+
+  "quads": [],
+
+  "cubes": [
+    { "boundsMin": [-15.0, -0.5, -22.5], "boundsMax": [15.0, 0.5, 22.5], "center": [0.0, 25.5, 7.5], "rotation": [0.0, 0.0, 0.0], "material": "matteWhite" },
+    { "boundsMin": [-0.5, -12.75, -22.5], "boundsMax": [0.5, 12.75, 22.5], "center": [-15.5, 12.25, 7.5], "rotation": [0.0, 0.0, 0.0], "material": "matteWhite" },
+    { "boundsMin": [-0.5, -12.75, -22.5], "boundsMax": [0.5, 12.75, 22.5], "center": [15.5, 12.25, 7.5], "rotation": [0.0, 0.0, 0.0], "material": "matteWhite" },
+    { "boundsMin": [-15.0, -12.75, -0.5], "boundsMax": [15.0, 12.75, 0.5], "center": [0.0, 12.25, 30.5], "rotation": [0.0, 0.0, 0.0], "material": "matteWhite" },
+    { "boundsMin": [-15.0, -12.75, -0.5], "boundsMax": [15.0, 12.75, 0.5], "center": [0.0, 12.25, -15.5], "rotation": [0.0, 0.0, 0.0], "material": "matteWhite" },
+    { "boundsMin": [-3.0, -3.0, -3.0], "boundsMax": [3.0, 3.0, 3.0], "center": [0.0, 2.0, 7.0], "rotation": [0.0, 45.0, 0.0], "material": "matteGreen" }
+  ],
+
+  "spheres": [
+    { "center": [-11.0, 2.0, 2.0], "radius": 5.0, "material": "matteRed" }
+  ],
+
+  "triangles": [],
+
+  "meshInstances": []
+}

@@ -1,0 +1,79 @@
+{
+  "settings": {
+    "useLegacyPipeline": true,
+    "globalShadingModel": 0,
+    "enableSoftShadows": false,
+    "maxDepth": 5,
+    "shadowRays": 4,
+    "enableDOF": false,
+    "focalDistance": 1.6,
+    "lensRadius": 0.02,
+    "enableFog": false,
+    "fogColor": [1.0, 1.0, 1.0],
+    "enableSkybox": false,
+    "skyBottomColor": [1.0, 1.0, 1.0],
+    "skyTopColor": [0.1, 0.3, 0.7],
+    "enableTextures": false,
+    "primaryRaysPerPixel": 1,
+    "enableCaustics": true,
+    "photonCount": 1000000,
+    "causticIntensity": 30.0,
+    "gridMin": [-40.0, -40.0, -40.0],
+    "gridMax": [40.0, 40.0, 40.0],
+    "gridResolution": 256,
+    "gatherRadius": 0.6
+  },
+
+  "textures": [],
+
+  "materials": [
+    { "name": "matteWhite", "color": [0.8, 0.8, 0.8], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.9, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "matteRed", "color": [0.8, 0.1, 0.1], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.9, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "matteGreen", "color": [0.1, 0.8, 0.1], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 0.0, "reflection": 0.0, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.9, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "solidGlass", "color": [1.0, 1.0, 1.0], "ambient": 0.0, "emission": [0,0,0], "diffuse": 0.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.1, "transparency": 0.95, "ior": 1.5, "patternType": 0, "roughness": 0.0, "metallic": 0.0, "castShadows": 1, "useTexture": 0 },
+    { "name": "goldMirror", "color": [1.0, 0.7, 0.2], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.7, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.8, "castShadows": 1, "useTexture": 0 },
+    { "name": "cyanMirror", "color": [0.4, 0.9, 3.0], "ambient": 0.05, "emission": [0,0,0], "diffuse": 1.0, "color2": [0,0,0], "specular": 1.0, "reflection": 0.5, "transparency": 0.0, "ior": 1.0, "patternType": 0, "roughness": 0.0, "metallic": 0.8, "castShadows": 1, "useTexture": 0 }
+  ],
+
+  "lights": [
+    { "position": [0.0, 19.5, 0.0], "color": [400.0, 400.0, 400.0], "radius": 0.0 }
+  ],
+
+  "planes": [],
+
+  "quads": [
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 0.0, 18.0], "normal": [0.0, 1.0, 0.0], "material": "matteWhite" },
+    { "corner": [-9.0, 20.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 0.0, 18.0], "normal": [0.0, -1.0, 0.0], "material": "matteWhite" },
+    { "corner": [-9.0, 0.0, 9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 20.0, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteWhite" },
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [0.0, 0.0, 18.0], "edge2": [0.0, 20.0, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteRed" },
+    { "corner": [9.0, 0.0, 9.0], "edge1": [0.0, 0.0, -18.0], "edge2": [0.0, 20.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteGreen" },
+    { "corner": [-9.0, 0.0, -9.0], "edge1": [18.0, 0.0, 0.0], "edge2": [0.0, 20.0, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteWhite" }
+  ],
+
+  "spheres": [
+    { 
+      "center": [-2.5, 2.5, -3.5], 
+      "radius": 2.5, 
+      "material": "solidGlass" 
+    },
+    { 
+      "center": [-2.5, 2.0, 3.5], 
+      "radius": 2.0, 
+      "material": "goldMirror" 
+    }
+  ],
+
+  "cubes": [
+    { 
+      "boundsMin": [-2.0, -5.0, -2.0], 
+      "boundsMax": [2.0, 5.0, 2.0], 
+      "center": [3.5, 5.0, 4.0], 
+      "rotation": [0.0, -25.0, 0.0], 
+      "material": "cyanMirror" 
+    }
+  ],
+
+  "triangles": [],
+
+  "meshInstances": []
+}

@@ -104,7 +104,7 @@ void main() {
         GPUMaterial mat = materials[hit.materialIndex];
         vec2 surfaceUV = hit.uv;
         vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV, hit.position, hit.normal) : mat.color;
-        color = applyProceduralPattern(mat, color, hit.position);
+        color = applyProceduralPattern(mat, color, hit.position, surfaceUV);
 
         vec3 n = hit.normal;
         if (mat.useTexture != 2 && mat.normalMapIndex >= 0 && cam.enableTextures == 1) {
@@ -125,7 +125,7 @@ void main() {
         vec2 surfaceUV = analyticalIsPlane ? pos.xz * 0.1 : analyticalUV;
 
         vec3 color = (cam.enableTextures == 1) ? sampleAlbedo(mat, surfaceUV) : mat.color;
-        color = applyProceduralPattern(mat, color, pos);
+        color = applyProceduralPattern(mat, color, pos, surfaceUV); 
 
         vec3 n = analyticalNormal;
         if (mat.normalMapIndex >= 0 && cam.enableTextures == 1) {

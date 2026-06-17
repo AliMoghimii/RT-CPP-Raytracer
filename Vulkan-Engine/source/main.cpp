@@ -6,7 +6,7 @@ using namespace std;
 
 int main() {
     Renderer engine;
-    engine.sceneManager.loadInitial("assets/scenes/enviromentDemo_scene.json");
+    engine.sceneManager.loadInitial("assets/scenes/default_scene.json");
 
     try {
         engine.run();

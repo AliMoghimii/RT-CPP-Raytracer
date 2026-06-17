@@ -21,7 +21,7 @@
     "gridMin": [-40.0, -40.0, -40.0],
     "gridMax": [40.0, 40.0, 40.0],
     "gridResolution": 256,
-    "gatherRadius": 0.2
+    "gatherRadius": 0.6
   },
 
   "textures": [],
@@ -42,8 +42,7 @@
     { "corner": [-5.0, 10.0, -5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 0.0, 10.0], "normal": [0.0, -1.0, 0.0], "material": "matteWhite" },
     { "corner": [-5.0, 0.0, 5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 10.0, 0.0], "normal": [0.0, 0.0, -1.0], "material": "matteWhite" },
     { "corner": [-5.0, 0.0, -5.0], "edge1": [0.0, 0.0, 10.0], "edge2": [0.0, 10.0, 0.0], "normal": [1.0, 0.0, 0.0], "material": "matteWhite" },
-    { "corner": [5.0, 0.0, 5.0], "edge1": [0.0, 0.0, -10.0], "edge2": [0.0, 10.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteWhite" },
-    { "corner": [-5.0, 0.0, -5.0], "edge1": [10.0, 0.0, 0.0], "edge2": [0.0, 10.0, 0.0], "normal": [0.0, 0.0, 1.0], "material": "matteWhite" }
+    { "corner": [5.0, 0.0, 5.0], "edge1": [0.0, 0.0, -10.0], "edge2": [0.0, 10.0, 0.0], "normal": [-1.0, 0.0, 0.0], "material": "matteWhite" }
   ],
 
 "spheres": [

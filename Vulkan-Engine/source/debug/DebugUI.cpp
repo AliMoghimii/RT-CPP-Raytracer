@@ -80,12 +80,12 @@ void DebugUI::draw(Renderer& renderer, const FrameStats& stats) {
             panelPerformance(renderer, stats);
         if (ImGui::CollapsingHeader("Visualization", ImGuiTreeNodeFlags_DefaultOpen))
             panelVisualization(renderer);
-        if (ImGui::CollapsingHeader("Cascade Config"))
-            panelCascadeConfig(renderer);
         if (ImGui::CollapsingHeader("Scene Controls"))
             panelSceneControls(renderer);
-        if (ImGui::CollapsingHeader("Legacy Pipeline"))
-            panelLegacy(renderer);
+        if (ImGui::CollapsingHeader("Indirect Light Controls"))
+            panelIndirectLightControls(renderer);
+        if (ImGui::CollapsingHeader("Direct Light Controls"))
+            panelDirectLightControls(renderer);
         if (ImGui::CollapsingHeader("VRAM"))
             panelVRAM(stats);
     }
@@ -139,40 +139,15 @@ void DebugUI::panelPerformance(Renderer& renderer, const FrameStats& stats) {
     }
 }
 
-void DebugUI::panelCascadeConfig(Renderer& renderer) {
-    if (renderer.useLegacyPipeline) {
-        ImGui::TextDisabled("Not used in legacy mode.");
-        ImGui::BeginDisabled();
-    }
-
-    if (pendingNumCascades == 0)
-        pendingNumCascades = renderer.rcConfig.numCascades;
-
-    ImGui::SliderInt("Cascades", &pendingNumCascades, 1, 8);
-    ImGui::SliderInt("Branching factor", &renderer.rcConfig.branchingFactor, 1, 4);
-    ImGui::SliderFloat("Spacing 0", &renderer.rcConfig.spacing0, 0.1f, 5.0f);
-    ImGui::SliderInt("Oct Res 0", &renderer.rcConfig.octRes0, 1, 16);
-    ImGui::SliderInt("Probe shadow rays", &renderer.probeSoftShadowSamples, 1, 8);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("1 = hard shadow (original). >1 = area-light jitter baked into probe irradiance.\nOnly affects cascade-0. Revert to 1 to restore original behavior.");
-
-
-    if (ImGui::Button("Apply")) {
-        renderer.rcConfig.numCascades = pendingNumCascades;
-        renderer.recreateCascades();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("(changes take effect on Apply)");
-
-    if (renderer.useLegacyPipeline)
-        ImGui::EndDisabled();
-}
-
 void DebugUI::panelVisualization(Renderer& renderer) {
+    bool legacyMode = renderer.useLegacyPipeline;
+    if (ImGui::Checkbox("Use legacy pipeline", &legacyMode)) {
+        pendingLegacyToggle = legacyMode ? 1 : 0;
+    }
+    ImGui::Separator();
+
     bool legacy = renderer.useLegacyPipeline;
 
-    // Debug mode reads the G-buffer; direct/indirect are RC GI flags; exposure and
-    // tonemapper apply in the tonemap pass — none of these run in legacy mode.
     if (legacy) {
         ImGui::TextDisabled("Not used in legacy mode.");
         ImGui::BeginDisabled();
@@ -185,15 +160,15 @@ void DebugUI::panelVisualization(Renderer& renderer) {
         ImGui::SeparatorText("Probe visualization");
         int maxLvl = renderer.rcConfig.numCascades - 1;
         ImGui::SliderInt("Cascade level", &renderer.probeVizLevel, 0, maxLvl);
-        ImGui::SliderFloat("Body radius",  &renderer.probeVizRadius,  0.02f, 0.5f,  "%.3f wu");
-        ImGui::SliderFloat("Ray length",   &renderer.probeVizRayLen,  0.05f, 3.0f,  "%.3f wu");
-        ImGui::SliderFloat("Ray radius",   &renderer.probeVizRayRad,  0.003f, 0.1f, "%.3f wu");
+        ImGui::SliderFloat("Body radius", &renderer.probeVizRadius, 0.02f, 0.5f, "%.3f wu");
+        ImGui::SliderFloat("Ray length", &renderer.probeVizRayLen, 0.05f, 3.0f, "%.3f wu");
+        ImGui::SliderFloat("Ray radius", &renderer.probeVizRayRad, 0.003f, 0.1f, "%.3f wu");
         ImGui::Separator();
     }
 
-    bool direct   = renderer.enableDirect   != 0;
+    bool direct = renderer.enableDirect != 0;
     bool indirect = renderer.enableIndirect != 0;
-    if (ImGui::Checkbox("Enable direct",   &direct))   renderer.enableDirect   = direct   ? 1 : 0;
+    if (ImGui::Checkbox("Enable direct", &direct))   renderer.enableDirect = direct ? 1 : 0;
     if (ImGui::Checkbox("Enable indirect", &indirect)) renderer.enableIndirect = indirect ? 1 : 0;
 
     ImGui::SliderFloat("Exposure", &renderer.exposure, 0.1f, 5.0f);
@@ -207,20 +182,17 @@ void DebugUI::panelVisualization(Renderer& renderer) {
 void DebugUI::panelSceneControls(Renderer& renderer) {
     bool legacy = renderer.useLegacyPipeline;
 
-    // kIndirectScale, bounceWeight, and fogDensity feed RC gather/transparent push constants only.
-    if (legacy) ImGui::BeginDisabled();
-    ImGui::SliderFloat("Indirect Scale",   &renderer.kIndirectScale, 0.0f, 0.1f, "%.4f");
-    ImGui::SliderFloat("2nd Bounce Weight", &renderer.bounceWeight,   0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Bounce EMA Alpha",  &renderer.bounceEmaAlpha, 0.01f, 0.5f, "%.2f");
-    ImGui::SliderFloat("Fog Density",      &renderer.fogDensity,     0.0f, 0.1f, "%.3f");
-    if (legacy) ImGui::EndDisabled();
+    ImGui::SeparatorText("Camera Settings");
+    ImGui::SliderFloat("Focal dist", &renderer.focalDistance, 0.1f, 20.0f);
+    ImGui::SliderFloat("Lens radius", &renderer.lensRadius, 0.0f, 0.5f);
 
-    ImGui::Separator();
+    ImGui::SeparatorText("Atmosphere");
+    ImGui::SliderFloat("Fog Density", &renderer.fogDensity, 0.0f, 0.1f, "%.3f");
+
     bool fog = renderer.enableFog != 0;
     if (ImGui::Checkbox("Fog", &fog)) renderer.enableFog = fog ? 1 : 0;
     if (fog) {
         ImGui::ColorEdit3("Fog color", &renderer.fogColor.x);
-        // fogBlendWithSky routes through RC gather/transparent — not in CameraPushConstants.
         if (legacy) ImGui::BeginDisabled();
         ImGui::SameLine();
         ImGui::Checkbox("Blends with sky", &renderer.fogBlendWithSky);
@@ -237,28 +209,62 @@ void DebugUI::panelSceneControls(Renderer& renderer) {
         ImGui::ColorEdit3("Sky top", &renderer.skyTopColor.x);
     }
 
-    ImGui::Separator();
+    ImGui::SeparatorText("Materials");
     bool tex = renderer.enableTextures != 0;
     if (ImGui::Checkbox("Textures", &tex)) renderer.enableTextures = tex ? 1 : 0;
 }
 
-void DebugUI::panelLegacy(Renderer& renderer) {
-    bool legacyMode = renderer.useLegacyPipeline;
-    if (ImGui::Checkbox("Use legacy pipeline", &legacyMode)) {
-        pendingLegacyToggle = legacyMode ? 1 : 0;
+void DebugUI::panelIndirectLightControls(Renderer& renderer) {
+    if (renderer.useLegacyPipeline) {
+        ImGui::TextDisabled("Not used in legacy mode.");
+        ImGui::BeginDisabled();
     }
+
+    ImGui::SliderFloat("Indirect Scale", &renderer.kIndirectScale, 0.0f, 0.1f, "%.4f");
+    ImGui::SliderFloat("2nd Bounce Weight", &renderer.bounceWeight, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Bounce EMA Alpha", &renderer.bounceEmaAlpha, 0.01f, 0.5f, "%.2f");
     ImGui::Separator();
 
-    bool disabled = !renderer.useLegacyPipeline;
-    if (disabled) ImGui::BeginDisabled();
+    if (pendingNumCascades == 0)
+        pendingNumCascades = renderer.rcConfig.numCascades;
 
+    ImGui::SliderInt("Cascades", &pendingNumCascades, 1, 8);
+    ImGui::SliderInt("Branching factor", &renderer.rcConfig.branchingFactor, 1, 4);
+    ImGui::SliderFloat("Spacing 0", &renderer.rcConfig.spacing0, 0.1f, 5.0f);
+    ImGui::SliderInt("Oct Res 0", &renderer.rcConfig.octRes0, 1, 16);
+    ImGui::SliderInt("Probe shadow rays", &renderer.probeSoftShadowSamples, 1, 8);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("1 = hard shadow (original). >1 = area-light jitter baked into probe irradiance.\nOnly affects cascade-0. Revert to 1 to restore original behavior.");
+
+    if (ImGui::Button("Apply")) {
+        renderer.rcConfig.numCascades = pendingNumCascades;
+        renderer.recreateCascades();
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(changes take effect on Apply)");
+
+    if (renderer.useLegacyPipeline)
+        ImGui::EndDisabled();
+}
+
+void DebugUI::panelDirectLightControls(Renderer& renderer) {
+    ImGui::SeparatorText("Ray Bounces");
     ImGui::SliderInt("Max depth", &renderer.maxDepth, 1, 16);
-    ImGui::SliderInt("Shadow rays", &renderer.shadowRays, 0, 16);
     ImGui::SliderInt("Primary rays", &renderer.primaryRaysPerPixel, 1, 8);
-    ImGui::SliderFloat("Focal dist", &renderer.focalDistance, 0.1f, 20.0f);
-    ImGui::SliderFloat("Lens radius",&renderer.lensRadius, 0.0f, 0.5f);
 
-    if (disabled) ImGui::EndDisabled();
+    ImGui::SeparatorText("Shadows");
+    ImGui::SliderInt("Shadow rays", &renderer.shadowRays, 0, 16);
+
+    ImGui::SeparatorText("Caustics");
+    bool useCaustics = renderer.enableCaustics != 0;
+    if (ImGui::Checkbox("Enable Caustics", &useCaustics)) renderer.enableCaustics = useCaustics ? 1 : 0;
+    if (useCaustics) {
+        int photons = (int)renderer.totalEmittedPhotons;
+        if (ImGui::DragInt("Photon Count", &photons, 10000, 10000, 5000000)) {
+            renderer.totalEmittedPhotons = (uint32_t)photons;
+        }
+        ImGui::SliderFloat("Intensity", &renderer.causticIntensity, 0.0f, 50.0f);
+    }
 }
 
 void DebugUI::panelVRAM(const FrameStats& stats) {

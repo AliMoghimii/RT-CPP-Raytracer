@@ -1,5 +1,8 @@
 # RT-CPP-Raytracer
 
+## ! In preparation !
+
+resouces:
 * https://blog.demofox.org/
 * https://scratchapixel.com/
 * https://vulkan-tutorial.com/

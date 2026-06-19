@@ -1,6 +1,6 @@
 # RT-CPP-Raytracer
-
-## ! In preparation !
+## ! In preparation, the README and the main branch will be updated !
+## For the most recent branch please look for [/sceneswapper](https://github.com/AliMoghimii/RT-CPP-Raytracer/tree/scene-swapper)
 
 resouces:
 * https://blog.demofox.org/
